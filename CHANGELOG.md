@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Runtime create is `client.runtime.create(...)`, matching the Python SDK.
+- Nested runtime resources match the Python SDK: `client.runtime.file`,
+  `client.runtime.service`, and `runtime.file`. Open a published port with
+  `runtime.service(port)`. List and revoke stay on `client.runtime.service`.
+  There is no `files` or `services` alias.
+
+### Fixed
+
+- Template `build()` / `buildAndWait()` now send the client cloud and region
+  (`aws` / `us-east-1` by default), matching runtime create. Builds no longer
+  depend on the API filling placement itself.
+
 ## [0.1.3] - 2026-08-22
 
 Fixed examples.

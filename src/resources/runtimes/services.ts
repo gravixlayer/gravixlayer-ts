@@ -29,7 +29,7 @@ const DEFAULT_EXPIRY_SECONDS = 3600;
 /** Default timeout for requests sent to a published service, in milliseconds. */
 const DEFAULT_SERVICE_TIMEOUT_MS = 60_000;
 
-/** Options for {@link RuntimeServices.publish}. */
+/** Options for {@link RuntimeService.publish}. */
 export interface PublishOptions extends RequestOptions {
   /** Seconds until the URL stops working. Defaults to one hour. */
   expiresInSeconds?: number;
@@ -40,13 +40,13 @@ export interface PublishOptions extends RequestOptions {
 }
 
 /** Publish and revoke public URLs for ports inside a runtime. */
-export class RuntimeServices extends APIResource {
+export class RuntimeService extends APIResource {
   /**
    * Publish a guest port and return its URL.
    *
    * @example
    * ```ts
-   * const service = await client.runtimes.services.publish(runtimeId, 8000);
+   * const service = await client.runtime.service.publish(runtimeId, 8000);
    * console.log(service.url);
    * ```
    */
@@ -140,7 +140,7 @@ export interface ServiceRequestInit extends Omit<RequestInit, 'signal'> {
  *
  * @example
  * ```ts
- * const api = await client.runtimes.services.connect(runtimeId, 8000);
+ * const api = await client.runtime.service.connect(runtimeId, 8000);
  * const response = await api.get('/health');
  * console.log(await response.json());
  * ```

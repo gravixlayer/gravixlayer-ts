@@ -15,7 +15,7 @@ const client = new GravixLayer();
 
 // 1. Templates a runtime can boot from.
 console.log('--- Templates ---');
-const templates = await client.runtimes.templates.list();
+const templates = await client.runtime.templates.list();
 for (const template of templates.templates) {
   console.log(
     `  ${template.name.padEnd(24)} ${template.vcpuCount} vCPU | ${template.memoryMb} MB | ${template.description}`,
@@ -24,7 +24,7 @@ for (const template of templates.templates) {
 
 // 2. Runtimes currently on the account, one page at a time.
 console.log('\n--- Runtimes ---');
-const { runtimes, total } = await client.runtimes.list({ limit: 50, offset: 0 });
+const { runtimes, total } = await client.runtime.list({ limit: 50, offset: 0 });
 console.log(`Total      : ${total}`);
 
 if (runtimes.length === 0) {
@@ -36,7 +36,7 @@ if (runtimes.length === 0) {
 
   // 3. `retrieve` reads one runtime's state without binding a handle to it.
   const first = runtimes[0]!;
-  const info = await client.runtimes.retrieve(first.runtimeId);
+  const info = await client.runtime.retrieve(first.runtimeId);
   console.log(`\n--- ${info.runtimeId} ---`);
   console.log(`Status     : ${info.status}`);
   console.log(`Template   : ${info.template}`);

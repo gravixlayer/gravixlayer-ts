@@ -46,7 +46,7 @@ import { APIResource } from '../resource.js';
 /** Default directory used when a listing does not specify a path. */
 export const DEFAULT_WORKING_DIR = '/workspace';
 
-/** How many files {@link RuntimeFiles.writeMany} sends at the same time. */
+/** How many files {@link RuntimeFile.writeMany} sends at the same time. */
 const DEFAULT_WRITE_CONCURRENCY = 8;
 
 /** One file in a batch write. */
@@ -61,7 +61,7 @@ export interface WriteEntry {
   user?: string;
 }
 
-/** Options for {@link RuntimeFiles.upload}. */
+/** Options for {@link RuntimeFile.upload}. */
 export interface UploadOptions extends RequestOptions {
   /** Owning user inside the guest. */
   user?: string;
@@ -69,13 +69,13 @@ export interface UploadOptions extends RequestOptions {
   mode?: FileMode;
 }
 
-/** Options for {@link RuntimeFiles.writeMany}. */
+/** Options for {@link RuntimeFile.writeMany}. */
 export interface WriteManyOptions extends UploadOptions {
   /** How many files to send at the same time. Defaults to 8. */
   concurrency?: number;
 }
 
-/** Options for {@link RuntimeFiles.createDirectory}. */
+/** Options for {@link RuntimeFile.createDirectory}. */
 export interface CreateDirectoryOptions extends RequestOptions {
   /** Create missing parent directories. Defaults to `true`. */
   recursive?: boolean;
@@ -83,7 +83,7 @@ export interface CreateDirectoryOptions extends RequestOptions {
   mode?: FileMode;
 }
 
-/** Options for {@link RuntimeFiles.copy}. */
+/** Options for {@link RuntimeFile.copy}. */
 export interface CopyOptions extends RequestOptions {
   /** Copy directories and their contents. Defaults to `false`. */
   recursive?: boolean;
@@ -91,13 +91,13 @@ export interface CopyOptions extends RequestOptions {
   overwrite?: boolean;
 }
 
-/** Options for {@link RuntimeFiles.move}. */
+/** Options for {@link RuntimeFile.move}. */
 export interface MoveOptions extends RequestOptions {
   /** Replace the destination if it exists. Defaults to `false`. */
   overwrite?: boolean;
 }
 
-/** Options for {@link RuntimeFiles.chown}. */
+/** Options for {@link RuntimeFile.chown}. */
 export interface ChownOptions extends RequestOptions {
   /** New owning user. At least one of `user` or `group` is required. */
   user?: string;
@@ -107,13 +107,13 @@ export interface ChownOptions extends RequestOptions {
   recursive?: boolean;
 }
 
-/** Options for {@link RuntimeFiles.watch}. */
+/** Options for {@link RuntimeFile.watch}. */
 export interface WatchOptions extends RequestOptions {
   /** Watch subdirectories too. Defaults to `false`. */
   recursive?: boolean;
 }
 
-/** Options for {@link RuntimeFiles.find}. */
+/** Options for {@link RuntimeFile.find}. */
 export interface FindOptions extends RequestOptions {
   /** Text or regular expression to search file contents for. */
   pattern?: string;
@@ -131,7 +131,7 @@ export interface FindOptions extends RequestOptions {
   maxDepth?: number;
 }
 
-/** Options for {@link RuntimeFiles.replace}. */
+/** Options for {@link RuntimeFile.replace}. */
 export interface ReplaceOptions extends RequestOptions {
   /** Restrict the replacement to filenames matching this glob. */
   glob?: string;
@@ -160,10 +160,10 @@ function requestOptions(options: RequestOptions): RequestOptions {
 /**
  * Read, write, and manage files inside a runtime.
  *
- * Reached through `client.runtimes.files` or, with the runtime already bound,
- * through `runtime.files`.
+ * Reached through `client.runtime.file` or, with the runtime already bound,
+ * through `runtime.file`.
  */
-export class RuntimeFiles extends APIResource {
+export class RuntimeFile extends APIResource {
   /** Read a text file. */
   async read(
     runtimeId: string,
@@ -565,7 +565,7 @@ export class RuntimeFiles extends APIResource {
    *
    * @example
    * ```ts
-   * for await (const event of client.runtimes.files.watch(id, '/workspace')) {
+   * for await (const event of client.runtime.file.watch(id, '/workspace')) {
    *   console.log(event.type, event.path);
    *   if (event.type === 'write') break;
    * }

@@ -20,13 +20,13 @@ const client = new GravixLayer();
 
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
-const runtime = await client.runtimes.create({ template: TEMPLATE, timeoutSeconds: 1800 });
+const runtime = await client.runtime.create({ template: TEMPLATE, timeoutSeconds: 1800 });
 console.log(`1. Created : ${runtime.runtimeId} (${runtime.status})`);
 
 // Put some state in the interpreter and on disk.
 const context = await runtime.createContext();
 await runtime.runCode('answer = 42', { contextId: context.contextId });
-await runtime.files.write('/workspace/state.txt', 'written before pausing');
+await runtime.file.write('/workspace/state.txt', 'written before pausing');
 console.log('2. Working : set a variable and wrote a file');
 
 await runtime.pause();
@@ -42,7 +42,7 @@ const variable = await runtime.runCode('print(f"answer is still {answer}")', {
   contextId: context.contextId,
 });
 console.log(`5. Memory  : ${variable.stdout.trim()}`);
-console.log(`   Disk    : ${(await runtime.files.read('/workspace/state.txt')).content}`);
+console.log(`   Disk    : ${(await runtime.file.read('/workspace/state.txt')).content}`);
 
 await runtime.kill();
 console.log(`6. Stopped : alive=${await runtime.isAlive()}`);

@@ -52,7 +52,7 @@ describe('read and write', () => {
     const { client, http } = testClient([
       jsonResponse({ content: 'hello', path: '/workspace/a.txt', size: 5 }),
     ]);
-    const result = await client.runtimes.files.read(RUNTIME_ID, '/workspace/a.txt');
+    const result = await client.runtime.file.read(RUNTIME_ID, '/workspace/a.txt');
 
     expect(http.last().url).toContain('/files/read');
     expect(http.jsonBody()).toEqual({ path: '/workspace/a.txt' });
@@ -62,7 +62,7 @@ describe('read and write', () => {
 
   it('measures the content when the API omits the size', async () => {
     const { client } = testClient([jsonResponse({ content: 'héllo' })]);
-    const result = await client.runtimes.files.read(RUNTIME_ID, '/a.txt');
+    const result = await client.runtime.file.read(RUNTIME_ID, '/a.txt');
     // Six bytes, five characters: the size is in bytes.
     expect(result.size).toBe(6);
   });
@@ -71,7 +71,7 @@ describe('read and write', () => {
     const { client, http } = testClient([
       jsonResponse({ message: 'written', path: '/a.txt', bytes_written: 8 }),
     ]);
-    const result = await client.runtimes.files.write(RUNTIME_ID, '/a.txt', 'contents');
+    const result = await client.runtime.file.write(RUNTIME_ID, '/a.txt', 'contents');
 
     expect(http.jsonBody()).toEqual({ path: '/a.txt', content: 'contents' });
     expect(result.bytesWritten).toBe(8);
@@ -79,7 +79,7 @@ describe('read and write', () => {
 
   it('deletes a file', async () => {
     const { client, http } = testClient([jsonResponse({ message: 'deleted' })]);
-    const result = await client.runtimes.files.delete(RUNTIME_ID, '/a.txt');
+    const result = await client.runtime.file.delete(RUNTIME_ID, '/a.txt');
 
     expect(http.last().url).toContain('/files/delete');
     expect(result.path).toBe('/a.txt');
@@ -94,7 +94,7 @@ describe('read and write', () => {
         ],
       }),
     ]);
-    const result = await client.runtimes.files.list(RUNTIME_ID);
+    const result = await client.runtime.file.list(RUNTIME_ID);
 
     expect(http.jsonBody()).toEqual({ path: '/workspace' });
     expect(result.files).toHaveLength(2);
@@ -104,7 +104,7 @@ describe('read and write', () => {
   it('rejects a traversal path before sending anything', async () => {
     const { client, http } = testClient([jsonResponse({})]);
     await expectRejection(
-      client.runtimes.files.read(RUNTIME_ID, '../../etc/passwd'),
+      client.runtime.file.read(RUNTIME_ID, '../../etc/passwd'),
       GravixLayerInvalidArgumentError,
     );
     expect(http.requests).toHaveLength(0);
@@ -116,7 +116,7 @@ describe('uploads', () => {
     const { client, http } = testClient([
       jsonResponse([{ path: '/workspace/data.bin', name: 'data.bin', type: 'file' }]),
     ]);
-    const result = await client.runtimes.files.upload(
+    const result = await client.runtime.file.upload(
       RUNTIME_ID,
       '/workspace/data.bin',
       new Uint8Array([1, 2, 3]),
@@ -136,7 +136,7 @@ describe('uploads', () => {
 
   it('synthesises a result when the API answers with an empty body', async () => {
     const { client } = testClient([jsonResponse({})]);
-    const result = await client.runtimes.files.upload(RUNTIME_ID, '/tmp/x.txt', 'hi');
+    const result = await client.runtime.file.upload(RUNTIME_ID, '/tmp/x.txt', 'hi');
     expect(result).toEqual({ path: '/tmp/x.txt', name: 'x.txt', type: 'file', size: 2 });
   });
 
@@ -144,7 +144,7 @@ describe('uploads', () => {
     const { client } = testClient([
       jsonResponse([{ path: '/tmp/x.bin', name: 'x.bin', type: 'file' }]),
     ]);
-    const result = await client.runtimes.files.upload(
+    const result = await client.runtime.file.upload(
       RUNTIME_ID,
       '/tmp/x.bin',
       new Uint8Array([1, 2, 3, 4]),
@@ -155,7 +155,7 @@ describe('uploads', () => {
   it('gives every file in a batch its own destination', async () => {
     const { client, http } = testClient([echoUpload]);
 
-    const result = await client.runtimes.files.writeMany(RUNTIME_ID, [
+    const result = await client.runtime.file.writeMany(RUNTIME_ID, [
       { path: '/workspace/project/a.txt', data: 'first' },
       { path: '/workspace/project/src/b.txt', data: 'second' },
     ]);
@@ -180,7 +180,7 @@ describe('uploads', () => {
   it('applies the mode and owner an entry carries', async () => {
     const { client, http } = testClient([echoUpload]);
 
-    await client.runtimes.files.writeMany(
+    await client.runtime.file.writeMany(
       RUNTIME_ID,
       [
         { path: '/workspace/run.sh', data: '#!/bin/sh\n', mode: 0o755 },
@@ -208,7 +208,7 @@ describe('uploads', () => {
           : echoUpload(_attempt, request),
     ]);
 
-    const result = await client.runtimes.files.writeMany(RUNTIME_ID, [
+    const result = await client.runtime.file.writeMany(RUNTIME_ID, [
       { path: '/a.txt', data: 'ok' },
       { path: '/b.txt', data: 'no' },
     ]);
@@ -223,7 +223,7 @@ describe('uploads', () => {
     const { client } = testClient([errorResponse(403, 'permission denied')]);
 
     const error = await expectRejection(
-      client.runtimes.files.writeMany(RUNTIME_ID, [
+      client.runtime.file.writeMany(RUNTIME_ID, [
         { path: '/a.txt', data: 'ok' },
         { path: '/b.txt', data: 'no' },
       ]),
@@ -235,7 +235,7 @@ describe('uploads', () => {
   it('rejects a batch whose concurrency is not positive', async () => {
     const { client, http } = testClient([echoUpload]);
     await expectRejection(
-      client.runtimes.files.writeMany(RUNTIME_ID, [{ path: '/a.txt', data: 'ok' }], {
+      client.runtime.file.writeMany(RUNTIME_ID, [{ path: '/a.txt', data: 'ok' }], {
         concurrency: 0,
       }),
       GravixLayerInvalidArgumentError,
@@ -245,7 +245,7 @@ describe('uploads', () => {
 
   it('short-circuits an empty batch', async () => {
     const { client, http } = testClient([jsonResponse([])]);
-    const result = await client.runtimes.files.writeMany(RUNTIME_ID, []);
+    const result = await client.runtime.file.writeMany(RUNTIME_ID, []);
 
     expect(result).toEqual({ files: [], partialFailure: false });
     expect(http.requests).toHaveLength(0);
@@ -255,14 +255,14 @@ describe('uploads', () => {
     const bytes = new Uint8Array([104, 105]);
     const { client, http } = testClient([bytesResponse(bytes), bytesResponse(bytes)]);
 
-    expect(await client.runtimes.files.download(RUNTIME_ID, '/a.bin')).toEqual(bytes);
+    expect(await client.runtime.file.download(RUNTIME_ID, '/a.bin')).toEqual(bytes);
     expect(http.query().get('path')).toBe('/a.bin');
-    expect(await client.runtimes.files.downloadText(RUNTIME_ID, '/a.bin')).toBe('hi');
+    expect(await client.runtime.file.downloadText(RUNTIME_ID, '/a.bin')).toBe('hi');
   });
 
   it('uses the legacy single-file endpoint when asked', async () => {
     const { client, http } = testClient([jsonResponse({ message: 'ok', size: 2 })]);
-    const result = await client.runtimes.files.uploadFile(RUNTIME_ID, 'hi', '/tmp/a.txt');
+    const result = await client.runtime.file.uploadFile(RUNTIME_ID, 'hi', '/tmp/a.txt');
 
     expect(http.last().url).toContain('/upload');
     const { names, contents } = await formParts(http.last().body);
@@ -275,7 +275,7 @@ describe('uploads', () => {
 describe('metadata and structure', () => {
   it('creates a directory recursively by default', async () => {
     const { client, http } = testClient([jsonResponse({ message: 'created', success: true })]);
-    const result = await client.runtimes.files.createDirectory(RUNTIME_ID, '/a/b/c');
+    const result = await client.runtime.file.createDirectory(RUNTIME_ID, '/a/b/c');
 
     expect(http.jsonBody()).toEqual({ path: '/a/b/c', recursive: true });
     expect(result.success).toBe(true);
@@ -283,7 +283,7 @@ describe('metadata and structure', () => {
 
   it('passes a directory mode as an octal string', async () => {
     const { client, http } = testClient([jsonResponse({ message: 'created' })]);
-    await client.runtimes.files.createDirectory(RUNTIME_ID, '/a', {
+    await client.runtime.file.createDirectory(RUNTIME_ID, '/a', {
       recursive: false,
       mode: 0o700,
     });
@@ -292,7 +292,7 @@ describe('metadata and structure', () => {
 
   it('reports a missing path without inventing metadata', async () => {
     const { client } = testClient([jsonResponse({ exists: false })]);
-    expect(await client.runtimes.files.getInfo(RUNTIME_ID, '/nope')).toEqual({ exists: false });
+    expect(await client.runtime.file.getInfo(RUNTIME_ID, '/nope')).toEqual({ exists: false });
   });
 
   it('returns metadata for an existing path', async () => {
@@ -302,7 +302,7 @@ describe('metadata and structure', () => {
         info: { name: 'a.txt', path: '/a.txt', type: 'file', size: 3 },
       }),
     ]);
-    const result = await client.runtimes.files.getInfo(RUNTIME_ID, '/a.txt');
+    const result = await client.runtime.file.getInfo(RUNTIME_ID, '/a.txt');
 
     expect(result.exists).toBe(true);
     expect(result.info?.size).toBe(3);
@@ -310,7 +310,7 @@ describe('metadata and structure', () => {
 
   it('changes permissions', async () => {
     const { client, http } = testClient([jsonResponse({ message: 'ok', success: true })]);
-    await client.runtimes.files.setPermissions(RUNTIME_ID, '/run.sh', '755');
+    await client.runtime.file.setPermissions(RUNTIME_ID, '/run.sh', '755');
 
     expect(http.last().url).toContain('/files/set-mode');
     expect(http.jsonBody()).toEqual({ path: '/run.sh', mode: '0755' });
@@ -322,10 +322,10 @@ describe('metadata and structure', () => {
       jsonResponse({ success: true, source: '/a', destination: '/c' }),
     ]);
 
-    await client.runtimes.files.move(RUNTIME_ID, '/a', '/b', { overwrite: true });
+    await client.runtime.file.move(RUNTIME_ID, '/a', '/b', { overwrite: true });
     expect(http.jsonBody(0)).toEqual({ source: '/a', destination: '/b', overwrite: true });
 
-    await client.runtimes.files.copy(RUNTIME_ID, '/a', '/c', { recursive: true });
+    await client.runtime.file.copy(RUNTIME_ID, '/a', '/c', { recursive: true });
     expect(http.jsonBody(1)).toEqual({
       source: '/a',
       destination: '/c',
@@ -337,11 +337,11 @@ describe('metadata and structure', () => {
   it('changes ownership and requires a target', async () => {
     const { client, http } = testClient([jsonResponse({ success: true, message: 'ok' })]);
 
-    await client.runtimes.files.chown(RUNTIME_ID, '/a', { user: 'root', recursive: true });
+    await client.runtime.file.chown(RUNTIME_ID, '/a', { user: 'root', recursive: true });
     expect(http.jsonBody()).toEqual({ path: '/a', recursive: true, user: 'root' });
 
     await expectRejection(
-      client.runtimes.files.chown(RUNTIME_ID, '/a'),
+      client.runtime.file.chown(RUNTIME_ID, '/a'),
       GravixLayerInvalidArgumentError,
     );
   });
@@ -351,7 +351,7 @@ describe('search', () => {
   it('requires a pattern or a glob', async () => {
     const { client, http } = testClient([jsonResponse({})]);
     await expectRejection(
-      client.runtimes.files.find(RUNTIME_ID, '/src'),
+      client.runtime.file.find(RUNTIME_ID, '/src'),
       GravixLayerInvalidArgumentError,
     );
     expect(http.requests).toHaveLength(0);
@@ -365,7 +365,7 @@ describe('search', () => {
         truncated: false,
       }),
     ]);
-    const result = await client.runtimes.files.find(RUNTIME_ID, '/src', {
+    const result = await client.runtime.file.find(RUNTIME_ID, '/src', {
       pattern: 'TODO',
       glob: '*.ts',
       regex: true,
@@ -399,7 +399,7 @@ describe('search', () => {
     const { client, http } = testClient([
       jsonResponse({ files: [{ path: '/a.ts', replacements: 2 }], total_replacements: 2 }),
     ]);
-    const result = await client.runtimes.files.replace(RUNTIME_ID, '/src', 'old', 'new', {
+    const result = await client.runtime.file.replace(RUNTIME_ID, '/src', 'old', 'new', {
       dryRun: true,
     });
 
@@ -415,7 +415,7 @@ describe('search', () => {
   it('rejects an empty replace pattern', async () => {
     const { client } = testClient([jsonResponse({})]);
     await expectRejection(
-      client.runtimes.files.replace(RUNTIME_ID, '/src', '', 'new'),
+      client.runtime.file.replace(RUNTIME_ID, '/src', '', 'new'),
       GravixLayerInvalidArgumentError,
     );
   });
@@ -431,7 +431,7 @@ describe('watch', () => {
     ]);
 
     const events = await collect(
-      client.runtimes.files.watch(RUNTIME_ID, '/workspace', { recursive: true }),
+      client.runtime.file.watch(RUNTIME_ID, '/workspace', { recursive: true }),
     );
 
     expect(http.jsonBody()).toEqual({ path: '/workspace', recursive: true });
@@ -442,7 +442,7 @@ describe('watch', () => {
   it('raises when the watcher itself fails', async () => {
     const { client } = testClient([sseJson([{ type: 'error', message: 'path vanished' }])]);
     await expectRejection(
-      collect(client.runtimes.files.watch(RUNTIME_ID, '/gone')),
+      collect(client.runtime.file.watch(RUNTIME_ID, '/gone')),
       GravixLayerInvalidArgumentError,
     );
   });

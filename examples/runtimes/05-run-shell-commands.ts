@@ -26,7 +26,7 @@ const policy = await client.networkPolicies.create(`shell-example-${Date.now()}`
 
 let runtime: Runtime | undefined;
 try {
-  runtime = await client.runtimes.create({
+  runtime = await client.runtime.create({
     template: TEMPLATE,
     networkPolicyIds: [policy.id],
     timeoutSeconds: 600,

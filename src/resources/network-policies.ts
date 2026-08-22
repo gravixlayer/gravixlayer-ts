@@ -420,7 +420,7 @@ export class NetworkPolicies extends APIResource {
    * Attach a policy to a runtime.
    *
    * Attaching at creation time, with `networkPolicyIds` on
-   * `client.runtimes.create()`, applies the policy before the guest's first
+   * `client.runtime.create()`, applies the policy before the guest's first
    * packet rather than after.
    */
   async attach(

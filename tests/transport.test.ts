@@ -50,14 +50,14 @@ describe('error mapping', () => {
   for (const [status, errorClass] of cases) {
     it(`maps ${status} to ${errorClass.name}`, async () => {
       const { client } = testClient([errorResponse(status, 'nope')]);
-      const error = await expectRejection(client.runtimes.list(), errorClass);
+      const error = await expectRejection(client.runtime.list(), errorClass);
       expect(error.status).toBe(status);
     });
   }
 
   it('maps 401 without echoing the response body', async () => {
     const { client } = testClient([errorResponse(401, 'key sk-secret-value is invalid')]);
-    const error = await expectRejection(client.runtimes.list(), GravixLayerAuthenticationError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerAuthenticationError);
 
     expect(error.message).toBe('Authentication failed.');
     expect(error.message).not.toContain('sk-secret');
@@ -65,21 +65,21 @@ describe('error mapping', () => {
 
   it('maps an exhausted 429 to a rate-limit error', async () => {
     const { client } = testClient([errorResponse(429, 'slow down')]);
-    const error = await expectRejection(client.runtimes.list(), GravixLayerRateLimitError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerRateLimitError);
     expect(error.status).toBe(429);
     expect(error.retryAfterSeconds).toBeUndefined();
   });
 
   it('reports the wait a rate-limit response asked for', async () => {
     const { client } = testClient([errorResponse(429, 'slow down', { 'retry-after': '30' })]);
-    const error = await expectRejection(client.runtimes.list(), GravixLayerRateLimitError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerRateLimitError);
     expect(error.retryAfterSeconds).toBe(30);
   });
 
   it('reads a rate-limit wait given as a date', async () => {
     const when = new Date(Date.now() + 45_000).toUTCString();
     const { client } = testClient([errorResponse(429, 'slow down', { 'retry-after': when })]);
-    const error = await expectRejection(client.runtimes.list(), GravixLayerRateLimitError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerRateLimitError);
 
     // A whole second can elapse between the header being built and read.
     expect(error.retryAfterSeconds).toBeGreaterThanOrEqual(43);
@@ -88,7 +88,7 @@ describe('error mapping', () => {
 
   it('ignores a rate-limit wait it cannot make sense of', async () => {
     const { client } = testClient([errorResponse(429, 'slow down', { 'retry-after': 'soon' })]);
-    const error = await expectRejection(client.runtimes.list(), GravixLayerRateLimitError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerRateLimitError);
     expect(error.retryAfterSeconds).toBeUndefined();
   });
 
@@ -100,14 +100,14 @@ describe('error mapping', () => {
       }),
     ]);
 
-    const error = await expectRejection(client.runtimes.list(), GravixLayerBadRequestError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerBadRequestError);
     expect(error.message).toBe('template not found');
     expect(error.body).toEqual({ error: 'template not found', code: 'E_TEMPLATE' });
   });
 
   it('falls back to the raw body when it is not JSON', async () => {
     const { client } = testClient([new Response('upstream exploded', { status: 502 })]);
-    const error = await expectRejection(client.runtimes.list(), GravixLayerServerError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerServerError);
     expect(error.message).toBe('upstream exploded');
   });
 
@@ -115,13 +115,13 @@ describe('error mapping', () => {
     const { client } = testClient([
       jsonResponse({ error: { message: 'quota exceeded', code: 7 } }, 400),
     ]);
-    const error = await expectRejection(client.runtimes.list(), GravixLayerBadRequestError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerBadRequestError);
     expect(error.message).toBe('quota exceeded');
   });
 
   it('exposes response headers and a request id when present', async () => {
     const { client } = testClient([errorResponse(500, 'boom', { 'x-request-id': 'req-42' })]);
-    const error = await expectRejection(client.runtimes.list(), GravixLayerServerError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerServerError);
 
     expect(error.headers?.['x-request-id']).toBe('req-42');
     expect(error.requestId).toBe('req-42');
@@ -131,13 +131,13 @@ describe('error mapping', () => {
     const { client } = testClient([
       new Response('{not json', { status: 200, headers: { 'content-type': 'application/json' } }),
     ]);
-    const error = await expectRejection(client.runtimes.list(), GravixLayerError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerError);
     expect(error.message).toMatch(/malformed JSON/i);
   });
 
   it('keeps every error under one base class', async () => {
     const { client } = testClient([errorResponse(400)]);
-    await expect(client.runtimes.list()).rejects.toBeInstanceOf(GravixLayerError);
+    await expect(client.runtime.list()).rejects.toBeInstanceOf(GravixLayerError);
   });
 });
 
@@ -150,7 +150,7 @@ describe('retries', () => {
         { maxRetries: 3, ...NO_TIMEOUT },
       );
 
-      const result = await client.runtimes.list();
+      const result = await client.runtime.list();
       expect(result.total).toBe(3);
       expect(http.requests).toHaveLength(3);
     } finally {
@@ -166,7 +166,7 @@ describe('retries', () => {
         { maxRetries: 1, ...NO_TIMEOUT },
       );
 
-      await client.runtimes.list();
+      await client.runtime.list();
       expect(http.requests).toHaveLength(2);
     } finally {
       timers.mockRestore();
@@ -175,7 +175,7 @@ describe('retries', () => {
 
   it.each([400, 401, 403, 404, 409, 422, 500])('does not retry %i', async (status) => {
     const { client, http } = testClient([errorResponse(status)], { maxRetries: 3 });
-    await expect(client.runtimes.list()).rejects.toBeInstanceOf(GravixLayerError);
+    await expect(client.runtime.list()).rejects.toBeInstanceOf(GravixLayerError);
     expect(http.requests).toHaveLength(1);
   });
 
@@ -186,7 +186,7 @@ describe('retries', () => {
         maxRetries: 2,
         ...NO_TIMEOUT,
       });
-      await expect(client.runtimes.list()).rejects.toBeInstanceOf(GravixLayerServerError);
+      await expect(client.runtime.list()).rejects.toBeInstanceOf(GravixLayerServerError);
       expect(http.requests).toHaveLength(3);
     } finally {
       timers.mockRestore();
@@ -200,7 +200,7 @@ describe('retries', () => {
         maxRetries: 5,
         ...NO_TIMEOUT,
       });
-      await expect(client.runtimes.list({ maxRetries: 0 })).rejects.toBeInstanceOf(
+      await expect(client.runtime.list({ maxRetries: 0 })).rejects.toBeInstanceOf(
         GravixLayerServerError,
       );
       expect(http.requests).toHaveLength(1);
@@ -223,7 +223,7 @@ describe('retries', () => {
         },
       });
 
-      await client.runtimes.list();
+      await client.runtime.list();
       expect(attempts).toBe(3);
     } finally {
       timers.mockRestore();
@@ -241,7 +241,7 @@ describe('retries', () => {
         },
       });
 
-      const error = await expectRejection(client.runtimes.list(), GravixLayerConnectionError);
+      const error = await expectRejection(client.runtime.list(), GravixLayerConnectionError);
       expect(error.message).toContain('ECONNREFUSED');
     } finally {
       timers.mockRestore();
@@ -303,7 +303,7 @@ describe('timeout and abort', () => {
         }),
     });
 
-    const error = await expectRejection(client.runtimes.list(), GravixLayerTimeoutError);
+    const error = await expectRejection(client.runtime.list(), GravixLayerTimeoutError);
     expect(error).toBeInstanceOf(GravixLayerConnectionError);
   });
 
@@ -318,7 +318,7 @@ describe('timeout and abort', () => {
         }),
     });
 
-    const pending = client.runtimes.list({ signal: controller.signal });
+    const pending = client.runtime.list({ signal: controller.signal });
     controller.abort();
     await expectRejection(pending, GravixLayerAbortError);
   });
@@ -337,7 +337,7 @@ describe('timeout and abort', () => {
     });
 
     await expectRejection(
-      client.runtimes.list({ signal: controller.signal }),
+      client.runtime.list({ signal: controller.signal }),
       GravixLayerAbortError,
     );
     expect(calls).toBe(0);
@@ -347,7 +347,7 @@ describe('timeout and abort', () => {
     const { client, http } = testClient([jsonResponse({ runtimes: [], total: 0 })], {
       timeout: 0,
     });
-    await client.runtimes.list();
+    await client.runtime.list();
     expect(http.requests).toHaveLength(1);
   });
 });
@@ -355,7 +355,7 @@ describe('timeout and abort', () => {
 describe('URL construction', () => {
   it('places the service prefix between the base URL and the path', async () => {
     const { client, http } = testClient([jsonResponse(runtimePayload())]);
-    await client.runtimes.retrieve(RUNTIME_ID);
+    await client.runtime.retrieve(RUNTIME_ID);
 
     expect(http.last().url).toBe(`https://api.test.invalid/v1/agents/runtime/${RUNTIME_ID}`);
   });

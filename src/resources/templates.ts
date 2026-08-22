@@ -7,7 +7,7 @@
  * the installation.
  */
 
-import { GravixLayerError } from '../core/errors.js';
+import { GravixLayerError, GravixLayerInvalidArgumentError } from '../core/errors.js';
 import { asRecord } from '../core/parse.js';
 import { sleep } from '../core/time.js';
 import type { RequestOptions } from '../core/transport.js';
@@ -73,8 +73,22 @@ export interface ListTemplatesOptions extends RequestOptions {
   projectId?: string;
 }
 
+/** Options for {@link Templates.build}. */
+export interface BuildTemplateOptions extends RequestOptions {
+  /**
+   * Cloud to build in. Defaults to the client's cloud (`aws`, or
+   * `GRAVIXLAYER_CLOUD`).
+   */
+  cloud?: string;
+  /**
+   * Region to build in. Defaults to the client's region (`us-east-1`, or
+   * `GRAVIXLAYER_REGION`).
+   */
+  region?: string;
+}
+
 /** Options for {@link Templates.buildAndWait}. */
-export interface BuildAndWaitOptions extends RequestOptions {
+export interface BuildAndWaitOptions extends BuildTemplateOptions {
   /** Milliseconds between status polls. Defaults to 5000. */
   pollIntervalMs?: number;
   /** Milliseconds to wait before giving up. Defaults to 600000. */
@@ -99,19 +113,53 @@ function requestOptions(options: RequestOptions): RequestOptions {
 
 /** Accept either a builder or an already-serialized build request. */
 function toPayload(source: TemplateBuilder | Record<string, unknown>): Record<string, unknown> {
-  return source instanceof TemplateBuilder ? source.toJSON() : source;
+  return source instanceof TemplateBuilder ? source.toJSON() : { ...source };
+}
+
+function nonempty(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
 }
 
 /** Build and manage templates. */
 export class Templates extends APIResource {
   /**
+   * Fill cloud and region from the client unless the payload or call already
+   * named them. Same contract as runtime create: `new GravixLayer()` builds
+   * in aws/us-east-1.
+   */
+  private withPlacement(
+    payload: Record<string, unknown>,
+    options: BuildTemplateOptions,
+  ): Record<string, unknown> {
+    const cloud = nonempty(payload['cloud']) ?? nonempty(options.cloud) ?? this.cloud;
+    const region = nonempty(payload['region']) ?? nonempty(options.region) ?? this.region;
+    if (!cloud) {
+      throw new GravixLayerInvalidArgumentError(
+        'A cloud is required. Pass `cloud` to build(), or set it on the client.',
+      );
+    }
+    if (!region) {
+      throw new GravixLayerInvalidArgumentError(
+        'A region is required. Pass `region` to build(), or set it on the client.',
+      );
+    }
+    return { ...payload, cloud, region };
+  }
+  /**
    * Start a build and return immediately.
    *
    * Use {@link buildAndWait} unless you want to drive the polling yourself.
+   *
+   * Cloud and region default to the client's (`aws` / `us-east-1`) so a
+   * `new GravixLayer()` call builds where runtimes from the same client
+   * would be created. Pass them here, or set them on the builder payload,
+   * to override.
    */
   async build(
     template: TemplateBuilder | Record<string, unknown>,
-    options: RequestOptions = {},
+    options: BuildTemplateOptions = {},
   ): Promise<TemplateBuildResponse> {
     return parseTemplateBuildResponse(
       asRecord(
@@ -119,8 +167,8 @@ export class Templates extends APIResource {
           method: 'POST',
           path: 'template/build',
           service: SERVICES.agents,
-          body: toPayload(template),
-          options,
+          body: this.withPlacement(toPayload(template), options),
+          options: requestOptions(options),
         }),
       ),
     );
@@ -168,7 +216,11 @@ export class Templates extends APIResource {
     const timeoutMs = options.timeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
     const transport = requestOptions(options);
 
-    const started = await this.build(template, transport);
+    const started = await this.build(template, {
+      ...transport,
+      cloud: options.cloud,
+      region: options.region,
+    });
     const buildId = started.buildId;
     const deadline = Date.now() + timeoutMs;
 

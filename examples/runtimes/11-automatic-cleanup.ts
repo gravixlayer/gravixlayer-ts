@@ -19,7 +19,7 @@ const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
 console.log('--- await using ---');
 {
-  await using runtime = await client.runtimes.create({
+  await using runtime = await client.runtime.create({
     template: TEMPLATE,
     timeoutSeconds: 300,
   });
@@ -29,14 +29,14 @@ console.log('--- await using ---');
   const greeting = await runtime.runCode('print("hello from a disposed runtime")');
   console.log(`Output     : ${greeting.stdout.trim()}`);
 
-  await runtime.files.write('/workspace/greeting.txt', 'written inside the block');
-  const file = await runtime.files.read('/workspace/greeting.txt');
+  await runtime.file.write('/workspace/greeting.txt', 'written inside the block');
+  const file = await runtime.file.read('/workspace/greeting.txt');
   console.log(`File       : ${file.content}`);
 }
 console.log('Runtime terminated on the way out of the block.');
 
 console.log('\n--- try/finally ---');
-const runtime = await client.runtimes.create({ template: TEMPLATE, timeoutSeconds: 300 });
+const runtime = await client.runtime.create({ template: TEMPLATE, timeoutSeconds: 300 });
 try {
   const version = await runtime.runCmd('python --version');
   console.log(`Python     : ${version.stdout.trim()}`);

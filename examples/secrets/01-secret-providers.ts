@@ -64,7 +64,7 @@ try {
 
   // 5. Attaching at creation means the secrets are present before the first
   //    line of your code runs.
-  runtime = await client.runtimes.create({
+  runtime = await client.runtime.create({
     template: TEMPLATE,
     providers: [provider.id],
     timeoutSeconds: 600,

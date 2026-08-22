@@ -16,7 +16,7 @@ const client = new GravixLayer();
 
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
-const runtime = await client.runtimes.create({ template: TEMPLATE });
+const runtime = await client.runtime.create({ template: TEMPLATE });
 console.log(`Runtime    : ${runtime.runtimeId}`);
 
 // 1. Callbacks. The promise still resolves with the full result, so existing

@@ -250,7 +250,7 @@ export class RuntimePty extends APIResource {
    *
    * @example
    * ```ts
-   * for await (const event of client.runtimes.pty.stream(id, sessionId)) {
+   * for await (const event of client.runtime.pty.stream(id, sessionId)) {
    *   if (event.type === 'data') process.stdout.write(event.data);
    *   if (event.type === 'exit') break;
    * }

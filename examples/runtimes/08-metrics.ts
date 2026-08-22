@@ -26,7 +26,7 @@ function report(label: string, metrics: RuntimeMetrics): void {
   console.log(`Sampled at : ${metrics.timestamp}`);
 }
 
-const runtime = await client.runtimes.create({ template: TEMPLATE });
+const runtime = await client.runtime.create({ template: TEMPLATE });
 console.log(`Runtime    : ${runtime.runtimeId}`);
 
 report('Idle', await runtime.getMetrics());

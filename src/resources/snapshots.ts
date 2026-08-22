@@ -83,7 +83,7 @@ export class Snapshots extends APIResource {
    * @example
    * ```ts
    * await client.snapshots.create(runtime.runtimeId, 'deps-installed', { kind: 'hot' });
-   * const warm = await client.runtimes.create({ snapshot: 'deps-installed' });
+   * const warm = await client.runtime.create({ snapshot: 'deps-installed' });
    * ```
    */
   async create(

@@ -40,11 +40,11 @@ import {
 } from '../../types/runtime.js';
 import { parseTemplateInfo, type TemplateListResponse } from '../../types/templates.js';
 import { APIResource, type ClientContext } from '../resource.js';
-import { RuntimeFiles } from './files.js';
+import { RuntimeFile } from './files.js';
 import { RuntimeGit } from './git.js';
 import { RuntimePty } from './pty.js';
 import { Runtime } from './runtime.js';
-import { RuntimeServices } from './services.js';
+import { RuntimeService } from './services.js';
 
 /**
  * Restoring from a snapshot boots a full guest, which takes longer than the
@@ -204,26 +204,26 @@ export class RuntimeTemplates extends APIResource {
 /**
  * Create and control runtimes.
  *
- * Reached through `client.runtimes`.
+ * Reached through `client.runtime`.
  */
 export class Runtimes extends APIResource {
   /** Read, write, and manage files inside a runtime. */
-  readonly files: RuntimeFiles;
+  readonly file: RuntimeFile;
   /** Interactive terminal sessions. */
   readonly pty: RuntimePty;
   /** Git operations executed inside a runtime. */
   readonly git: RuntimeGit;
   /** Publish guest ports to public URLs. */
-  readonly services: RuntimeServices;
+  readonly service: RuntimeService;
   /** Templates a runtime can boot from. */
   readonly templates: RuntimeTemplates;
 
   constructor(context: ClientContext) {
     super(context);
-    this.files = new RuntimeFiles(context);
+    this.file = new RuntimeFile(context);
     this.pty = new RuntimePty(context);
     this.git = new RuntimeGit(context);
-    this.services = new RuntimeServices(context);
+    this.service = new RuntimeService(context);
     this.templates = new RuntimeTemplates(context);
   }
 
@@ -236,7 +236,7 @@ export class Runtimes extends APIResource {
    *
    * @example
    * ```ts
-   * const runtime = await client.runtimes.create({ template: 'base-small' });
+   * const runtime = await client.runtime.create({ template: 'base-small' });
    * const result = await runtime.runCode('print("hello")');
    * await runtime.kill();
    * ```
@@ -513,7 +513,7 @@ export class Runtimes extends APIResource {
    *
    * @example
    * ```ts
-   * const result = await client.runtimes.runCmd(id, 'ls -la');
+   * const result = await client.runtime.runCmd(id, 'ls -la');
    * console.log(result.stdout);
    * ```
    */
@@ -586,7 +586,7 @@ export class Runtimes extends APIResource {
    *
    * @example
    * ```ts
-   * for await (const event of client.runtimes.streamCmd(id, 'npm install')) {
+   * for await (const event of client.runtime.streamCmd(id, 'npm install')) {
    *   if (event.type === 'stdout') process.stdout.write(event.data);
    * }
    * ```
@@ -674,7 +674,7 @@ export class Runtimes extends APIResource {
    *
    * @example
    * ```ts
-   * const result = await client.runtimes.runCode(id, 'print(2 ** 10)');
+   * const result = await client.runtime.runCode(id, 'print(2 ** 10)');
    * console.log(result.logs.stdout.join('\n'));
    * ```
    */
@@ -736,7 +736,7 @@ export class Runtimes extends APIResource {
    *
    * @example
    * ```ts
-   * for await (const event of client.runtimes.streamCode(id, longRunningCode)) {
+   * for await (const event of client.runtime.streamCode(id, longRunningCode)) {
    *   if (event.type === 'stdout') process.stdout.write(event.text);
    * }
    * ```

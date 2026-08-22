@@ -81,7 +81,7 @@ try {
 
   // 5. Attaching at creation applies the policy before the guest's first
   //    packet, rather than after it is already running.
-  runtime = await client.runtimes.create({
+  runtime = await client.runtime.create({
     template: TEMPLATE,
     networkPolicyIds: [policy.id],
     timeoutSeconds: 600,

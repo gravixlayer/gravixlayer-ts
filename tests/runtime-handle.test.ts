@@ -1,7 +1,7 @@
 /**
  * The runtime handle.
  *
- * `client.runtimes.get()` hands back a `Runtime` whose methods are the resource
+ * `client.runtime.get()` hands back a `Runtime` whose methods are the resource
  * methods with the runtime id already applied. What matters here is the
  * binding: that each call lands on the right resource method with the right
  * arguments, and that a terminated handle refuses to keep working. The wire
@@ -29,7 +29,7 @@ const SESSION_ID = 'pty-1';
 
 /** One delegate, and the resource method it is expected to reach. */
 interface ForwardCase {
-  /** Dotted path to the resource method, relative to `client.runtimes`. */
+  /** Dotted path to the resource method, relative to `client.runtime`. */
   target: string;
   /** Invoke the delegate on the handle. */
   call: (runtime: Runtime) => unknown;
@@ -70,90 +70,90 @@ const CASES: readonly ForwardCase[] = [
   { target: 'disableSsh', call: (r) => r.disableSsh(OPTIONS), args: [OPTIONS] },
   { target: 'sshStatus', call: (r) => r.sshStatus(OPTIONS), args: [OPTIONS] },
   { target: 'retrieve', call: (r) => r.refresh(OPTIONS), args: [OPTIONS] },
-  { target: 'services.connect', call: (r) => r.service(8000, OPTIONS), args: [8000, OPTIONS] },
+  { target: 'service.connect', call: (r) => r.service(8000, OPTIONS), args: [8000, OPTIONS] },
 
-  // runtime.files
-  { target: 'files.read', call: (r) => r.files.read('/a.txt', OPTIONS), args: ['/a.txt', OPTIONS] },
+  // runtime.file
+  { target: 'file.read', call: (r) => r.file.read('/a.txt', OPTIONS), args: ['/a.txt', OPTIONS] },
   {
-    target: 'files.write',
-    call: (r) => r.files.write('/a.txt', 'hi', OPTIONS),
+    target: 'file.write',
+    call: (r) => r.file.write('/a.txt', 'hi', OPTIONS),
     args: ['/a.txt', 'hi', OPTIONS],
   },
   {
-    target: 'files.delete',
-    call: (r) => r.files.delete('/a.txt', OPTIONS),
+    target: 'file.delete',
+    call: (r) => r.file.delete('/a.txt', OPTIONS),
     args: ['/a.txt', OPTIONS],
   },
-  { target: 'files.list', call: (r) => r.files.list('/', OPTIONS), args: ['/', OPTIONS] },
+  { target: 'file.list', call: (r) => r.file.list('/', OPTIONS), args: ['/', OPTIONS] },
   {
-    target: 'files.upload',
-    call: (r) => r.files.upload('/a.txt', 'hi', OPTIONS),
+    target: 'file.upload',
+    call: (r) => r.file.upload('/a.txt', 'hi', OPTIONS),
     args: ['/a.txt', 'hi', OPTIONS],
   },
   {
-    target: 'files.writeMany',
-    call: (r) => r.files.writeMany([{ path: '/a.txt', data: 'hi' }], OPTIONS),
+    target: 'file.writeMany',
+    call: (r) => r.file.writeMany([{ path: '/a.txt', data: 'hi' }], OPTIONS),
     args: [[{ path: '/a.txt', data: 'hi' }], OPTIONS],
   },
   {
-    target: 'files.createDirectory',
-    call: (r) => r.files.createDirectory('/dir', OPTIONS),
+    target: 'file.createDirectory',
+    call: (r) => r.file.createDirectory('/dir', OPTIONS),
     args: ['/dir', OPTIONS],
   },
   {
-    target: 'files.getInfo',
-    call: (r) => r.files.getInfo('/a.txt', OPTIONS),
+    target: 'file.getInfo',
+    call: (r) => r.file.getInfo('/a.txt', OPTIONS),
     args: ['/a.txt', OPTIONS],
   },
   {
-    target: 'files.setPermissions',
-    call: (r) => r.files.setPermissions('/a.txt', 0o755, OPTIONS),
+    target: 'file.setPermissions',
+    call: (r) => r.file.setPermissions('/a.txt', 0o755, OPTIONS),
     args: ['/a.txt', 0o755, OPTIONS],
   },
   {
-    target: 'files.move',
-    call: (r) => r.files.move('/a.txt', '/b.txt', OPTIONS),
+    target: 'file.move',
+    call: (r) => r.file.move('/a.txt', '/b.txt', OPTIONS),
     args: ['/a.txt', '/b.txt', OPTIONS],
   },
   {
-    target: 'files.copy',
-    call: (r) => r.files.copy('/a.txt', '/b.txt', OPTIONS),
+    target: 'file.copy',
+    call: (r) => r.file.copy('/a.txt', '/b.txt', OPTIONS),
     args: ['/a.txt', '/b.txt', OPTIONS],
   },
   {
-    target: 'files.chown',
-    call: (r) => r.files.chown('/a.txt', { user: 'app', ...OPTIONS }),
+    target: 'file.chown',
+    call: (r) => r.file.chown('/a.txt', { user: 'app', ...OPTIONS }),
     args: ['/a.txt', { user: 'app', ...OPTIONS }],
   },
   {
-    target: 'files.watch',
-    call: (r) => r.files.watch('/dir', { recursive: true, ...OPTIONS }),
+    target: 'file.watch',
+    call: (r) => r.file.watch('/dir', { recursive: true, ...OPTIONS }),
     args: ['/dir', { recursive: true, ...OPTIONS }],
     streams: true,
   },
   {
-    target: 'files.find',
-    call: (r) => r.files.find('/dir', { pattern: 'TODO', ...OPTIONS }),
+    target: 'file.find',
+    call: (r) => r.file.find('/dir', { pattern: 'TODO', ...OPTIONS }),
     args: ['/dir', { pattern: 'TODO', ...OPTIONS }],
   },
   {
-    target: 'files.replace',
-    call: (r) => r.files.replace('/dir', 'old', 'new', OPTIONS),
+    target: 'file.replace',
+    call: (r) => r.file.replace('/dir', 'old', 'new', OPTIONS),
     args: ['/dir', 'old', 'new', OPTIONS],
   },
   {
-    target: 'files.uploadFile',
-    call: (r) => r.files.uploadFile('hi', '/a.txt', OPTIONS),
+    target: 'file.uploadFile',
+    call: (r) => r.file.uploadFile('hi', '/a.txt', OPTIONS),
     args: ['hi', '/a.txt', OPTIONS],
   },
   {
-    target: 'files.download',
-    call: (r) => r.files.download('/a.txt', OPTIONS),
+    target: 'file.download',
+    call: (r) => r.file.download('/a.txt', OPTIONS),
     args: ['/a.txt', OPTIONS],
   },
   {
-    target: 'files.downloadText',
-    call: (r) => r.files.downloadText('/a.txt', OPTIONS),
+    target: 'file.downloadText',
+    call: (r) => r.file.downloadText('/a.txt', OPTIONS),
     args: ['/a.txt', OPTIONS],
   },
 
@@ -224,30 +224,12 @@ const CASES: readonly ForwardCase[] = [
     call: (r) => r.git.deleteBranch(REPO, 'feature', true, OPTIONS),
     args: [REPO, 'feature', true, OPTIONS],
   },
-
-  // runtime.services
-  {
-    target: 'services.publish',
-    call: (r) => r.services.publish(8000, OPTIONS),
-    args: [8000, OPTIONS],
-  },
-  {
-    target: 'services.connect',
-    call: (r) => r.services.connect(8000, OPTIONS),
-    args: [8000, OPTIONS],
-  },
-  { target: 'services.list', call: (r) => r.services.list(OPTIONS), args: [OPTIONS] },
-  {
-    target: 'services.revoke',
-    call: (r) => r.services.revoke(8000, OPTIONS),
-    args: [8000, OPTIONS],
-  },
 ];
 
 /** Build a handle over a fake client, with no request left in the queue. */
 async function handle(): Promise<{ client: GravixLayer; runtime: Runtime }> {
   const { client } = testClient([jsonResponse(runtimePayload())]);
-  return { client, runtime: await client.runtimes.get(RUNTIME_ID) };
+  return { client, runtime: await client.runtime.get(RUNTIME_ID) };
 }
 
 /** Replace one resource method with a recording stub. */
@@ -255,7 +237,7 @@ function stubMethod(client: GravixLayer, target: string, streams: boolean) {
   const path = target.split('.');
   const name = path.pop() as string;
 
-  let owner = client.runtimes as unknown as Record<string, Record<string, unknown>>;
+  let owner = client.runtime as unknown as Record<string, Record<string, unknown>>;
   for (const step of path) owner = owner[step] as Record<string, Record<string, unknown>>;
 
   const spy = streams
@@ -284,6 +266,8 @@ describe('Runtime handle', () => {
     expect(runtime.timeoutAt).toBeUndefined();
     expect(runtime.metadata).toBeUndefined();
     expect(runtime.info.runtimeId).toBe(RUNTIME_ID);
+    expect((runtime as { files?: unknown }).files).toBeUndefined();
+    expect((runtime as { services?: unknown }).services).toBeUndefined();
   });
 
   it('picks up new state on refresh', async () => {
@@ -292,7 +276,7 @@ describe('Runtime handle', () => {
       jsonResponse(runtimePayload({ status: 'paused', timeout_at: '2026-01-01T01:00:00Z' })),
     ]);
 
-    const runtime = await client.runtimes.get(RUNTIME_ID);
+    const runtime = await client.runtime.get(RUNTIME_ID);
     await runtime.refresh();
 
     expect(runtime.status).toBe('paused');
@@ -305,7 +289,7 @@ describe('Runtime handle', () => {
       jsonResponse({ error: 'not found' }, 404),
     ]);
 
-    const runtime = await client.runtimes.get(RUNTIME_ID);
+    const runtime = await client.runtime.get(RUNTIME_ID);
 
     expect(await runtime.isAlive()).toBe(false);
   });
@@ -317,7 +301,7 @@ describe('Runtime handle', () => {
       jsonResponse(runtimePayload()),
     ]);
 
-    const runtime = await client.runtimes.get(RUNTIME_ID);
+    const runtime = await client.runtime.get(RUNTIME_ID);
 
     expect(await runtime.isAlive()).toBe(false);
     expect(await runtime.isAlive()).toBe(true);
@@ -326,19 +310,19 @@ describe('Runtime handle', () => {
   it('refuses to work after it has been stopped', async () => {
     const { client } = testClient([jsonResponse(runtimePayload()), jsonResponse({ ok: true })]);
 
-    const runtime = await client.runtimes.get(RUNTIME_ID);
+    const runtime = await client.runtime.get(RUNTIME_ID);
     await runtime.kill();
 
     expect(runtime.status).toBe('terminated');
     expect(await runtime.isAlive()).toBe(false);
     await expect(runtime.runCode('1')).rejects.toBeInstanceOf(GravixLayerInvalidArgumentError);
-    await expect(runtime.files.read('/a.txt')).rejects.toBeInstanceOf(
+    await expect(runtime.file.read('/a.txt')).rejects.toBeInstanceOf(
       GravixLayerInvalidArgumentError,
     );
     await expect(runtime.git.status('/repo')).rejects.toBeInstanceOf(
       GravixLayerInvalidArgumentError,
     );
-    await expect(runtime.services.list()).rejects.toBeInstanceOf(GravixLayerInvalidArgumentError);
+    await expect(runtime.service(8000)).rejects.toBeInstanceOf(GravixLayerInvalidArgumentError);
     await expect(runtime.pty.list()).rejects.toBeInstanceOf(GravixLayerInvalidArgumentError);
   });
 
@@ -349,7 +333,7 @@ describe('Runtime handle', () => {
     ]);
 
     {
-      await using runtime = await client.runtimes.get(RUNTIME_ID);
+      await using runtime = await client.runtime.get(RUNTIME_ID);
       expect(runtime.runtimeId).toBe(RUNTIME_ID);
     }
 
@@ -376,7 +360,7 @@ describe('Runtime handle', () => {
     const connect = vi.fn(async () => ({ sessionId: SESSION_ID }));
     const make = vi.fn(() => ({ connect }));
 
-    const pty = client.runtimes.pty as unknown as Record<string, unknown>;
+    const pty = client.runtime.pty as unknown as Record<string, unknown>;
     pty['create'] = create;
     pty['handle'] = make;
 
@@ -390,7 +374,7 @@ describe('Runtime handle', () => {
   it('hands out a stateful terminal handle bound to the runtime', async () => {
     const { client, runtime } = await handle();
     const make = vi.fn(() => ({ sessionId: SESSION_ID }));
-    (client.runtimes.pty as unknown as Record<string, unknown>)['handle'] = make;
+    (client.runtime.pty as unknown as Record<string, unknown>)['handle'] = make;
 
     runtime.pty.handle(SESSION_ID);
 

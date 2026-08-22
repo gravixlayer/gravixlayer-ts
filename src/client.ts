@@ -54,13 +54,15 @@ export interface ClientOptions {
   /**
    * Cloud used when a call does not name one.
    *
-   * Defaults to `GRAVIXLAYER_CLOUD`, then `aws`.
+   * Applied to runtime creates and template builds. Defaults to
+   * `GRAVIXLAYER_CLOUD`, then `aws`.
    */
   cloud?: string;
   /**
    * Region used when a call does not name one.
    *
-   * Defaults to `GRAVIXLAYER_REGION`, then `us-east-1`.
+   * Applied to runtime creates and template builds. Defaults to
+   * `GRAVIXLAYER_REGION`, then `us-east-1`.
    */
   region?: string;
   /** Request timeout in milliseconds. Defaults to 60000. `0` disables it. */
@@ -99,7 +101,7 @@ export interface ClientOptions {
  *
  * const client = new GravixLayer();
  *
- * const runtime = await client.runtimes.create({ template: 'base-small' });
+ * const runtime = await client.runtime.create({ template: 'base-small' });
  * const result = await runtime.runCode('print("hello")');
  * console.log(result.stdout);
  * await runtime.kill();
@@ -107,7 +109,7 @@ export interface ClientOptions {
  */
 export class GravixLayer implements ClientContext {
   /** Isolated virtual machines that run code on demand. */
-  readonly runtimes: Runtimes;
+  readonly runtime: Runtimes;
   /** Reusable runtime images. */
   readonly templates: Templates;
   /** Saved runtime states that new runtimes can start from. */
@@ -123,9 +125,9 @@ export class GravixLayer implements ClientContext {
   readonly transport: Transport;
   /** API base URL, without a trailing slash. */
   readonly baseUrl: string;
-  /** Default cloud for runtime placement. */
+  /** Default cloud for runtime and template placement. */
   readonly cloud: string;
-  /** Default region for runtime placement. */
+  /** Default region for runtime and template placement. */
   readonly region: string;
   /** Default request timeout in milliseconds. */
   readonly timeout: number;
@@ -192,7 +194,7 @@ export class GravixLayer implements ClientContext {
       fetch: fetchImpl,
     });
 
-    this.runtimes = new Runtimes(this);
+    this.runtime = new Runtimes(this);
     this.templates = new Templates(this);
     this.snapshots = new Snapshots(this);
     this.agents = new Agents(this);

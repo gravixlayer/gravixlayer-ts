@@ -67,17 +67,19 @@ describe('construction', () => {
 
   it('exposes every resource namespace', () => {
     const client = new GravixLayer({ apiKey: 'k' });
-    expect(client.runtimes).toBeDefined();
-    expect(client.runtimes.files).toBeDefined();
-    expect(client.runtimes.pty).toBeDefined();
-    expect(client.runtimes.git).toBeDefined();
-    expect(client.runtimes.services).toBeDefined();
-    expect(client.runtimes.templates).toBeDefined();
+    expect(client.runtime).toBeDefined();
+    expect(client.runtime.file).toBeDefined();
+    expect(client.runtime.pty).toBeDefined();
+    expect(client.runtime.git).toBeDefined();
+    expect(client.runtime.service).toBeDefined();
+    expect(client.runtime.templates).toBeDefined();
     expect(client.templates).toBeDefined();
     expect(client.snapshots).toBeDefined();
     expect(client.agents).toBeDefined();
     expect(client.identity.providers).toBeDefined();
     expect(client.networkPolicies).toBeDefined();
+    expect((client.runtime as { files?: unknown }).files).toBeUndefined();
+    expect((client.runtime as { services?: unknown }).services).toBeUndefined();
   });
 
   it('refuses to construct in a browser unless explicitly allowed', () => {
@@ -103,7 +105,7 @@ describe('construction', () => {
 describe('request headers', () => {
   it('sends bearer auth and a versioned user agent', async () => {
     const { client, http } = testClient([jsonResponse({ runtimes: [], total: 0 })]);
-    await client.runtimes.list();
+    await client.runtime.list();
 
     const headers = http.last().headers;
     expect(headers['authorization']).toBe('Bearer test-key');
@@ -114,7 +116,7 @@ describe('request headers', () => {
     const { client, http } = testClient([jsonResponse({ runtimes: [], total: 0 })], {
       defaultHeaders: { 'X-Tenant': 'acme', accept: 'application/json' },
     });
-    await client.runtimes.list({ headers: { 'X-Tenant': 'other' } });
+    await client.runtime.list({ headers: { 'X-Tenant': 'other' } });
 
     expect(http.last().headers['x-tenant']).toBe('other');
   });
@@ -125,10 +127,10 @@ describe('request headers', () => {
       jsonResponse({ message: 'ok' }),
     ]);
 
-    await client.runtimes.list();
+    await client.runtime.list();
     expect(http.requests[0]?.headers['content-type']).toBeUndefined();
 
-    await client.runtimes.setTimeout('11111111-2222-4333-8444-555555555555', 60);
+    await client.runtime.setTimeout('11111111-2222-4333-8444-555555555555', 60);
     expect(http.requests[1]?.headers['content-type']).toBe('application/json');
   });
 });
@@ -186,7 +188,7 @@ describe('fetch resolution', () => {
       fetch: spy,
     });
 
-    await client.runtimes.list();
+    await client.runtime.list();
     expect(spy).toHaveBeenCalledOnce();
   });
 
@@ -199,7 +201,7 @@ describe('fetch resolution', () => {
     });
 
     await expect(
-      client.runtimes.pause('11111111-2222-4333-8444-555555555555'),
+      client.runtime.pause('11111111-2222-4333-8444-555555555555'),
     ).resolves.toBeUndefined();
   });
 });

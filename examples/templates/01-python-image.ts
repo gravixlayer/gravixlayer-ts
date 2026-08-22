@@ -51,4 +51,4 @@ const status = await client.templates.buildAndWait(template, {
 });
 
 console.log(`\nBuilt      : ${status.templateId}`);
-console.log(`Use it     : client.runtimes.create({ template: '${template.name}' })`);
+console.log(`Use it     : client.runtime.create({ template: '${template.name}' })`);

@@ -31,11 +31,11 @@ let restored: Runtime | undefined;
 let captured = false;
 
 try {
-  source = await client.runtimes.create({ template: TEMPLATE });
+  source = await client.runtime.create({ template: TEMPLATE });
   console.log(`Source     : ${source.runtimeId}`);
 
   // Put the runtime into the state worth keeping.
-  await source.files.write(MARKER, 'state at capture time');
+  await source.file.write(MARKER, 'state at capture time');
 
   // Capturing pauses the guest briefly, so it can take a while. The SDK already
   // allows for that with a longer request budget.
@@ -48,7 +48,7 @@ try {
 
   // Change the source afterwards, so the restore is clearly not just a copy of
   // whatever the source happens to look like now.
-  await source.files.write(MARKER, 'mutated after capture');
+  await source.file.write(MARKER, 'mutated after capture');
 
   const listed = await client.snapshots.list({ kind: KIND, runtimeId: source.runtimeId });
   console.log(`Listed     : ${listed.total} snapshot(s) from this runtime`);
@@ -58,10 +58,10 @@ try {
 
   // Restoring always produces a new runtime. `snapshot` and `template` are
   // mutually exclusive, because a snapshot already carries its template.
-  restored = await client.runtimes.create({ snapshot: NAME });
+  restored = await client.runtime.create({ snapshot: NAME });
   console.log(`\nRestored   : ${restored.runtimeId}`);
 
-  const contents = (await restored.files.read(MARKER)).content;
+  const contents = (await restored.file.read(MARKER)).content;
   console.log(`Its disk   : ${contents}`);
   if (contents !== 'state at capture time') {
     throw new Error('The restored runtime did not replay the captured state.');
@@ -73,7 +73,7 @@ try {
   console.log('\nDeactivated: new runtimes are refused');
 
   try {
-    const blocked = await client.runtimes.create({ snapshot: NAME });
+    const blocked = await client.runtime.create({ snapshot: NAME });
     await blocked.kill();
     throw new Error('Expected the API to refuse an inactive snapshot.');
   } catch (error) {

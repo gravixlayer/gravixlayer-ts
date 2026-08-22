@@ -5,7 +5,7 @@
  * import { GravixLayer } from 'gravixlayer';
  *
  * const client = new GravixLayer();
- * const runtime = await client.runtimes.create();
+ * const runtime = await client.runtime.create();
  *
  * const result = await runtime.runCode('print("hello")');
  * console.log(result.stdout);
@@ -75,16 +75,15 @@ export {
 } from './resources/runtimes/runtimes.js';
 
 export {
-  BoundFiles,
+  BoundFile,
   BoundGit,
   BoundPty,
-  BoundServices,
   Runtime,
 } from './resources/runtimes/runtime.js';
 
 export {
   DEFAULT_WORKING_DIR,
-  RuntimeFiles,
+  RuntimeFile,
   type ChownOptions,
   type CopyOptions,
   type CreateDirectoryOptions,
@@ -116,7 +115,7 @@ export {
 } from './resources/runtimes/git.js';
 
 export {
-  RuntimeServices,
+  RuntimeService,
   ServiceHandle,
   type PublishOptions,
   type ServiceRequestInit,
@@ -172,6 +171,7 @@ export {
   TemplateBuildError,
   TemplateBuildTimeoutError,
   type BuildAndWaitOptions,
+  type BuildTemplateOptions,
   type ListTemplatesOptions,
 } from './resources/templates.js';
 

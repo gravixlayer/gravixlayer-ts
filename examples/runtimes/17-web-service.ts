@@ -56,15 +56,15 @@ const policy = await client.networkPolicies.create(`web-service-${Date.now()}`, 
 
 let runtime: Runtime | undefined;
 try {
-  runtime = await client.runtimes.create({
+  runtime = await client.runtime.create({
     template: TEMPLATE,
     networkPolicyIds: [policy.id],
     timeoutSeconds: 600,
   });
   console.log(`Runtime    : ${runtime.runtimeId}`);
 
-  await runtime.files.createDirectory(APP_DIR);
-  await runtime.files.write(`${APP_DIR}/main.py`, APP);
+  await runtime.file.createDirectory(APP_DIR);
+  await runtime.file.write(`${APP_DIR}/main.py`, APP);
 
   const install = await runtime.runCmd('pip install fastapi uvicorn --quiet', {
     timeoutSeconds: 240,
@@ -90,10 +90,10 @@ try {
   console.log(`Items      : ${JSON.stringify(items)}`);
 
   // Every published port for this runtime, and how to take one down.
-  const published = await runtime.services.list();
+  const published = await client.runtime.service.list(runtime.runtimeId);
   console.log(`Published  : ${published.map((service) => service.port).join(', ')}`);
 
-  await runtime.services.revoke(PORT);
+  await client.runtime.service.revoke(runtime.runtimeId, PORT);
   console.log('Revoked    : the URL stops resolving immediately');
 } finally {
   await runtime?.kill();

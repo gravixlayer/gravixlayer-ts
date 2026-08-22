@@ -298,7 +298,7 @@ export class SecretProviders extends APIResource {
    *
    * Secrets appear in the environment of the next execution. To have them
    * present from the first instruction, pass `providers` to
-   * `client.runtimes.create()` instead.
+   * `client.runtime.create()` instead.
    */
   async attach(
     providerId: string,

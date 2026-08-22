@@ -44,7 +44,7 @@ went out as well as the value that came back:
 ```ts
 const { client, http } = testClient([jsonResponse(runtimePayload())]);
 
-const runtime = await client.runtimes.create({ template: 'base-small' });
+const runtime = await client.runtime.create({ template: 'base-small' });
 
 expect(http.last().method).toBe('POST');
 expect(http.jsonBody()).toMatchObject({ template: 'base-small' });

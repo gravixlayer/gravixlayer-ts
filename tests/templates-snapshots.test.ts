@@ -179,14 +179,56 @@ describe('templates', () => {
     const result = await client.templates.build(new TemplateBuilder('base').vcpu(2));
 
     expect(http.last().url).toContain('/v1/agents/template/build');
-    expect(http.jsonBody()).toMatchObject({ name: 'base', vcpu_count: 2 });
+    expect(http.jsonBody()).toMatchObject({
+      name: 'base',
+      vcpu_count: 2,
+      cloud: 'aws',
+      region: 'us-east-1',
+    });
     expect(result.templateId).toBe('tpl-1');
   });
 
   it('accepts an already-serialized request body', async () => {
     const { client, http } = testClient([jsonResponse(STARTED)]);
     await client.templates.build({ name: 'raw', vcpu_count: 1 });
-    expect(http.jsonBody()).toEqual({ name: 'raw', vcpu_count: 1 });
+    expect(http.jsonBody()).toEqual({
+      name: 'raw',
+      vcpu_count: 1,
+      cloud: 'aws',
+      region: 'us-east-1',
+    });
+  });
+
+  it('lets the call override the client cloud and region', async () => {
+    const { client, http } = testClient([jsonResponse(STARTED)], {
+      cloud: 'aws',
+      region: 'us-east-1',
+    });
+    await client.templates.build(new TemplateBuilder('base'), {
+      cloud: 'gcp',
+      region: 'us-central1',
+    });
+    expect(http.jsonBody()).toMatchObject({ cloud: 'gcp', region: 'us-central1' });
+  });
+
+  it('keeps an explicit placement on the payload', async () => {
+    const { client, http } = testClient([jsonResponse(STARTED)]);
+    await client.templates.build({
+      name: 'raw',
+      cloud: 'azure',
+      region: 'eastus2',
+    });
+    expect(http.jsonBody()).toMatchObject({ cloud: 'azure', region: 'eastus2' });
+  });
+
+    it('forwards cloud and region from buildAndWait to the build request', async () => {
+    const { client, http } = testClient([jsonResponse(STARTED), jsonResponse(DONE)]);
+    await client.templates.buildAndWait(new TemplateBuilder('base'), {
+      pollIntervalMs: 0,
+      cloud: 'gcp',
+      region: 'us-central1',
+    });
+    expect(http.jsonBody(0)).toMatchObject({ cloud: 'gcp', region: 'us-central1' });
   });
 
   it('waits for a build and reports each new phase once', async () => {

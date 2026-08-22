@@ -16,7 +16,7 @@ const client = new GravixLayer();
 
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
-const runtime = await client.runtimes.create({
+const runtime = await client.runtime.create({
   template: TEMPLATE,
   envVars: {
     APP_ENV: 'staging',

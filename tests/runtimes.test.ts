@@ -16,7 +16,7 @@ import {
 describe('create', () => {
   it('sends the default template with the client cloud and region', async () => {
     const { client, http } = testClient([jsonResponse(runtimePayload())]);
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
 
     expect(http.last().method).toBe('POST');
     expect(http.last().url).toBe('https://api.test.invalid/v1/agents/runtime');
@@ -31,7 +31,7 @@ describe('create', () => {
 
   it('passes every creation option through in wire format', async () => {
     const { client, http } = testClient([jsonResponse(runtimePayload())]);
-    await client.runtimes.create({
+    await client.runtime.create({
       template: 'node-20',
       cloud: 'gcp',
       region: 'europe-west1',
@@ -60,7 +60,7 @@ describe('create', () => {
 
   it('sends a snapshot instead of a template', async () => {
     const { client, http } = testClient([jsonResponse(runtimePayload())]);
-    await client.runtimes.create({ snapshot: 'ml-ready' });
+    await client.runtime.create({ snapshot: 'ml-ready' });
 
     const body = http.jsonBody() as Record<string, unknown>;
     expect(body['snapshot']).toBe('ml-ready');
@@ -70,7 +70,7 @@ describe('create', () => {
   it('rejects a snapshot combined with an explicit template', async () => {
     const { client } = testClient([jsonResponse(runtimePayload())]);
     await expectRejection(
-      client.runtimes.create({ snapshot: 'ml-ready', template: 'node-20' }),
+      client.runtime.create({ snapshot: 'ml-ready', template: 'node-20' }),
       GravixLayerInvalidArgumentError,
     );
   });
@@ -78,14 +78,14 @@ describe('create', () => {
   it('allows a snapshot alongside the default template value', async () => {
     const { client } = testClient([jsonResponse(runtimePayload())]);
     await expect(
-      client.runtimes.create({ snapshot: 'ml-ready', template: 'base-small' }),
+      client.runtime.create({ snapshot: 'ml-ready', template: 'base-small' }),
     ).resolves.toBeDefined();
   });
 
   it('rejects a non-positive timeout before sending anything', async () => {
     const { client, http } = testClient([jsonResponse(runtimePayload())]);
     await expectRejection(
-      client.runtimes.create({ timeoutSeconds: 0 }),
+      client.runtime.create({ timeoutSeconds: 0 }),
       GravixLayerInvalidArgumentError,
     );
     expect(http.requests).toHaveLength(0);
@@ -93,7 +93,7 @@ describe('create', () => {
 
   it('falls back to the requested template when the API omits it', async () => {
     const { client } = testClient([jsonResponse({ runtime_id: RUNTIME_ID, status: 'running' })]);
-    const runtime = await client.runtimes.create({ template: 'node-20' });
+    const runtime = await client.runtime.create({ template: 'node-20' });
     expect(runtime.template).toBe('node-20');
   });
 });
@@ -101,7 +101,7 @@ describe('create', () => {
 describe('lifecycle', () => {
   it('lists runtimes with pagination', async () => {
     const { client, http } = testClient([jsonResponse({ runtimes: [runtimePayload()], total: 1 })]);
-    const result = await client.runtimes.list({ limit: 10, offset: 20 });
+    const result = await client.runtime.list({ limit: 10, offset: 20 });
 
     expect(http.query().get('limit')).toBe('10');
     expect(http.query().get('offset')).toBe('20');
@@ -111,12 +111,12 @@ describe('lifecycle', () => {
 
   it('derives the total when the API omits it', async () => {
     const { client } = testClient([jsonResponse({ runtimes: [runtimePayload()] })]);
-    expect((await client.runtimes.list()).total).toBe(1);
+    expect((await client.runtime.list()).total).toBe(1);
   });
 
   it('retrieves a runtime as plain information', async () => {
     const { client } = testClient([jsonResponse(runtimePayload({ status: 'paused' }))]);
-    const info = await client.runtimes.retrieve(RUNTIME_ID);
+    const info = await client.runtime.retrieve(RUNTIME_ID);
 
     expect(info.status).toBe('paused');
     expect(info.cpuCount).toBe(2);
@@ -125,7 +125,7 @@ describe('lifecycle', () => {
 
   it('connects by confirming the runtime then fetching it', async () => {
     const { client, http } = testClient([emptyResponse(), jsonResponse(runtimePayload())]);
-    const runtime = await client.runtimes.connect(RUNTIME_ID);
+    const runtime = await client.runtime.connect(RUNTIME_ID);
 
     expect(http.requests[0]?.url).toContain(`/runtime/${RUNTIME_ID}/connect`);
     expect(http.requests[0]?.method).toBe('POST');
@@ -135,7 +135,7 @@ describe('lifecycle', () => {
 
   it('kills a runtime', async () => {
     const { client, http } = testClient([jsonResponse({ message: 'terminated' })]);
-    const result = await client.runtimes.kill(RUNTIME_ID);
+    const result = await client.runtime.kill(RUNTIME_ID);
 
     expect(http.last().method).toBe('DELETE');
     expect(result).toEqual({ message: 'terminated', runtimeId: RUNTIME_ID });
@@ -143,8 +143,8 @@ describe('lifecycle', () => {
 
   it('pauses and resumes', async () => {
     const { client, http } = testClient([emptyResponse(), emptyResponse()]);
-    await client.runtimes.pause(RUNTIME_ID);
-    await client.runtimes.resume(RUNTIME_ID);
+    await client.runtime.pause(RUNTIME_ID);
+    await client.runtime.resume(RUNTIME_ID);
 
     expect(http.requests[0]?.url).toContain('/pause');
     expect(http.requests[1]?.url).toContain('/resume');
@@ -154,7 +154,7 @@ describe('lifecycle', () => {
     const { client, http } = testClient([
       jsonResponse({ message: 'ok', timeout: 300, timeout_at: '2026-01-01T01:00:00Z' }),
     ]);
-    const result = await client.runtimes.setTimeout(RUNTIME_ID, 300);
+    const result = await client.runtime.setTimeout(RUNTIME_ID, 300);
 
     expect(http.jsonBody()).toEqual({ timeout: 300 });
     expect(result.timeout).toBe(300);
@@ -174,7 +174,7 @@ describe('lifecycle', () => {
         network_tx: 200,
       }),
     ]);
-    const metrics = await client.runtimes.getMetrics(RUNTIME_ID);
+    const metrics = await client.runtime.getMetrics(RUNTIME_ID);
 
     expect(metrics.cpuUsage).toBe(12.5);
     expect(metrics.memoryUsage).toBe(536_870_912);
@@ -184,9 +184,9 @@ describe('lifecycle', () => {
   it('validates the runtime id before any request', async () => {
     const { client, http } = testClient([jsonResponse({})]);
 
-    await expectRejection(client.runtimes.retrieve('nope'), GravixLayerInvalidArgumentError);
-    await expectRejection(client.runtimes.kill('nope'), GravixLayerInvalidArgumentError);
-    await expectRejection(client.runtimes.pause('nope'), GravixLayerInvalidArgumentError);
+    await expectRejection(client.runtime.retrieve('nope'), GravixLayerInvalidArgumentError);
+    await expectRejection(client.runtime.kill('nope'), GravixLayerInvalidArgumentError);
+    await expectRejection(client.runtime.pause('nope'), GravixLayerInvalidArgumentError);
     expect(http.requests).toHaveLength(0);
   });
 });
@@ -202,7 +202,7 @@ describe('SSH', () => {
         connect_cmd: 'ssh user@ssh.example -p 2222',
       }),
     ]);
-    const info = await client.runtimes.enableSsh(RUNTIME_ID);
+    const info = await client.runtime.enableSsh(RUNTIME_ID);
 
     expect(http.last().url).toContain('/ssh/enable');
     expect(info.enabled).toBe(true);
@@ -214,7 +214,7 @@ describe('SSH', () => {
 
   it('asks for a fresh key pair', async () => {
     const { client, http } = testClient([jsonResponse({ host: 'ssh.example', port: 22 })]);
-    await client.runtimes.enableSsh(RUNTIME_ID, { regenerateKeys: true });
+    await client.runtime.enableSsh(RUNTIME_ID, { regenerateKeys: true });
     expect(http.query().get('regenerate_keys')).toBe('true');
   });
 
@@ -224,10 +224,10 @@ describe('SSH', () => {
       jsonResponse({ enabled: true, daemon_running: true, port: 2222, username: 'user' }),
     ]);
 
-    await client.runtimes.disableSsh(RUNTIME_ID);
+    await client.runtime.disableSsh(RUNTIME_ID);
     expect(http.requests[0]?.url).toContain('/ssh/disable');
 
-    const status = await client.runtimes.sshStatus(RUNTIME_ID);
+    const status = await client.runtime.sshStatus(RUNTIME_ID);
     expect(status.enabled).toBe(true);
     expect(status.daemonRunning).toBe(true);
     expect(status.runtimeId).toBe(RUNTIME_ID);
@@ -239,7 +239,7 @@ describe('commands', () => {
     const { client, http } = testClient([
       jsonResponse({ stdout: 'v20.11.0\n', stderr: '', exit_code: 0, duration_ms: 12 }),
     ]);
-    const result = await client.runtimes.runCmd(RUNTIME_ID, 'node -v');
+    const result = await client.runtime.runCmd(RUNTIME_ID, 'node -v');
 
     expect(http.last().url).toContain('/commands/run');
     expect(http.jsonBody()).toEqual({ command: 'node -v' });
@@ -251,7 +251,7 @@ describe('commands', () => {
     const { client } = testClient([
       jsonResponse({ stdout: '', stderr: 'not found', exit_code: 127 }),
     ]);
-    const result = await client.runtimes.runCmd(RUNTIME_ID, 'nope');
+    const result = await client.runtime.runCmd(RUNTIME_ID, 'nope');
 
     expect(result.exitCode).toBe(127);
     expect(result.success).toBe(false);
@@ -259,7 +259,7 @@ describe('commands', () => {
 
   it('converts the command timeout to milliseconds', async () => {
     const { client, http } = testClient([jsonResponse({ stdout: '', exit_code: 0 })]);
-    await client.runtimes.runCmd(RUNTIME_ID, 'sleep 1', {
+    await client.runtime.runCmd(RUNTIME_ID, 'sleep 1', {
       timeoutSeconds: 30,
       args: ['--flag'],
       workingDir: '/tmp',
@@ -278,7 +278,7 @@ describe('commands', () => {
   it('rejects an empty command', async () => {
     const { client } = testClient([jsonResponse({})]);
     await expectRejection(
-      client.runtimes.runCmd(RUNTIME_ID, '   '),
+      client.runtime.runCmd(RUNTIME_ID, '   '),
       GravixLayerInvalidArgumentError,
     );
   });
@@ -294,7 +294,7 @@ describe('commands', () => {
 
     const onStdout = vi.fn();
     const onExit = vi.fn();
-    const result = await client.runtimes.runCmd(RUNTIME_ID, 'build', { onStdout, onExit });
+    const result = await client.runtime.runCmd(RUNTIME_ID, 'build', { onStdout, onExit });
 
     expect(http.query().get('stream')).toBe('true');
     expect(onStdout).toHaveBeenCalledWith('one\n');
@@ -306,7 +306,7 @@ describe('commands', () => {
 
   it('turns a stream-level error into a failed result', async () => {
     const { client } = testClient([sseJson([{ type: 'error', message: 'the guest went away' }])]);
-    const result = await client.runtimes.runCmd(RUNTIME_ID, 'build', { onStdout: vi.fn() });
+    const result = await client.runtime.runCmd(RUNTIME_ID, 'build', { onStdout: vi.fn() });
 
     expect(result.exitCode).toBe(1);
     expect(result.success).toBe(false);
@@ -322,7 +322,7 @@ describe('commands', () => {
       ]),
     ]);
 
-    const events = await collect(client.runtimes.streamCmd(RUNTIME_ID, 'build'));
+    const events = await collect(client.runtime.streamCmd(RUNTIME_ID, 'build'));
     expect(events).toEqual([
       { type: 'stdout', data: 'a' },
       { type: 'stdout', data: 'b' },
@@ -338,7 +338,7 @@ describe('commands', () => {
         { type: 'end', exit_code: 0 },
       ]),
     ]);
-    const events = await collect(client.runtimes.streamCmd(RUNTIME_ID, 'build'));
+    const events = await collect(client.runtime.streamCmd(RUNTIME_ID, 'build'));
     expect(events.map((event) => event.type)).toEqual(['stdout', 'end']);
   });
 });
@@ -351,7 +351,7 @@ describe('code', () => {
         logs: { stdout: ['1024\n'], stderr: [] },
       }),
     ]);
-    const result = await client.runtimes.runCode(RUNTIME_ID, 'print(2 ** 10)');
+    const result = await client.runtime.runCode(RUNTIME_ID, 'print(2 ** 10)');
 
     expect(http.last().url).toContain('/code/run');
     expect(http.jsonBody()).toEqual({ code: 'print(2 ** 10)', language: 'python' });
@@ -361,7 +361,7 @@ describe('code', () => {
 
   it('keeps the code timeout in seconds', async () => {
     const { client, http } = testClient([jsonResponse({})]);
-    await client.runtimes.runCode(RUNTIME_ID, 'x = 1', {
+    await client.runtime.runCode(RUNTIME_ID, 'x = 1', {
       language: 'javascript',
       contextId: 'ctx-1',
       environment: { A: '1' },
@@ -385,7 +385,7 @@ describe('code', () => {
         error: { name: 'ValueError', value: 'bad input', traceback: 'Traceback...' },
       }),
     ]);
-    const result = await client.runtimes.runCode(RUNTIME_ID, 'raise ValueError()');
+    const result = await client.runtime.runCode(RUNTIME_ID, 'raise ValueError()');
 
     expect(result.error?.name).toBe('ValueError');
     expect(result.error?.value).toBe('bad input');
@@ -393,7 +393,7 @@ describe('code', () => {
 
   it('accepts an error returned as a bare string', async () => {
     const { client } = testClient([jsonResponse({ error: 'kernel died' })]);
-    const result = await client.runtimes.runCode(RUNTIME_ID, 'x');
+    const result = await client.runtime.runCode(RUNTIME_ID, 'x');
     expect(result.error).toEqual({ name: '', value: 'kernel died', traceback: '' });
   });
 
@@ -408,7 +408,7 @@ describe('code', () => {
 
     const onStdout = vi.fn();
     const onResult = vi.fn();
-    const result = await client.runtimes.runCode(RUNTIME_ID, 'compute()', { onStdout, onResult });
+    const result = await client.runtime.runCode(RUNTIME_ID, 'compute()', { onStdout, onResult });
 
     expect(onStdout).toHaveBeenCalledWith('working\n');
     expect(onResult).toHaveBeenCalledOnce();
@@ -425,7 +425,7 @@ describe('code', () => {
       ]),
     ]);
 
-    const events = await collect(client.runtimes.streamCode(RUNTIME_ID, 'boom()'));
+    const events = await collect(client.runtime.streamCode(RUNTIME_ID, 'boom()'));
     expect(events[0]).toEqual({ type: 'stderr', text: 'oops' });
     expect(events[1]).toEqual({
       type: 'error',
@@ -440,7 +440,7 @@ describe('code contexts', () => {
     const { client, http } = testClient([
       jsonResponse({ id: 'ctx-1', language: 'python', cwd: '/workspace' }),
     ]);
-    const context = await client.runtimes.createContext(RUNTIME_ID, { cwd: '/workspace' });
+    const context = await client.runtime.createContext(RUNTIME_ID, { cwd: '/workspace' });
 
     expect(http.jsonBody()).toEqual({ language: 'python', cwd: '/workspace' });
     expect(context).toEqual({ contextId: 'ctx-1', language: 'python', cwd: '/workspace' });
@@ -452,11 +452,11 @@ describe('code contexts', () => {
       jsonResponse({ message: 'deleted' }),
     ]);
 
-    const context = await client.runtimes.getContext(RUNTIME_ID, 'ctx-1');
+    const context = await client.runtime.getContext(RUNTIME_ID, 'ctx-1');
     expect(context.contextId).toBe('ctx-1');
     expect(context.cwd).toBe('/workspace');
 
-    const deleted = await client.runtimes.deleteContext(RUNTIME_ID, 'ctx-1');
+    const deleted = await client.runtime.deleteContext(RUNTIME_ID, 'ctx-1');
     expect(http.last().method).toBe('DELETE');
     expect(deleted).toEqual({ message: 'deleted', contextId: 'ctx-1' });
   });
@@ -464,7 +464,7 @@ describe('code contexts', () => {
   it('rejects an empty context id', async () => {
     const { client } = testClient([jsonResponse({})]);
     await expectRejection(
-      client.runtimes.getContext(RUNTIME_ID, ''),
+      client.runtime.getContext(RUNTIME_ID, ''),
       GravixLayerInvalidArgumentError,
     );
   });
@@ -479,7 +479,7 @@ describe('runtime templates', () => {
         offset: 0,
       }),
     ]);
-    const result = await client.runtimes.templates.list();
+    const result = await client.runtime.templates.list();
 
     expect(http.query().get('kind')).toBe('sandbox');
     expect(result.templates[0]?.id).toBe('tpl-1');
@@ -496,9 +496,9 @@ describe('runtime handle', () => {
       jsonResponse({ message: 'written', path: '/tmp/a.txt' }),
     ]);
 
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
     await runtime.runCmd('echo hi');
-    await runtime.files.write('/tmp/a.txt', 'contents');
+    await runtime.file.write('/tmp/a.txt', 'contents');
 
     expect(http.requests[1]?.url).toContain(`/runtime/${RUNTIME_ID}/commands/run`);
     expect(http.requests[2]?.url).toContain(`/runtime/${RUNTIME_ID}/files/write`);
@@ -510,7 +510,7 @@ describe('runtime handle', () => {
       jsonResponse({ stdout: 'out', stderr: 'err', exit_code: 0, duration_ms: 5 }),
     ]);
 
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
     const execution = await runtime.runCmd('echo out');
 
     expect(execution).toBeInstanceOf(Execution);
@@ -527,7 +527,7 @@ describe('runtime handle', () => {
       jsonResponse({ results: [{ text: '42' }], logs: { stdout: ['printed\n'], stderr: [] } }),
     ]);
 
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
     const execution = await runtime.runCode('42');
 
     expect(execution.text).toBe('42');
@@ -545,7 +545,7 @@ describe('runtime handle', () => {
       }),
     ]);
 
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
     const execution = await runtime.runCode('print("{}")');
 
     // The API reports one line per entry with the newline stripped. Joining
@@ -561,7 +561,7 @@ describe('runtime handle', () => {
       jsonResponse({ stdout: 'one\ntwo', stderr: '', exit_code: 0, duration_ms: 1 }),
     ]);
 
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
     const execution = await runtime.runCmd('printf "one\\ntwo"');
 
     expect(execution.logs.stdout).toEqual(['one', 'two']);
@@ -574,7 +574,7 @@ describe('runtime handle', () => {
       jsonResponse(runtimePayload({ status: 'paused' })),
     ]);
 
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
     expect(runtime.status).toBe('running');
 
     await runtime.refresh();
@@ -587,7 +587,7 @@ describe('runtime handle', () => {
       new Response('gone', { status: 404 }),
     ]);
 
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
     await expect(runtime.isAlive()).resolves.toBe(false);
   });
 
@@ -597,7 +597,7 @@ describe('runtime handle', () => {
       jsonResponse({ message: 'terminated' }),
     ]);
 
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
     await runtime.kill();
     await runtime.kill();
 
@@ -605,7 +605,7 @@ describe('runtime handle', () => {
     expect(runtime.status).toBe('terminated');
     await expect(runtime.isAlive()).resolves.toBe(false);
     await expectRejection(runtime.runCmd('ls'), GravixLayerInvalidArgumentError);
-    await expectRejection(runtime.files.read('/tmp/a'), GravixLayerInvalidArgumentError);
+    await expectRejection(runtime.file.read('/tmp/a'), GravixLayerInvalidArgumentError);
   });
 
   it('stays usable when stopping fails, so the caller can retry', async () => {
@@ -615,7 +615,7 @@ describe('runtime handle', () => {
       jsonResponse({ message: 'terminated' }),
     ]);
 
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
 
     await expect(runtime.kill()).rejects.toBeInstanceOf(GravixLayerError);
     expect(runtime.status).not.toBe('terminated');
@@ -630,7 +630,7 @@ describe('runtime handle', () => {
       jsonResponse({ message: 'terminated' }),
     ]);
 
-    const runtime = await client.runtimes.create();
+    const runtime = await client.runtime.create();
     await Promise.all([runtime.kill(), runtime.kill(), runtime.kill()]);
 
     expect(http.requests).toHaveLength(2);
@@ -643,7 +643,7 @@ describe('runtime handle', () => {
     ]);
 
     {
-      await using runtime = await client.runtimes.create();
+      await using runtime = await client.runtime.create();
       expect(runtime.runtimeId).toBe(RUNTIME_ID);
     }
 

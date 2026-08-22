@@ -21,7 +21,7 @@ const decoder = new TextDecoder();
 const show = (chunk: Uint8Array) => process.stdout.write(decoder.decode(chunk));
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const runtime = await client.runtimes.create({ template: TEMPLATE });
+const runtime = await client.runtime.create({ template: TEMPLATE });
 console.log(`Runtime    : ${runtime.runtimeId}`);
 
 // 1. Start a session with the shell, size, and environment you want.

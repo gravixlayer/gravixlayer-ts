@@ -1,9 +1,9 @@
 /**
  * A handle to one runtime.
  *
- * `client.runtimes.create()` and `client.runtimes.get()` return this instead of
+ * `client.runtime.create()` and `client.runtime.get()` return this instead of
  * a plain object, so every operation is available without repeating the
- * runtime id: `runtime.runCode(...)`, `runtime.files.write(...)`,
+ * runtime id: `runtime.runCode(...)`, `runtime.file.write(...)`,
  * `runtime.kill()`.
  */
 
@@ -33,7 +33,6 @@ import {
   type RuntimeInfo,
   type RuntimeMetrics,
   type RuntimeTimeoutResponse,
-  type RuntimeWebService,
   type SetPermissionsResponse,
   type SSHInfo,
   type SSHStatus,
@@ -106,13 +105,11 @@ type ResolveId = () => string;
  */
 export class Runtime {
   /** Nested filesystem API, already bound to this runtime. */
-  readonly files: BoundFiles;
+  readonly file: BoundFile;
   /** Nested terminal API, already bound to this runtime. */
   readonly pty: BoundPty;
   /** Nested git API, already bound to this runtime. */
   readonly git: BoundGit;
-  /** Nested published-port API, already bound to this runtime. */
-  readonly services: BoundServices;
 
   private state: RuntimeInfo;
   private killed = false;
@@ -125,10 +122,9 @@ export class Runtime {
     this.state = info;
 
     const resolve: ResolveId = () => this.requireAlive();
-    this.files = new BoundFiles(runtimes, resolve);
+    this.file = new BoundFile(runtimes, resolve);
     this.pty = new BoundPty(runtimes, resolve);
     this.git = new BoundGit(runtimes, resolve);
-    this.services = new BoundServices(runtimes, resolve);
   }
 
   // -------------------------------------------------------------------------
@@ -250,7 +246,7 @@ export class Runtime {
    * @example
    * ```ts
    * {
-   *   await using runtime = await client.runtimes.create();
+   *   await using runtime = await client.runtime.create();
    *   await runtime.runCmd('npm test');
    * } // stopped here, even if the command threw
    * ```
@@ -372,10 +368,11 @@ export class Runtime {
   /**
    * Publish a guest port and return a client bound to its public URL.
    *
-   * Shorthand for `runtime.services.connect(port)`.
+   * Matches `client.runtime.service.connect(runtimeId, port)`. List and revoke
+   * stay on `client.runtime.service`.
    */
   async service(port: number, options: PublishOptions = {}): Promise<ServiceHandle> {
-    return this.services.connect(port, options);
+    return this.runtimes.service.connect(this.requireAlive(), port, options);
   }
 
   /** Guard every operation that needs a live runtime. */
@@ -390,11 +387,11 @@ export class Runtime {
 }
 
 /**
- * `runtime.files`: the filesystem API with the runtime id already applied.
+ * `runtime.file`: the filesystem API with the runtime id already applied.
  *
- * Every method mirrors `client.runtimes.files`, minus the first argument.
+ * Every method mirrors `client.runtime.file`, minus the first argument.
  */
-export class BoundFiles {
+export class BoundFile {
   constructor(
     private readonly runtimes: Runtimes,
     private readonly id: ResolveId,
@@ -402,27 +399,27 @@ export class BoundFiles {
 
   /** Read a text file. */
   async read(path: string, options?: RequestOptions): Promise<FileReadResponse> {
-    return this.runtimes.files.read(this.id(), path, options);
+    return this.runtimes.file.read(this.id(), path, options);
   }
 
   /** Write a text file, creating or replacing it. */
   async write(path: string, content: string, options?: RequestOptions): Promise<FileWriteResponse> {
-    return this.runtimes.files.write(this.id(), path, content, options);
+    return this.runtimes.file.write(this.id(), path, content, options);
   }
 
   /** Delete a file or directory. */
   async delete(path: string, options?: RequestOptions): Promise<FileDeleteResponse> {
-    return this.runtimes.files.delete(this.id(), path, options);
+    return this.runtimes.file.delete(this.id(), path, options);
   }
 
   /** List the entries in a directory. */
   async list(path?: string, options?: RequestOptions): Promise<FileListResponse> {
-    return this.runtimes.files.list(this.id(), path, options);
+    return this.runtimes.file.list(this.id(), path, options);
   }
 
   /** Upload binary or text content to a path. */
   async upload(path: string, data: BinaryLike, options?: UploadOptions): Promise<WriteResult> {
-    return this.runtimes.files.upload(this.id(), path, data, options);
+    return this.runtimes.file.upload(this.id(), path, data, options);
   }
 
   /** Upload several files, each to its own destination path. */
@@ -430,7 +427,7 @@ export class BoundFiles {
     entries: readonly WriteEntry[],
     options?: WriteManyOptions,
   ): Promise<WriteFilesResponse> {
-    return this.runtimes.files.writeMany(this.id(), entries, options);
+    return this.runtimes.file.writeMany(this.id(), entries, options);
   }
 
   /** Create a directory. */
@@ -438,12 +435,12 @@ export class BoundFiles {
     path: string,
     options?: CreateDirectoryOptions,
   ): Promise<DirectoryCreateResponse> {
-    return this.runtimes.files.createDirectory(this.id(), path, options);
+    return this.runtimes.file.createDirectory(this.id(), path, options);
   }
 
   /** Look up metadata for a path. */
   async getInfo(path: string, options?: RequestOptions): Promise<FileGetInfoResponse> {
-    return this.runtimes.files.getInfo(this.id(), path, options);
+    return this.runtimes.file.getInfo(this.id(), path, options);
   }
 
   /** Change a path's permission bits. */
@@ -452,7 +449,7 @@ export class BoundFiles {
     mode: FileMode,
     options?: RequestOptions,
   ): Promise<SetPermissionsResponse> {
-    return this.runtimes.files.setPermissions(this.id(), path, mode, options);
+    return this.runtimes.file.setPermissions(this.id(), path, mode, options);
   }
 
   /** Move or rename a path. */
@@ -461,7 +458,7 @@ export class BoundFiles {
     destination: string,
     options?: MoveOptions,
   ): Promise<FileMoveResponse> {
-    return this.runtimes.files.move(this.id(), source, destination, options);
+    return this.runtimes.file.move(this.id(), source, destination, options);
   }
 
   /** Copy a path. */
@@ -470,22 +467,22 @@ export class BoundFiles {
     destination: string,
     options?: CopyOptions,
   ): Promise<FileCopyResponse> {
-    return this.runtimes.files.copy(this.id(), source, destination, options);
+    return this.runtimes.file.copy(this.id(), source, destination, options);
   }
 
   /** Change a path's owner, group, or both. */
   async chown(path: string, options?: ChownOptions): Promise<ChangeOwnerResponse> {
-    return this.runtimes.files.chown(this.id(), path, options);
+    return this.runtimes.file.chown(this.id(), path, options);
   }
 
   /** Watch a path for changes. */
   async *watch(path: string, options?: WatchOptions): AsyncGenerator<WatchEvent, void, undefined> {
-    yield* this.runtimes.files.watch(this.id(), path, options);
+    yield* this.runtimes.file.watch(this.id(), path, options);
   }
 
   /** Search for files by name or content. */
   async find(path: string, options?: FindOptions): Promise<FileFindResponse> {
-    return this.runtimes.files.find(this.id(), path, options);
+    return this.runtimes.file.find(this.id(), path, options);
   }
 
   /** Replace text across files under a path. */
@@ -495,7 +492,7 @@ export class BoundFiles {
     replacement: string,
     options?: ReplaceOptions,
   ): Promise<FileReplaceResponse> {
-    return this.runtimes.files.replace(this.id(), path, pattern, replacement, options);
+    return this.runtimes.file.replace(this.id(), path, pattern, replacement, options);
   }
 
   /** Upload through the legacy single-file endpoint. */
@@ -504,17 +501,17 @@ export class BoundFiles {
     path?: string,
     options?: RequestOptions,
   ): Promise<FileUploadResponse> {
-    return this.runtimes.files.uploadFile(this.id(), data, path, options);
+    return this.runtimes.file.uploadFile(this.id(), data, path, options);
   }
 
   /** Download a file's raw bytes. */
   async download(path: string, options?: RequestOptions): Promise<Uint8Array> {
-    return this.runtimes.files.download(this.id(), path, options);
+    return this.runtimes.file.download(this.id(), path, options);
   }
 
   /** Download a file and decode it as UTF-8 text. */
   async downloadText(path: string, options?: RequestOptions): Promise<string> {
-    return this.runtimes.files.downloadText(this.id(), path, options);
+    return this.runtimes.file.downloadText(this.id(), path, options);
   }
 }
 
@@ -681,34 +678,6 @@ export class BoundGit {
     options?: RequestOptions,
   ): Promise<GitOperationResult> {
     return this.runtimes.git.deleteBranch(this.id(), repositoryPath, branchName, force, options);
-  }
-}
-
-/** `runtime.services`: published ports with the runtime id already applied. */
-export class BoundServices {
-  constructor(
-    private readonly runtimes: Runtimes,
-    private readonly id: ResolveId,
-  ) {}
-
-  /** Publish a guest port and return its URL. */
-  async publish(port: number, options?: PublishOptions): Promise<RuntimeWebService> {
-    return this.runtimes.services.publish(this.id(), port, options);
-  }
-
-  /** Publish a port and return a client bound to its URL. */
-  async connect(port: number, options?: PublishOptions): Promise<ServiceHandle> {
-    return this.runtimes.services.connect(this.id(), port, options);
-  }
-
-  /** List the runtime's published services. */
-  async list(options?: RequestOptions): Promise<RuntimeWebService[]> {
-    return this.runtimes.services.list(this.id(), options);
-  }
-
-  /** Stop publishing a port. */
-  async revoke(port: number, options?: RequestOptions): Promise<void> {
-    return this.runtimes.services.revoke(this.id(), port, options);
   }
 }
 

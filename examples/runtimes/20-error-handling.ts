@@ -30,7 +30,7 @@ const client = new GravixLayer({
 // 1. Arguments are checked before anything leaves the process, so a mistake
 //    costs no round trip.
 try {
-  await client.runtimes.retrieve('not-a-uuid');
+  await client.runtime.retrieve('not-a-uuid');
 } catch (error) {
   if (error instanceof GravixLayerInvalidArgumentError) {
     console.log(`Invalid    : ${error.message}`);
@@ -53,7 +53,7 @@ const controller = new AbortController();
 setTimeout(() => controller.abort(), 50);
 
 try {
-  await client.runtimes.list({ signal: controller.signal });
+  await client.runtime.list({ signal: controller.signal });
 } catch (error) {
   if (error instanceof GravixLayerAbortError) {
     console.log(`Cancelled  : ${error.message}`);
@@ -63,7 +63,7 @@ try {
 // 4. A per-call timeout overrides the client's, which is useful for one slow
 //    operation among many fast ones.
 try {
-  await client.runtimes.list({ timeout: 1 });
+  await client.runtime.list({ timeout: 1 });
 } catch (error) {
   if (error instanceof GravixLayerTimeoutError) {
     console.log(`Timed out  : ${error.message}`);
@@ -76,7 +76,7 @@ try {
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
 try {
-  const runtime = await client.runtimes.create({ template: TEMPLATE });
+  const runtime = await client.runtime.create({ template: TEMPLATE });
   console.log(`\nCreated    : ${runtime.runtimeId}`);
   await runtime.kill();
   console.log('Terminated.');

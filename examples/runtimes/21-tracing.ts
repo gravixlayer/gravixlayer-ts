@@ -41,7 +41,7 @@ const MARKER = `trace-demo-${Date.now()}`;
 // while it runs nest underneath, which is what makes a trace readable.
 const analyze = traced(
   async (rows: number) => {
-    const runtime = await client.runtimes.create({ template: TEMPLATE });
+    const runtime = await client.runtime.create({ template: TEMPLATE });
     console.log(`Runtime    : ${runtime.runtimeId}`);
 
     try {

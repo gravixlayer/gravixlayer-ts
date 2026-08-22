@@ -34,7 +34,7 @@ const policy = await client.networkPolicies.create(`git-example-${Date.now()}`, 
 
 let runtime: Runtime | undefined;
 try {
-  runtime = await client.runtimes.create({
+  runtime = await client.runtime.create({
     template: TEMPLATE,
     networkPolicyIds: [policy.id],
     timeoutSeconds: 600,
@@ -69,7 +69,7 @@ try {
   console.log('branching  : created, switched, switched back, deleted');
 
   // Stage and commit a change.
-  await runtime.files.write(`${REPO}/note.txt`, 'written by the SDK\n');
+  await runtime.file.write(`${REPO}/note.txt`, 'written by the SDK\n');
   await runtime.git.add(REPO, ['note.txt']);
   const committed = await runtime.git.commit(REPO, 'Add a note', {
     authorName: 'Example',

@@ -44,7 +44,7 @@ function sessionPayload(overrides: Record<string, unknown> = {}) {
 describe('terminal sessions', () => {
   it('starts a session with the requested geometry', async () => {
     const { client, http } = testClient([jsonResponse(sessionPayload())]);
-    const session = await client.runtimes.pty.create(RUNTIME_ID, {
+    const session = await client.runtime.pty.create(RUNTIME_ID, {
       shell: '/bin/bash',
       args: ['-l'],
       workingDir: '/workspace',
@@ -68,7 +68,7 @@ describe('terminal sessions', () => {
 
   it('sends an empty body when nothing is configured', async () => {
     const { client, http } = testClient([jsonResponse(sessionPayload())]);
-    await client.runtimes.pty.create(RUNTIME_ID);
+    await client.runtime.pty.create(RUNTIME_ID);
     expect(http.jsonBody()).toEqual({});
   });
 
@@ -78,9 +78,9 @@ describe('terminal sessions', () => {
       jsonResponse(sessionPayload({ status: 'exited', exit_code: 130 })),
     ]);
 
-    expect(await client.runtimes.pty.list(RUNTIME_ID)).toHaveLength(1);
+    expect(await client.runtime.pty.list(RUNTIME_ID)).toHaveLength(1);
 
-    const session = await client.runtimes.pty.get(RUNTIME_ID, SESSION_ID);
+    const session = await client.runtime.pty.get(RUNTIME_ID, SESSION_ID);
     expect(http.last().url).toContain(`/pty/${SESSION_ID}`);
     expect(session.status).toBe('exited');
     expect(session.exitCode).toBe(130);
@@ -88,7 +88,7 @@ describe('terminal sessions', () => {
 
   it('sends text input as-is', async () => {
     const { client, http } = testClient([jsonResponse({ success: true, bytes_written: 6 })]);
-    const result = await client.runtimes.pty.sendInput(RUNTIME_ID, SESSION_ID, 'ls -l\n');
+    const result = await client.runtime.pty.sendInput(RUNTIME_ID, SESSION_ID, 'ls -l\n');
 
     expect(http.jsonBody()).toEqual({ data: 'ls -l\n' });
     expect(result.bytesWritten).toBe(6);
@@ -97,7 +97,7 @@ describe('terminal sessions', () => {
   it('base64-encodes raw byte input so control codes survive', async () => {
     const { client, http } = testClient([jsonResponse({ success: true, bytes_written: 1 })]);
     // Ctrl-C.
-    await client.runtimes.pty.sendInput(RUNTIME_ID, SESSION_ID, new Uint8Array([0x03]));
+    await client.runtime.pty.sendInput(RUNTIME_ID, SESSION_ID, new Uint8Array([0x03]));
 
     expect(http.jsonBody()).toEqual({ data_base64: toBase64(new Uint8Array([0x03])) });
   });
@@ -109,13 +109,13 @@ describe('terminal sessions', () => {
       jsonResponse({ success: true }),
     ]);
 
-    expect(await client.runtimes.pty.resize(RUNTIME_ID, SESSION_ID, 100, 30)).toBe(true);
+    expect(await client.runtime.pty.resize(RUNTIME_ID, SESSION_ID, 100, 30)).toBe(true);
     expect(http.jsonBody(0)).toEqual({ cols: 100, rows: 30 });
 
-    expect(await client.runtimes.pty.sendSignal(RUNTIME_ID, SESSION_ID, ' INT ')).toBe(true);
+    expect(await client.runtime.pty.sendSignal(RUNTIME_ID, SESSION_ID, ' INT ')).toBe(true);
     expect(http.jsonBody(1)).toEqual({ signal: 'INT' });
 
-    expect(await client.runtimes.pty.kill(RUNTIME_ID, SESSION_ID)).toBe(true);
+    expect(await client.runtime.pty.kill(RUNTIME_ID, SESSION_ID)).toBe(true);
     expect(http.requests[2]?.method).toBe('DELETE');
   });
 
@@ -123,10 +123,10 @@ describe('terminal sessions', () => {
     const { client, http } = testClient([jsonResponse({})]);
 
     await expectRejection(
-      client.runtimes.pty.resize(RUNTIME_ID, SESSION_ID, 0, 24),
+      client.runtime.pty.resize(RUNTIME_ID, SESSION_ID, 0, 24),
       GravixLayerInvalidArgumentError,
     );
-    await expectRejection(client.runtimes.pty.get(RUNTIME_ID, ''), GravixLayerInvalidArgumentError);
+    await expectRejection(client.runtime.pty.get(RUNTIME_ID, ''), GravixLayerInvalidArgumentError);
     expect(http.requests).toHaveLength(0);
   });
 
@@ -139,7 +139,7 @@ describe('terminal sessions', () => {
       ]),
     ]);
 
-    const events = await collect(client.runtimes.pty.stream(RUNTIME_ID, SESSION_ID));
+    const events = await collect(client.runtime.pty.stream(RUNTIME_ID, SESSION_ID));
     expect(events).toHaveLength(3);
     expect(events[0]).toMatchObject({ type: 'data' });
     expect(events[2]).toEqual({ type: 'exit', exitCode: 0, status: 'exited' });
@@ -157,9 +157,9 @@ describe('terminal handle', () => {
       ]),
     ]);
 
-    const session = await client.runtimes.pty.create(RUNTIME_ID);
+    const session = await client.runtime.pty.create(RUNTIME_ID);
     const onData = vi.fn();
-    const handle = client.runtimes.pty.handle(RUNTIME_ID, session.sessionId).connect({ onData });
+    const handle = client.runtime.pty.handle(RUNTIME_ID, session.sessionId).connect({ onData });
 
     // Let the background pump drain the stream.
     await vi.waitFor(() => expect(handle.exitCode).toBe(0));
@@ -179,7 +179,7 @@ describe('terminal handle', () => {
       ]),
     ]);
 
-    const handle = client.runtimes.pty.handle(RUNTIME_ID, SESSION_ID).connect();
+    const handle = client.runtime.pty.handle(RUNTIME_ID, SESSION_ID).connect();
     await vi.waitFor(() => expect(handle.exitCode).toBe(0));
 
     expect(handle.text).toBe('tail');
@@ -188,7 +188,7 @@ describe('terminal handle', () => {
   it('records a stream-level error', async () => {
     const { client } = testClient([sseJson([{ type: 'error', message: 'session gone' }])]);
 
-    const handle = client.runtimes.pty.handle(RUNTIME_ID, SESSION_ID).connect();
+    const handle = client.runtime.pty.handle(RUNTIME_ID, SESSION_ID).connect();
     await vi.waitFor(() => expect(handle.error).toBe('session gone'));
   });
 
@@ -209,7 +209,7 @@ describe('terminal handle', () => {
         ),
     });
 
-    const handle = client.runtimes.pty.handle(RUNTIME_ID, SESSION_ID).connect();
+    const handle = client.runtime.pty.handle(RUNTIME_ID, SESSION_ID).connect();
     expect(handle.isConnected).toBe(true);
 
     await handle.disconnect();
@@ -219,7 +219,7 @@ describe('terminal handle', () => {
 
   it('returns the session once it stops running', async () => {
     const { client } = testClient([jsonResponse(sessionPayload({ status: 'exited' }))]);
-    const session = await client.runtimes.pty.handle(RUNTIME_ID, SESSION_ID).waitForExit(1000);
+    const session = await client.runtime.pty.handle(RUNTIME_ID, SESSION_ID).waitForExit(1000);
     expect(session.status).toBe('exited');
   });
 
@@ -230,7 +230,7 @@ describe('terminal handle', () => {
       jsonResponse(sessionPayload({ status: 'running', exit_code: 0 })),
     ]);
 
-    const handle = client.runtimes.pty.handle(RUNTIME_ID, SESSION_ID).connect();
+    const handle = client.runtime.pty.handle(RUNTIME_ID, SESSION_ID).connect();
     const session = await handle.waitForExit(5000);
 
     expect(http.requests).toHaveLength(2);
@@ -242,7 +242,7 @@ describe('terminal handle', () => {
     const { client } = testClient([jsonResponse(sessionPayload()), jsonResponse(sessionPayload())]);
 
     await expectRejection(
-      client.runtimes.pty.handle(RUNTIME_ID, SESSION_ID).waitForExit(0),
+      client.runtime.pty.handle(RUNTIME_ID, SESSION_ID).waitForExit(0),
       GravixLayerTimeoutError,
     );
   });
@@ -253,7 +253,7 @@ describe('git', () => {
 
   it('clones with options', async () => {
     const { client, http } = testClient([jsonResponse(OK)]);
-    const result = await client.runtimes.git.clone(
+    const result = await client.runtime.git.clone(
       RUNTIME_ID,
       'https://example.test/repo.git',
       '/workspace/repo',
@@ -276,39 +276,39 @@ describe('git', () => {
     const { client, http } = testClient([jsonResponse(OK)]);
     const repo = '/workspace/repo';
 
-    await client.runtimes.git.status(RUNTIME_ID, repo);
+    await client.runtime.git.status(RUNTIME_ID, repo);
     expect(http.last().url).toContain('/git/status');
     expect(http.jsonBody()).toEqual({ repository_path: repo });
 
-    await client.runtimes.git.branchList(RUNTIME_ID, repo, 'all');
+    await client.runtime.git.branchList(RUNTIME_ID, repo, 'all');
     expect(http.last().url).toContain('/git/branches');
     expect(http.jsonBody()).toEqual({ repository_path: repo, scope: 'all' });
 
-    await client.runtimes.git.checkout(RUNTIME_ID, repo, 'feature');
+    await client.runtime.git.checkout(RUNTIME_ID, repo, 'feature');
     expect(http.last().url).toContain('/git/checkout');
     expect(http.jsonBody()).toEqual({ repository_path: repo, ref_name: 'feature' });
 
-    await client.runtimes.git.pull(RUNTIME_ID, repo, { remote: 'origin', branch: 'main' });
+    await client.runtime.git.pull(RUNTIME_ID, repo, { remote: 'origin', branch: 'main' });
     expect(http.jsonBody()).toEqual({
       repository_path: repo,
       remote: 'origin',
       branch: 'main',
     });
 
-    await client.runtimes.git.fetch(RUNTIME_ID, repo, { remote: 'upstream' });
+    await client.runtime.git.fetch(RUNTIME_ID, repo, { remote: 'upstream' });
     expect(http.jsonBody()).toEqual({ repository_path: repo, remote: 'upstream' });
 
-    await client.runtimes.git.push(RUNTIME_ID, repo, { refspec: 'HEAD:main', authToken: 't' });
+    await client.runtime.git.push(RUNTIME_ID, repo, { refspec: 'HEAD:main', authToken: 't' });
     expect(http.jsonBody()).toEqual({
       repository_path: repo,
       refspec: 'HEAD:main',
       auth_token: 't',
     });
 
-    await client.runtimes.git.add(RUNTIME_ID, repo, ['a.ts', 'b.ts']);
+    await client.runtime.git.add(RUNTIME_ID, repo, ['a.ts', 'b.ts']);
     expect(http.jsonBody()).toEqual({ repository_path: repo, paths: ['a.ts', 'b.ts'] });
 
-    await client.runtimes.git.commit(RUNTIME_ID, repo, 'first', {
+    await client.runtime.git.commit(RUNTIME_ID, repo, 'first', {
       authorName: 'Ada',
       authorEmail: 'ada@example.test',
     });
@@ -319,7 +319,7 @@ describe('git', () => {
       author_email: 'ada@example.test',
     });
 
-    await client.runtimes.git.createBranch(RUNTIME_ID, repo, 'feature', 'main');
+    await client.runtime.git.createBranch(RUNTIME_ID, repo, 'feature', 'main');
     expect(http.last().url).toContain('/git/branch/create');
     expect(http.jsonBody()).toEqual({
       repository_path: repo,
@@ -327,7 +327,7 @@ describe('git', () => {
       start_point: 'main',
     });
 
-    await client.runtimes.git.deleteBranch(RUNTIME_ID, repo, 'feature', true);
+    await client.runtime.git.deleteBranch(RUNTIME_ID, repo, 'feature', true);
     expect(http.last().url).toContain('/git/branch/delete');
     expect(http.jsonBody()).toEqual({
       repository_path: repo,
@@ -340,7 +340,7 @@ describe('git', () => {
     const { client } = testClient([
       jsonResponse({ success: false, exit_code: 128, stderr: 'not a repository' }),
     ]);
-    const result = await client.runtimes.git.status(RUNTIME_ID, '/tmp');
+    const result = await client.runtime.git.status(RUNTIME_ID, '/tmp');
 
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(128);
@@ -351,11 +351,11 @@ describe('git', () => {
     const { client, http } = testClient([jsonResponse(OK)]);
 
     await expectRejection(
-      client.runtimes.git.clone(RUNTIME_ID, '', '/repo'),
+      client.runtime.git.clone(RUNTIME_ID, '', '/repo'),
       GravixLayerInvalidArgumentError,
     );
     await expectRejection(
-      client.runtimes.git.commit(RUNTIME_ID, '/repo', ''),
+      client.runtime.git.commit(RUNTIME_ID, '/repo', ''),
       GravixLayerInvalidArgumentError,
     );
     expect(http.requests).toHaveLength(0);
@@ -390,7 +390,7 @@ describe('published services', () => {
 
   it('publishes a port with sensible defaults', async () => {
     const { client, http } = testClient([jsonResponse(SERVICE)]);
-    const service = await client.runtimes.services.publish(RUNTIME_ID, 8000);
+    const service = await client.runtime.service.publish(RUNTIME_ID, 8000);
 
     expect(http.jsonBody()).toEqual({
       port: 8000,
@@ -404,7 +404,7 @@ describe('published services', () => {
 
   it('passes publishing options through', async () => {
     const { client, http } = testClient([jsonResponse(SERVICE)]);
-    await client.runtimes.services.publish(RUNTIME_ID, 8000, {
+    await client.runtime.service.publish(RUNTIME_ID, 8000, {
       expiresInSeconds: 60,
       isPublic: true,
       rotateToken: true,
@@ -421,9 +421,9 @@ describe('published services', () => {
   it('lists and revokes', async () => {
     const { client, http } = testClient([jsonResponse({ services: [SERVICE] }), emptyResponse()]);
 
-    expect(await client.runtimes.services.list(RUNTIME_ID)).toHaveLength(1);
+    expect(await client.runtime.service.list(RUNTIME_ID)).toHaveLength(1);
 
-    await client.runtimes.services.revoke(RUNTIME_ID, 8000);
+    await client.runtime.service.revoke(RUNTIME_ID, 8000);
     expect(http.last().method).toBe('DELETE');
     expect(http.last().url).toContain('/services/8000');
   });
@@ -431,7 +431,7 @@ describe('published services', () => {
   it('rejects a port outside the valid range', async () => {
     const { client } = testClient([jsonResponse(SERVICE)]);
     await expectRejection(
-      client.runtimes.services.publish(RUNTIME_ID, 70000),
+      client.runtime.service.publish(RUNTIME_ID, 70000),
       GravixLayerInvalidArgumentError,
     );
   });
@@ -440,7 +440,7 @@ describe('published services', () => {
     const http = mockFetch([jsonResponse(SERVICE), jsonResponse({ ok: true })]);
     const { client } = testClient([], { fetch: http.fetch });
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     await handle.get('/health');
 
     expect(http.last().url).toBe('https://svc.example.test/health');
@@ -454,7 +454,7 @@ describe('published services', () => {
     ]);
     const { client } = testClient([], { fetch: http.fetch });
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     await handle.get('/');
 
     expect(http.last().headers['x-gravix-web-service-token']).toBeUndefined();
@@ -464,7 +464,7 @@ describe('published services', () => {
     const http = mockFetch([jsonResponse(SERVICE), jsonResponse({ echoed: true })]);
     const { client } = testClient([], { fetch: http.fetch });
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     const body = await handle.postJson<{ echoed: boolean }>('/echo', { a: 1 });
 
     expect(body).toEqual({ echoed: true });
@@ -479,7 +479,7 @@ describe('published services', () => {
     ]);
     const { client } = testClient([], { fetch: http.fetch });
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     await handle.get('status');
 
     expect(http.last().url).toBe('https://svc.example.test/app/status');
@@ -489,7 +489,7 @@ describe('published services', () => {
     const http = mockFetch([jsonResponse(SERVICE), errorResponse(503, 'starting up')]);
     const { client } = testClient([], { fetch: http.fetch });
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     const response = await handle.get('/health');
 
     expect(response.status).toBe(503);
@@ -499,7 +499,7 @@ describe('published services', () => {
     const http = mockFetch([jsonResponse(SERVICE), errorResponse(500, 'boom')]);
     const { client } = testClient([], { fetch: http.fetch });
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     const error = await expectRejection(handle.postJson('/echo', {}), GravixLayerServerError);
 
     expect(error.status).toBe(500);
@@ -509,7 +509,7 @@ describe('published services', () => {
     const http = mockFetch([jsonResponse(SERVICE), new Response('<html>hi</html>')]);
     const { client } = testClient([], { fetch: http.fetch });
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     const error = await expectRejection(handle.postJson('/echo', {}), GravixLayerError);
 
     expect(error.message).toMatch(/malformed JSON/);
@@ -519,7 +519,7 @@ describe('published services', () => {
     const http = mockFetch([jsonResponse(SERVICE), jsonResponse({})]);
     const { client } = testClient([], { fetch: http.fetch });
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     await handle.post('/items');
     await handle.put('/items/1');
     await handle.patch('/items/1');
@@ -540,14 +540,14 @@ describe('published services', () => {
       }),
     });
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     await expectRejection(handle.get('/health'), GravixLayerConnectionError);
   });
 
   it('gives up on a slow service with a timeout error', async () => {
     const { client } = testClient([], { fetch: reply(hang) });
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     const error = await expectRejection(
       handle.get('/health', { timeout: 5 }),
       GravixLayerTimeoutError,
@@ -560,7 +560,7 @@ describe('published services', () => {
     const { client } = testClient([], { fetch: reply(hang) });
     const controller = new AbortController();
 
-    const handle = await client.runtimes.services.connect(RUNTIME_ID, 8000);
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     const pending = handle.get('/health', { signal: controller.signal });
     controller.abort();
 

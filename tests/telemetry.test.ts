@@ -122,7 +122,7 @@ describe('tracing', () => {
 
   it('spans every API request the client makes', async () => {
     const { client } = testClient([jsonResponse(runtimePayload())]);
-    await client.runtimes.retrieve(RUNTIME_ID);
+    await client.runtime.retrieve(RUNTIME_ID);
 
     const request = spans.find((span) => span.name.startsWith('GET '));
     expect(request?.attributes['http.request.method']).toBe('GET');
@@ -132,7 +132,7 @@ describe('tracing', () => {
 
   it('marks a failed request on its span', async () => {
     const { client } = testClient([jsonResponse({ error: 'nope' }, 500)]);
-    await expect(client.runtimes.retrieve(RUNTIME_ID)).rejects.toThrow();
+    await expect(client.runtime.retrieve(RUNTIME_ID)).rejects.toThrow();
 
     const request = spans.find((span) => span.name.startsWith('GET '));
     expect(request?.exceptions).toHaveLength(1);

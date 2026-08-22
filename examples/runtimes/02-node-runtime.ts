@@ -15,7 +15,7 @@ const client = new GravixLayer();
 
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
-const runtime = await client.runtimes.create({ template: TEMPLATE });
+const runtime = await client.runtime.create({ template: TEMPLATE });
 console.log(`Runtime    : ${runtime.runtimeId}`);
 
 // Which Node is installed?
@@ -33,7 +33,7 @@ console.log(`\nSystem info:\n${info.stdout}`);
 // runCode evaluates a snippet in a shared interpreter, the way a notebook cell
 // does. A script that should run as its own program — its own process, its own
 // event loop, its own exit code — goes through runCmd instead.
-await runtime.files.write(
+await runtime.file.write(
   '/workspace/async-demo.js',
   `const start = Date.now();
 (async () => {
