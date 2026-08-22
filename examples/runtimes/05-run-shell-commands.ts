@@ -39,8 +39,8 @@ try {
   console.log(`exit code  : ${uname.exitCode}  (${uname.durationMs} ms)`);
 
   // 2. The same command as a program plus arguments.
-  const listed = await runtime.runCmd('ls', { args: ['-la', '/home/user'] });
-  console.log(`\nls -la /home/user:\n${listed.stdout}`);
+  const listed = await runtime.runCmd('ls', { args: ['-la', '/workspace'] });
+  console.log(`\nls -la /workspace:\n${listed.stdout}`);
 
   // 3. Run somewhere other than the default working directory.
   const cwd = await runtime.runCmd('pwd', { workingDir: '/tmp' });

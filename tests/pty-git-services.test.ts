@@ -32,7 +32,7 @@ function sessionPayload(overrides: Record<string, unknown> = {}) {
     pid: 42,
     shell: '/bin/bash',
     args: ['-l'],
-    working_dir: '/home/user',
+    working_dir: '/workspace',
     cols: 80,
     rows: 24,
     status: 'running',
@@ -47,7 +47,7 @@ describe('terminal sessions', () => {
     const session = await client.runtimes.pty.create(RUNTIME_ID, {
       shell: '/bin/bash',
       args: ['-l'],
-      workingDir: '/home/user',
+      workingDir: '/workspace',
       environment: { TERM: 'xterm-256color' },
       cols: 120,
       rows: 40,
@@ -57,7 +57,7 @@ describe('terminal sessions', () => {
     expect(http.jsonBody()).toEqual({
       shell: '/bin/bash',
       args: ['-l'],
-      working_dir: '/home/user',
+      working_dir: '/workspace',
       environment: { TERM: 'xterm-256color' },
       cols: 120,
       rows: 40,
@@ -256,14 +256,14 @@ describe('git', () => {
     const result = await client.runtimes.git.clone(
       RUNTIME_ID,
       'https://example.test/repo.git',
-      '/home/user/repo',
+      '/workspace/repo',
       { branch: 'main', depth: 1, authToken: 'secret' },
     );
 
     expect(http.last().url).toContain(`/runtime/${RUNTIME_ID}/git/clone`);
     expect(http.jsonBody()).toEqual({
       url: 'https://example.test/repo.git',
-      path: '/home/user/repo',
+      path: '/workspace/repo',
       branch: 'main',
       depth: 1,
       auth_token: 'secret',
@@ -274,7 +274,7 @@ describe('git', () => {
 
   it('maps each operation to its endpoint and body', async () => {
     const { client, http } = testClient([jsonResponse(OK)]);
-    const repo = '/home/user/repo';
+    const repo = '/workspace/repo';
 
     await client.runtimes.git.status(RUNTIME_ID, repo);
     expect(http.last().url).toContain('/git/status');

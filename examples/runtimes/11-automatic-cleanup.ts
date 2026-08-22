@@ -29,8 +29,8 @@ console.log('--- await using ---');
   const greeting = await runtime.runCode('print("hello from a disposed runtime")');
   console.log(`Output     : ${greeting.stdout.trim()}`);
 
-  await runtime.files.write('/home/user/greeting.txt', 'written inside the block');
-  const file = await runtime.files.read('/home/user/greeting.txt');
+  await runtime.files.write('/workspace/greeting.txt', 'written inside the block');
+  const file = await runtime.files.read('/workspace/greeting.txt');
   console.log(`File       : ${file.content}`);
 }
 console.log('Runtime terminated on the way out of the block.');

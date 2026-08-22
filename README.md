@@ -116,16 +116,16 @@ for await (const event of runtime.streamCmd('npm run build')) {
 ### Files
 
 ```ts
-await runtime.files.write('/home/user/data.csv', csv);
-const { content } = await runtime.files.read('/home/user/out.txt');
+await runtime.files.write('/workspace/data.csv', csv);
+const { content } = await runtime.files.read('/workspace/out.txt');
 
-const bytes = await runtime.files.download('/home/user/report.pdf');
+const bytes = await runtime.files.download('/workspace/report.pdf');
 await runtime.files.writeMany([
-  { path: '/home/user/a.txt', data: 'a' },
-  { path: '/home/user/b.txt', data: 'b' },
+  { path: '/workspace/a.txt', data: 'a' },
+  { path: '/workspace/b.txt', data: 'b' },
 ]);
 
-for await (const event of runtime.files.watch('/home/user')) {
+for await (const event of runtime.files.watch('/workspace')) {
   console.log(event.type, event.name);
 }
 ```
@@ -140,7 +140,7 @@ variables and imports persist:
 
 ```ts
 const context = await runtime.createContext();
-await runtime.runCode('import pandas as pd; df = pd.read_csv("/home/user/data.csv")', {
+await runtime.runCode('import pandas as pd; df = pd.read_csv("/workspace/data.csv")', {
   contextId: context.contextId,
 });
 const shape = await runtime.runCode('print(df.shape)', { contextId: context.contextId });
@@ -165,7 +165,7 @@ const terminal = runtime.pty.handle(session.sessionId).connect({
 });
 await terminal.sendInput('ls -la\n');
 
-await runtime.git.clone('https://github.com/org/repo.git', '/home/user/repo', { depth: 1 });
+await runtime.git.clone('https://github.com/org/repo.git', '/workspace/repo', { depth: 1 });
 
 const ssh = await runtime.enableSsh();
 console.log(ssh.connectCmd);

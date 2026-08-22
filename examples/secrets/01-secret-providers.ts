@@ -12,7 +12,8 @@
  *   export GRAVIXLAYER_API_KEY="your-api-key"
  *   npx tsx examples/secrets/01-secret-providers.ts
  *
- * Optional: DEMO_SECRET_VALUE (a placeholder is used otherwise)
+ * Optional: DEMO_SECRET_VALUE, if you would rather inject a value of your own
+ * than the throwaway one below.
  */
 
 import { GravixLayer, type Runtime, type SecretProvider } from 'gravixlayer';

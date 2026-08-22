@@ -30,14 +30,19 @@ const info = await runtime.runCode(
 );
 console.log(`\nSystem info:\n${info.stdout}`);
 
-// Asynchronous code works the same way; the call returns when the script does.
-const timed = await runtime.runCode(
+// runCode evaluates a snippet in a shared interpreter, the way a notebook cell
+// does. A script that should run as its own program — its own process, its own
+// event loop, its own exit code — goes through runCmd instead.
+await runtime.files.write(
+  '/workspace/async-demo.js',
   `const start = Date.now();
-   await new Promise((resolve) => setTimeout(resolve, 100));
-   console.log(\`waited \${Date.now() - start}ms\`);`,
-  { language: 'javascript' },
+(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  console.log(\`waited \${Date.now() - start}ms\`);
+})();`,
 );
-console.log(`Async      : ${timed.stdout.trim()}`);
+const timed = await runtime.runCmd('node /workspace/async-demo.js');
+console.log(`Async      : ${timed.stdout.trim()} (exit ${timed.exitCode})`);
 
 await runtime.kill();
 console.log('\nRuntime terminated.');

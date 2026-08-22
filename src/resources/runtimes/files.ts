@@ -2,11 +2,11 @@
  * The guest filesystem API.
  *
  * Every method operates inside a runtime's own filesystem. Paths are absolute
- * within the guest, and the guest's default working directory is `/home/user`.
+ * within the guest, and the guest's default working directory is `/workspace`.
  */
 
 import { utf8Encode, type BinaryLike } from '../../core/binary.js';
-import { GravixLayerInvalidArgumentError } from '../../core/errors.js';
+import { GravixLayerError, GravixLayerInvalidArgumentError } from '../../core/errors.js';
 import { asRecord, bool, optNum, optStr, parseList, str } from '../../core/parse.js';
 import { iterSSEJson } from '../../core/sse.js';
 import type { RequestOptions } from '../../core/transport.js';
@@ -44,14 +44,21 @@ import {
 import { APIResource } from '../resource.js';
 
 /** Default directory used when a listing does not specify a path. */
-export const DEFAULT_WORKING_DIR = '/home/user';
+export const DEFAULT_WORKING_DIR = '/workspace';
 
-/** One file in a batch upload. */
+/** How many files {@link RuntimeFiles.writeMany} sends at the same time. */
+const DEFAULT_WRITE_CONCURRENCY = 8;
+
+/** One file in a batch write. */
 export interface WriteEntry {
   /** Absolute destination path in the guest. */
   path: string;
   /** File contents. */
   data: BinaryLike;
+  /** Permission bits for this file, for example `'0644'` or `0o644`. */
+  mode?: FileMode;
+  /** Owning user inside the guest. Takes precedence over the batch-wide user. */
+  user?: string;
 }
 
 /** Options for {@link RuntimeFiles.upload}. */
@@ -60,6 +67,12 @@ export interface UploadOptions extends RequestOptions {
   user?: string;
   /** Permission bits, for example `'0644'` or `0o644`. */
   mode?: FileMode;
+}
+
+/** Options for {@link RuntimeFiles.writeMany}. */
+export interface WriteManyOptions extends UploadOptions {
+  /** How many files to send at the same time. Defaults to 8. */
+  concurrency?: number;
 }
 
 /** Options for {@link RuntimeFiles.createDirectory}. */
@@ -297,42 +310,71 @@ export class RuntimeFiles extends APIResource {
   }
 
   /**
-   * Upload several files in one request.
+   * Upload several files, each to its own destination path.
+   *
+   * Every entry names its own absolute destination, and may carry its own mode
+   * and owner. Entries are sent concurrently, `concurrency` at a time, and the
+   * results come back in the order the entries were given.
    *
    * The API can accept some files and reject others; when it does, the
-   * response reports `partialFailure` and each entry carries its own `error`.
+   * response reports `partialFailure` and each rejected entry carries its own
+   * `error`. When every entry is rejected, the first failure is thrown, since
+   * that means the batch as a whole did not apply.
    */
   async writeMany(
     runtimeId: string,
     entries: readonly WriteEntry[],
-    options: UploadOptions = {},
+    options: WriteManyOptions = {},
   ): Promise<WriteFilesResponse> {
     assertRuntimeId(runtimeId);
     if (entries.length === 0) return { files: [], partialFailure: false };
+    for (const entry of entries) assertPath(entry.path);
 
-    const form = new FormData();
-    for (const entry of entries) {
-      assertPath(entry.path);
-      await appendFile(form, 'file', entry.path, entry.data);
-    }
+    const workers = Math.min(
+      entries.length,
+      options.concurrency === undefined
+        ? DEFAULT_WRITE_CONCURRENCY
+        : assertPositiveInt(options.concurrency, 'concurrency'),
+    );
 
-    const query: Record<string, string> = {};
-    if (options.user !== undefined) query['username'] = options.user;
+    const files = new Array<WriteResult>(entries.length);
+    const failures = new Array<GravixLayerError | undefined>(entries.length);
+    let next = 0;
 
-    // HTTP 207 is how the API reports that some files were written and others
-    // were not, so the status is read alongside the body.
-    const { data: body, status } = await this.http.requestWithStatus<unknown>({
-      method: 'POST',
-      path: `runtime/${runtimeId}/files`,
-      service: SERVICES.agents,
-      query,
-      form,
-      options: requestOptions(options),
-    });
+    const run = async (): Promise<void> => {
+      for (let index = next++; index < entries.length; index = next++) {
+        const entry = entries[index] as WriteEntry;
 
-    const list = Array.isArray(body) ? body : (asRecord(body)['files'] ?? []);
-    const files = (Array.isArray(list) ? list : []).map((item) => parseWriteResult(asRecord(item)));
-    return { files, partialFailure: status === 207 };
+        const upload: UploadOptions = requestOptions(options);
+        const user = entry.user ?? options.user;
+        if (user !== undefined) upload.user = user;
+        const mode = entry.mode ?? options.mode;
+        if (mode !== undefined) upload.mode = mode;
+
+        try {
+          files[index] = await this.upload(runtimeId, entry.path, entry.data, upload);
+        } catch (error) {
+          // Only a rejection carrying a status is specific to one file. A
+          // connection, timeout, or abort failure applies to the whole batch
+          // and is left to propagate.
+          if (!(error instanceof GravixLayerError) || error.status === undefined) throw error;
+          failures[index] = error;
+          files[index] = {
+            path: entry.path,
+            name: basename(entry.path),
+            type: 'file',
+            error: error.message,
+          };
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: workers }, run));
+
+    const firstFailure = failures.find((error) => error !== undefined);
+    const failed = failures.reduce<number>((count, error) => count + (error ? 1 : 0), 0);
+    if (firstFailure && failed === entries.length) throw firstFailure;
+    return { files, partialFailure: failed > 0 };
   }
 
   /** Create a directory. */
@@ -523,7 +565,7 @@ export class RuntimeFiles extends APIResource {
    *
    * @example
    * ```ts
-   * for await (const event of client.runtimes.files.watch(id, '/home/user')) {
+   * for await (const event of client.runtimes.files.watch(id, '/workspace')) {
    *   console.log(event.type, event.path);
    *   if (event.type === 'write') break;
    * }

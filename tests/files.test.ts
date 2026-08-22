@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { GravixLayerInvalidArgumentError } from '../src/index.js';
+import { GravixLayerBadRequestError, GravixLayerInvalidArgumentError } from '../src/index.js';
 import {
   bytesResponse,
   collect,
+  errorResponse,
   expectRejection,
   jsonResponse,
   RUNTIME_ID,
   sseJson,
   testClient,
+  type CapturedRequest,
+  type MockFetch,
 } from './helpers.js';
 
 /** Pull the parts out of a multipart body the SDK built. */
@@ -28,15 +31,31 @@ async function formParts(body: unknown): Promise<{ names: string[]; contents: st
   return { names, contents };
 }
 
+/** The destination an upload asked for, read back off the query string. */
+function uploadedPath(request: CapturedRequest): string {
+  return new URL(request.url).searchParams.get('path') ?? '';
+}
+
+/** Every destination the SDK uploaded to, in the order the calls went out. */
+function uploadedPaths(http: MockFetch): string[] {
+  return http.requests.map(uploadedPath);
+}
+
+/** Answer an upload the way the API does: with the path it wrote. */
+function echoUpload(_attempt: number, request: CapturedRequest): Response {
+  const path = uploadedPath(request);
+  return jsonResponse([{ path, name: path.split('/').pop(), type: 'file' }]);
+}
+
 describe('read and write', () => {
   it('reads a file', async () => {
     const { client, http } = testClient([
-      jsonResponse({ content: 'hello', path: '/home/user/a.txt', size: 5 }),
+      jsonResponse({ content: 'hello', path: '/workspace/a.txt', size: 5 }),
     ]);
-    const result = await client.runtimes.files.read(RUNTIME_ID, '/home/user/a.txt');
+    const result = await client.runtimes.files.read(RUNTIME_ID, '/workspace/a.txt');
 
     expect(http.last().url).toContain('/files/read');
-    expect(http.jsonBody()).toEqual({ path: '/home/user/a.txt' });
+    expect(http.jsonBody()).toEqual({ path: '/workspace/a.txt' });
     expect(result.content).toBe('hello');
     expect(result.size).toBe(5);
   });
@@ -70,14 +89,14 @@ describe('read and write', () => {
     const { client, http } = testClient([
       jsonResponse({
         files: [
-          { name: 'a.txt', path: '/home/user/a.txt', type: 'file', size: 3 },
-          { name: 'src', path: '/home/user/src', type: 'dir' },
+          { name: 'a.txt', path: '/workspace/a.txt', type: 'file', size: 3 },
+          { name: 'src', path: '/workspace/src', type: 'dir' },
         ],
       }),
     ]);
     const result = await client.runtimes.files.list(RUNTIME_ID);
 
-    expect(http.jsonBody()).toEqual({ path: '/home/user' });
+    expect(http.jsonBody()).toEqual({ path: '/workspace' });
     expect(result.files).toHaveLength(2);
     expect(result.files[0]?.name).toBe('a.txt');
   });
@@ -95,24 +114,24 @@ describe('read and write', () => {
 describe('uploads', () => {
   it('sends one file as multipart with the path in the query', async () => {
     const { client, http } = testClient([
-      jsonResponse([{ path: '/home/user/data.bin', name: 'data.bin', type: 'file' }]),
+      jsonResponse([{ path: '/workspace/data.bin', name: 'data.bin', type: 'file' }]),
     ]);
     const result = await client.runtimes.files.upload(
       RUNTIME_ID,
-      '/home/user/data.bin',
+      '/workspace/data.bin',
       new Uint8Array([1, 2, 3]),
       { user: 'root', mode: 0o600 },
     );
 
     const query = http.query();
-    expect(query.get('path')).toBe('/home/user/data.bin');
+    expect(query.get('path')).toBe('/workspace/data.bin');
     expect(query.get('username')).toBe('root');
     expect(query.get('mode')).toBe('0600');
     expect(http.last().headers['content-type']).toBeUndefined();
 
     const { names } = await formParts(http.last().body);
     expect(names).toEqual(['data.bin']);
-    expect(result.path).toBe('/home/user/data.bin');
+    expect(result.path).toBe('/workspace/data.bin');
   });
 
   it('synthesises a result when the API answers with an empty body', async () => {
@@ -133,35 +152,60 @@ describe('uploads', () => {
     expect(result.size).toBe(4);
   });
 
-  it('sends a batch as one multipart request', async () => {
-    const { client, http } = testClient([
-      jsonResponse([
-        { path: '/a.txt', name: 'a.txt', type: 'file' },
-        { path: '/b.txt', name: 'b.txt', type: 'file' },
-      ]),
-    ]);
+  it('gives every file in a batch its own destination', async () => {
+    const { client, http } = testClient([echoUpload]);
 
     const result = await client.runtimes.files.writeMany(RUNTIME_ID, [
-      { path: '/a.txt', data: 'first' },
-      { path: '/b.txt', data: 'second' },
+      { path: '/workspace/project/a.txt', data: 'first' },
+      { path: '/workspace/project/src/b.txt', data: 'second' },
     ]);
 
-    const { names, contents } = await formParts(http.last().body);
-    expect(names).toEqual(['/a.txt', '/b.txt']);
-    expect(contents).toEqual(['first', 'second']);
-    expect(result.files).toHaveLength(2);
+    // Directories survive, which a single multipart batch could not manage:
+    // RFC 7578 has the server ignore any path in a part's filename.
+    expect(uploadedPaths(http)).toEqual([
+      '/workspace/project/a.txt',
+      '/workspace/project/src/b.txt',
+    ]);
+    expect(result.files.map((file) => file.path)).toEqual([
+      '/workspace/project/a.txt',
+      '/workspace/project/src/b.txt',
+    ]);
     expect(result.partialFailure).toBe(false);
+
+    const { names, contents } = await formParts(http.requests[0]?.body);
+    expect(names).toEqual(['a.txt']);
+    expect(contents).toEqual(['first']);
   });
 
-  it('flags a partial failure from the 207 status', async () => {
+  it('applies the mode and owner an entry carries', async () => {
+    const { client, http } = testClient([echoUpload]);
+
+    await client.runtimes.files.writeMany(
+      RUNTIME_ID,
+      [
+        { path: '/workspace/run.sh', data: '#!/bin/sh\n', mode: 0o755 },
+        { path: '/workspace/notes.md', data: '# notes\n' },
+      ],
+      { user: 'app' },
+    );
+
+    const byPath = new Map(http.requests.map((r) => [new URL(r.url).searchParams.get('path'), r]));
+    const script = new URL(byPath.get('/workspace/run.sh')!.url).searchParams;
+    expect(script.get('mode')).toBe('0755');
+    expect(script.get('username')).toBe('app');
+
+    // The batch-wide owner still applies to an entry that names no mode.
+    const notes = new URL(byPath.get('/workspace/notes.md')!.url).searchParams;
+    expect(notes.get('mode')).toBeNull();
+    expect(notes.get('username')).toBe('app');
+  });
+
+  it('reports a partial failure and keeps the successful entries', async () => {
     const { client } = testClient([
-      jsonResponse(
-        [
-          { path: '/a.txt', name: 'a.txt', type: 'file' },
-          { path: '/b.txt', name: 'b.txt', type: 'file', error: 'permission denied' },
-        ],
-        207,
-      ),
+      (_attempt, request) =>
+        uploadedPath(request) === '/b.txt'
+          ? errorResponse(403, 'permission denied')
+          : echoUpload(_attempt, request),
     ]);
 
     const result = await client.runtimes.files.writeMany(RUNTIME_ID, [
@@ -170,7 +214,33 @@ describe('uploads', () => {
     ]);
 
     expect(result.partialFailure).toBe(true);
-    expect(result.files[1]?.error).toBe('permission denied');
+    expect(result.files[0]?.error).toBeUndefined();
+    expect(result.files[1]?.path).toBe('/b.txt');
+    expect(result.files[1]?.error).toContain('permission denied');
+  });
+
+  it('throws when the whole batch is rejected', async () => {
+    const { client } = testClient([errorResponse(403, 'permission denied')]);
+
+    const error = await expectRejection(
+      client.runtimes.files.writeMany(RUNTIME_ID, [
+        { path: '/a.txt', data: 'ok' },
+        { path: '/b.txt', data: 'no' },
+      ]),
+      GravixLayerBadRequestError,
+    );
+    expect(error.status).toBe(403);
+  });
+
+  it('rejects a batch whose concurrency is not positive', async () => {
+    const { client, http } = testClient([echoUpload]);
+    await expectRejection(
+      client.runtimes.files.writeMany(RUNTIME_ID, [{ path: '/a.txt', data: 'ok' }], {
+        concurrency: 0,
+      }),
+      GravixLayerInvalidArgumentError,
+    );
+    expect(http.requests).toHaveLength(0);
   });
 
   it('short-circuits an empty batch', async () => {
@@ -179,16 +249,6 @@ describe('uploads', () => {
 
     expect(result).toEqual({ files: [], partialFailure: false });
     expect(http.requests).toHaveLength(0);
-  });
-
-  it('reads a batch wrapped in a files envelope', async () => {
-    const { client } = testClient([
-      jsonResponse({ files: [{ path: '/a.txt', name: 'a.txt', type: 'file' }] }),
-    ]);
-    const result = await client.runtimes.files.writeMany(RUNTIME_ID, [
-      { path: '/a.txt', data: 'ok' },
-    ]);
-    expect(result.files).toHaveLength(1);
   });
 
   it('downloads raw bytes and decoded text', async () => {
@@ -365,18 +425,18 @@ describe('watch', () => {
   it('yields change events', async () => {
     const { client, http } = testClient([
       sseJson([
-        { type: 'start', path: '/home/user' },
-        { type: 'write', path: '/home/user/a.txt', name: 'a.txt' },
+        { type: 'start', path: '/workspace' },
+        { type: 'write', path: '/workspace/a.txt', name: 'a.txt' },
       ]),
     ]);
 
     const events = await collect(
-      client.runtimes.files.watch(RUNTIME_ID, '/home/user', { recursive: true }),
+      client.runtimes.files.watch(RUNTIME_ID, '/workspace', { recursive: true }),
     );
 
-    expect(http.jsonBody()).toEqual({ path: '/home/user', recursive: true });
+    expect(http.jsonBody()).toEqual({ path: '/workspace', recursive: true });
     expect(events.map((event) => event.type)).toEqual(['start', 'write']);
-    expect(events[1]?.path).toBe('/home/user/a.txt');
+    expect(events[1]?.path).toBe('/workspace/a.txt');
   });
 
   it('raises when the watcher itself fails', async () => {

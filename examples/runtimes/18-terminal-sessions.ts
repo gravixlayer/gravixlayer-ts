@@ -27,7 +27,7 @@ console.log(`Runtime    : ${runtime.runtimeId}`);
 // 1. Start a session with the shell, size, and environment you want.
 const session = await runtime.pty.create({
   shell: '/bin/bash',
-  workingDir: '/home/user',
+  workingDir: '/workspace',
   environment: { DEMO: 'terminal' },
   cols: 100,
   rows: 30,
@@ -50,10 +50,13 @@ await terminal.resize(120, 40);
 await terminal.sendInput('stty size\n');
 await pause(1000);
 
-// 5. Interrupt a long-running command without killing the shell.
+// 5. Interrupt a long-running command without killing the shell. Sending the
+//    interrupt character is exactly what pressing Ctrl-C does: the terminal
+//    turns it into a signal for the job in the foreground, so the shell that
+//    started it survives.
 await terminal.sendInput('sleep 60\n');
 await pause(500);
-await terminal.sendSignal('INT');
+await terminal.sendInput('\x03');
 await pause(1000);
 console.log('\n--- interrupted, the shell is still alive ---');
 
@@ -77,9 +80,15 @@ const finished = await reattached.waitForExit(30_000);
 console.log(`\nFinished   : status=${finished.status} exit=${finished.exitCode}`);
 await reattached.disconnect();
 
-// 9. A session you do not need to wait for can simply be killed.
+// 9. Signals can also be sent out of band, without attaching. `HUP` is the one
+//    a terminal sends when it goes away, and a shell exits on it.
 const scratch = await runtime.pty.create({ shell: '/bin/bash' });
-console.log(`Scratch    : killed=${await runtime.pty.kill(scratch.sessionId)}`);
+await runtime.pty.handle(scratch.sessionId).sendSignal('HUP');
+await pause(1000);
+console.log(`\nScratch    : ${(await runtime.pty.get(scratch.sessionId)).status}`);
+
+// 10. Killing a session ends it if it is still running, and releases it either way.
+console.log(`Released   : ${await runtime.pty.kill(scratch.sessionId)}`);
 
 await runtime.kill();
 console.log('\nRuntime terminated.');

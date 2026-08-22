@@ -23,7 +23,7 @@ const client = new GravixLayer();
 
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 const KIND = process.env['GRAVIXLAYER_SNAPSHOT_KIND'] ?? 'cold';
-const MARKER = '/home/user/checkpoint.txt';
+const MARKER = '/workspace/checkpoint.txt';
 const NAME = `demo-${KIND}-${Date.now()}`;
 
 let source: Runtime | undefined;

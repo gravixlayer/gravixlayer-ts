@@ -51,6 +51,7 @@ import type {
   UploadOptions,
   WatchOptions,
   WriteEntry,
+  WriteManyOptions,
 } from './files.js';
 import type {
   BranchScope,
@@ -424,10 +425,10 @@ export class BoundFiles {
     return this.runtimes.files.upload(this.id(), path, data, options);
   }
 
-  /** Upload several files in one request. */
+  /** Upload several files, each to its own destination path. */
   async writeMany(
     entries: readonly WriteEntry[],
-    options?: UploadOptions,
+    options?: WriteManyOptions,
   ): Promise<WriteFilesResponse> {
     return this.runtimes.files.writeMany(this.id(), entries, options);
   }

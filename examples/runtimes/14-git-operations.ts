@@ -25,7 +25,7 @@ const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 const CLONE_URL = process.env['GIT_CLONE_URL'] ?? 'https://github.com/octocat/Hello-World.git';
 const BRANCH = process.env['GIT_BRANCH'] ?? 'master';
 const TOKEN = process.env['GIT_AUTH_TOKEN'];
-const REPO = '/home/user/repo';
+const REPO = '/workspace/repo';
 
 const policy = await client.networkPolicies.create(`git-example-${Date.now()}`, {
   egressMode: 'allow_all',

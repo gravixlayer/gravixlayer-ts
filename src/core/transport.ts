@@ -216,18 +216,6 @@ export class Transport {
     return (await this.readJson<T>(response)) as T;
   }
 
-  /**
-   * Send a request and return the parsed body alongside the status code.
-   *
-   * Needed where the status carries meaning beyond success, such as the 207
-   * that marks a partially successful batch upload.
-   */
-  async requestWithStatus<T>(spec: RequestSpec): Promise<{ data: T | undefined; status: number }> {
-    const response = await this.send(spec, false);
-    const data = await this.readJson<T>(response);
-    return { data, status: response.status };
-  }
-
   /** Send a request and discard the response body. */
   async requestVoid(spec: RequestSpec): Promise<void> {
     const response = await this.send(spec, false);

@@ -19,3 +19,4 @@ npm-debug.log*
 # Internal release runbook and its script. Never publish.
 RELEASE.md
 scripts/release.sh
+*.tgz

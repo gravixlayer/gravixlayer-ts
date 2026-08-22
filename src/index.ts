@@ -94,6 +94,7 @@ export {
   type UploadOptions,
   type WatchOptions,
   type WriteEntry,
+  type WriteManyOptions,
 } from './resources/runtimes/files.js';
 
 export {

@@ -18,8 +18,15 @@ export interface CapturedRequest {
   body: BodyInit | null | undefined;
 }
 
-/** A queued reply, or a function that produces one per attempt. */
-export type Reply = Response | ((attempt: number) => Response | Promise<Response>);
+/**
+ * A queued reply, or a function that produces one from the attempt number and
+ * the request that triggered it.
+ *
+ * The request is what lets a test answer several concurrent calls correctly
+ * without depending on the order they happen to arrive in.
+ */
+export type Reply =
+  Response | ((attempt: number, request: CapturedRequest) => Response | Promise<Response>);
 
 /** A fake `fetch` plus the log of what it saw. */
 export interface MockFetch {
@@ -44,16 +51,19 @@ export interface MockFetch {
  */
 export function mockFetch(replies: readonly Reply[]): MockFetch {
   const requests: CapturedRequest[] = [];
-  const snapshots = new Map<Response, ResponseSnapshot>();
+  // The promise is cached, not the snapshot, so two concurrent requests served
+  // by the same queued reply cannot both try to read its body.
+  const snapshots = new Map<Response, Promise<ResponseSnapshot>>();
   let attempt = 0;
 
   const fetch: FetchLike = async (url, init) => {
-    requests.push({
+    const request: CapturedRequest = {
       url,
       method: init.method ?? 'GET',
       headers: normalizeHeaders(init.headers),
       body: init.body,
-    });
+    };
+    requests.push(request);
 
     const reply = replies[Math.min(attempt, replies.length - 1)];
     attempt += 1;
@@ -61,14 +71,14 @@ export function mockFetch(replies: readonly Reply[]): MockFetch {
     if (reply === undefined) {
       throw new Error(`No reply queued for request ${attempt} to ${url}`);
     }
-    if (typeof reply === 'function') return reply(attempt - 1);
+    if (typeof reply === 'function') return reply(attempt - 1, request);
 
     let snapshot = snapshots.get(reply);
     if (!snapshot) {
-      snapshot = await snapshotResponse(reply);
+      snapshot = snapshotResponse(reply);
       snapshots.set(reply, snapshot);
     }
-    return replay(snapshot);
+    return replay(await snapshot);
   };
 
   return {

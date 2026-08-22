@@ -365,7 +365,7 @@ describe('Runtime handle', () => {
       pid: 100,
       shell: '/bin/bash',
       args: [],
-      workingDir: '/home/user',
+      workingDir: '/workspace',
       cols: 80,
       rows: 24,
       status: 'running',

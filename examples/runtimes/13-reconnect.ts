@@ -30,8 +30,8 @@ console.log(`Reconnected: ${runtime.runtimeId} (${runtime.status})`);
 const uname = await runtime.runCmd('uname -a');
 console.log(`\nuname      : ${uname.stdout.trim()}`);
 
-await runtime.files.write('/home/user/reconnect.txt', 'written after reconnecting');
-const file = await runtime.files.read('/home/user/reconnect.txt');
+await runtime.files.write('/workspace/reconnect.txt', 'written after reconnecting');
+const file = await runtime.files.read('/workspace/reconnect.txt');
 console.log(`File       : ${file.content}`);
 
 // `get` fetches a handle without the connect round trip, when you already know

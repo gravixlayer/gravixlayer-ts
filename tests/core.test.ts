@@ -413,9 +413,9 @@ describe('file modes', () => {
   });
 
   it('takes the last segment as a filename', () => {
-    expect(basename('/home/user/app.py')).toBe('app.py');
+    expect(basename('/workspace/app.py')).toBe('app.py');
     expect(basename('app.py')).toBe('app.py');
-    expect(basename('/home/user/')).toBe('user');
+    expect(basename('/workspace/project/')).toBe('project');
   });
 
   it('wraps binary input as a blob with a content type', async () => {
@@ -438,7 +438,7 @@ describe('validation', () => {
   });
 
   it('accepts ordinary guest paths', () => {
-    expect(assertPath('/home/user/app.py')).toBe('/home/user/app.py');
+    expect(assertPath('/workspace/app.py')).toBe('/workspace/app.py');
     expect(assertPath('relative/file.txt')).toBe('relative/file.txt');
     expect(assertPath('..hidden')).toBe('..hidden');
   });

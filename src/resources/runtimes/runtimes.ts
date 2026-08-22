@@ -675,7 +675,7 @@ export class Runtimes extends APIResource {
    * @example
    * ```ts
    * const result = await client.runtimes.runCode(id, 'print(2 ** 10)');
-   * console.log(result.logs.stdout.join(''));
+   * console.log(result.logs.stdout.join('\n'));
    * ```
    */
   async runCode(

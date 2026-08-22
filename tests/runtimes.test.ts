@@ -536,6 +536,38 @@ describe('runtime handle', () => {
     expect(execution.success).toBe(true);
   });
 
+  it('puts the newlines back between code output lines', async () => {
+    const { client } = testClient([
+      jsonResponse(runtimePayload()),
+      jsonResponse({
+        results: [],
+        logs: { stdout: ['{', '  "ok": true', '}'], stderr: ['Traceback:', '  line 1'] },
+      }),
+    ]);
+
+    const runtime = await client.runtimes.create();
+    const execution = await runtime.runCode('print("{}")');
+
+    // The API reports one line per entry with the newline stripped. Joining
+    // them with nothing glues the lines together and silently mangles any
+    // multi-line output the code printed.
+    expect(execution.stdout).toBe('{\n  "ok": true\n}');
+    expect(execution.stderr).toBe('Traceback:\n  line 1');
+  });
+
+  it('reports command output as lines too', async () => {
+    const { client } = testClient([
+      jsonResponse(runtimePayload()),
+      jsonResponse({ stdout: 'one\ntwo', stderr: '', exit_code: 0, duration_ms: 1 }),
+    ]);
+
+    const runtime = await client.runtimes.create();
+    const execution = await runtime.runCmd('printf "one\\ntwo"');
+
+    expect(execution.logs.stdout).toEqual(['one', 'two']);
+    expect(execution.logs.stderr).toEqual([]);
+  });
+
   it('refreshes cached state', async () => {
     const { client } = testClient([
       jsonResponse(runtimePayload()),

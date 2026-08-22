@@ -620,6 +620,11 @@ export interface CodeContextDeleteResponse {
  * `runCode` and `runCmd` return different payloads; this presents both through
  * one shape so callers can log `execution.stdout` without branching.
  */
+/** Splits captured output into lines, treating no output as no lines. */
+function splitLines(text: string): string[] {
+  return text ? text.split('\n') : [];
+}
+
 export class Execution {
   /** The underlying response, if you need a field this view does not expose. */
   readonly raw: CodeRunResponse | CommandRunResponse;
@@ -631,18 +636,23 @@ export class Execution {
     this.isCommand = 'exitCode' in response;
   }
 
-  /** Everything written to standard output. */
+  /**
+   * Everything written to standard output.
+   *
+   * A code execution reports its output one line per entry, with the newlines
+   * stripped, so they are put back when the lines are joined.
+   */
   get stdout(): string {
     return this.isCommand
       ? (this.raw as CommandRunResponse).stdout
-      : (this.raw as CodeRunResponse).logs.stdout.join('');
+      : (this.raw as CodeRunResponse).logs.stdout.join('\n');
   }
 
   /** Everything written to standard error. */
   get stderr(): string {
     return this.isCommand
       ? (this.raw as CommandRunResponse).stderr
-      : (this.raw as CodeRunResponse).logs.stderr.join('');
+      : (this.raw as CodeRunResponse).logs.stderr.join('\n');
   }
 
   /**
@@ -692,14 +702,15 @@ export class Execution {
     return this.isCommand ? (this.raw as CommandRunResponse).durationMs : 0;
   }
 
-  /** Captured streams, split into chunks as they arrived. */
+  /** Captured streams, one line per entry. */
   get logs(): ExecutionLogs {
-    return this.isCommand
-      ? {
-          stdout: [(this.raw as CommandRunResponse).stdout],
-          stderr: [(this.raw as CommandRunResponse).stderr],
-        }
-      : (this.raw as CodeRunResponse).logs;
+    if (!this.isCommand) return (this.raw as CodeRunResponse).logs;
+
+    const command = this.raw as CommandRunResponse;
+    return {
+      stdout: splitLines(command.stdout),
+      stderr: splitLines(command.stderr),
+    };
   }
 }
 

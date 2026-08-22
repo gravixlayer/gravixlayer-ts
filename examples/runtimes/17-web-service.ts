@@ -16,7 +16,7 @@ import { GravixLayer, type Runtime } from 'gravixlayer';
 const client = new GravixLayer();
 
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
-const APP_DIR = '/home/user/app';
+const APP_DIR = '/workspace/app';
 const PORT = 8000;
 
 const APP = `
