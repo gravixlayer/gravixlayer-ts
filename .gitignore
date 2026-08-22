@@ -1,0 +1,20 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
+npm-debug.log*
+.npmrc
+
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Internal release runbook. Never publish.
+RELEASE.md

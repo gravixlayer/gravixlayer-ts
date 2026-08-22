@@ -1,0 +1,91 @@
+{
+  "name": "gravixlayer",
+  "version": "0.1.2",
+  "description": "Official TypeScript SDK for the GravixLayer API — cloud runtimes, templates, snapshots, and agents.",
+  "keywords": [
+    "gravixlayer",
+    "sandbox",
+    "runtime",
+    "code-execution",
+    "agents",
+    "ai",
+    "sdk"
+  ],
+  "homepage": "https://gravixlayer.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gravixlayer/gravixlayer-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gravixlayer/gravixlayer-ts/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Gravix Layer",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "overrides": {
+    "esbuild": "^0.28.2"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentelemetry/api": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@types/node": "^22.10.2",
+    "@typescript-eslint/eslint-plugin": "^8.18.1",
+    "@typescript-eslint/parser": "^8.18.1",
+    "@vitest/coverage-v8": "^4.1.11",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "tsup": "^8.5.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}

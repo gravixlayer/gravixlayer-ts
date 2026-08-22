@@ -1,0 +1,244 @@
+/**
+ * The GravixLayer client.
+ *
+ * One object, constructed once, that owns configuration and hands every
+ * resource the same transport. Create it at module scope and reuse it: each
+ * instance keeps its connections warm, and building a new one per request
+ * throws that away.
+ */
+
+import { isBrowser, readEnv, readEnvOr } from './core/env.js';
+import { GravixLayerInvalidArgumentError } from './core/errors.js';
+import { maybeEnableFromEnv } from './core/telemetry.js';
+import { Transport, type FetchLike, type RequestOptions } from './core/transport.js';
+import { buildListEndpoint, SERVICES } from './core/url.js';
+import { Agents } from './resources/agents.js';
+import { Identity } from './resources/identity.js';
+import { NetworkPolicies } from './resources/network-policies.js';
+import type { ClientContext } from './resources/resource.js';
+import { Runtimes } from './resources/runtimes/runtimes.js';
+import { Snapshots } from './resources/snapshots.js';
+import { Templates } from './resources/templates.js';
+import { VERSION } from './version.js';
+
+/** Where the API lives when no base URL is configured. */
+const DEFAULT_BASE_URL = 'https://api.gravixlayer.ai';
+
+/** Default cloud for runtime placement. */
+const DEFAULT_CLOUD = 'aws';
+
+/** Default region for runtime placement. */
+const DEFAULT_REGION = 'us-east-1';
+
+/** Default request timeout in milliseconds. */
+const DEFAULT_TIMEOUT_MS = 60_000;
+
+/** Default number of retries for transient failures. */
+const DEFAULT_MAX_RETRIES = 3;
+
+/** Configuration accepted by {@link GravixLayer}. */
+export interface ClientOptions {
+  /**
+   * API key.
+   *
+   * Defaults to the `GRAVIXLAYER_API_KEY` environment variable.
+   */
+  apiKey?: string;
+  /**
+   * API base URL.
+   *
+   * Defaults to the `GRAVIXLAYER_BASE_URL` environment variable, then to the
+   * public endpoint.
+   */
+  baseUrl?: string;
+  /**
+   * Cloud used when a call does not name one.
+   *
+   * Defaults to `GRAVIXLAYER_CLOUD`, then `aws`.
+   */
+  cloud?: string;
+  /**
+   * Region used when a call does not name one.
+   *
+   * Defaults to `GRAVIXLAYER_REGION`, then `us-east-1`.
+   */
+  region?: string;
+  /** Request timeout in milliseconds. Defaults to 60000. `0` disables it. */
+  timeout?: number;
+  /**
+   * How many times to retry a transient failure.
+   *
+   * Applies to connection errors and to 429, 502, 503, and 504 responses, with
+   * exponential backoff and jitter. Defaults to 3.
+   */
+  maxRetries?: number;
+  /** Extra headers sent with every request. */
+  defaultHeaders?: Record<string, string>;
+  /**
+   * Replacement for the global `fetch`.
+   *
+   * Useful for a custom agent, a proxy, or deterministic tests.
+   */
+  fetch?: FetchLike;
+  /**
+   * Permit construction in a browser.
+   *
+   * Off by default: a browser build ships its API key to every visitor. Route
+   * calls through your own backend instead, and only set this when the key is
+   * genuinely not a secret.
+   */
+  dangerouslyAllowBrowser?: boolean;
+}
+
+/**
+ * Client for the GravixLayer API.
+ *
+ * @example
+ * ```ts
+ * import { GravixLayer } from 'gravixlayer';
+ *
+ * const client = new GravixLayer();
+ *
+ * const runtime = await client.runtimes.create({ template: 'base-small' });
+ * const result = await runtime.runCode('print("hello")');
+ * console.log(result.stdout);
+ * await runtime.kill();
+ * ```
+ */
+export class GravixLayer implements ClientContext {
+  /** Isolated virtual machines that run code on demand. */
+  readonly runtimes: Runtimes;
+  /** Reusable runtime images. */
+  readonly templates: Templates;
+  /** Saved runtime states that new runtimes can start from. */
+  readonly snapshots: Snapshots;
+  /** Long-running services with their own public URLs. */
+  readonly agents: Agents;
+  /** Secret providers, under `client.identity.providers`. */
+  readonly identity: Identity;
+  /** Rules governing what a runtime may reach on the network. */
+  readonly networkPolicies: NetworkPolicies;
+
+  /** The configured HTTP engine. Shared by every resource. */
+  readonly transport: Transport;
+  /** API base URL, without a trailing slash. */
+  readonly baseUrl: string;
+  /** Default cloud for runtime placement. */
+  readonly cloud: string;
+  /** Default region for runtime placement. */
+  readonly region: string;
+  /** Default request timeout in milliseconds. */
+  readonly timeout: number;
+  /** Default retry budget. */
+  readonly maxRetries: number;
+
+  constructor(options: ClientOptions = {}) {
+    if (isBrowser() && !options.dangerouslyAllowBrowser) {
+      throw new GravixLayerInvalidArgumentError(
+        'Refusing to run in a browser, because doing so exposes your API key to every visitor. ' +
+          'Call the API from your own server instead. If the key is not a secret in your ' +
+          'deployment, pass `dangerouslyAllowBrowser: true`.',
+      );
+    }
+
+    const apiKey = options.apiKey ?? readEnv('GRAVIXLAYER_API_KEY');
+    if (!apiKey) {
+      throw new GravixLayerInvalidArgumentError(
+        'An API key is required. Pass `apiKey`, or set the GRAVIXLAYER_API_KEY environment variable.',
+      );
+    }
+
+    const baseUrl = (options.baseUrl ?? readEnvOr('GRAVIXLAYER_BASE_URL', DEFAULT_BASE_URL))
+      .trim()
+      .replace(/\/+$/, '');
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      throw new GravixLayerInvalidArgumentError(
+        `The base URL must start with http:// or https://. Received ${JSON.stringify(baseUrl)}.`,
+      );
+    }
+
+    this.baseUrl = baseUrl;
+    this.cloud = options.cloud ?? readEnvOr('GRAVIXLAYER_CLOUD', DEFAULT_CLOUD);
+    this.region = options.region ?? readEnvOr('GRAVIXLAYER_REGION', DEFAULT_REGION);
+    this.timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
+    this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+
+    if (this.timeout < 0) {
+      throw new GravixLayerInvalidArgumentError(
+        '`timeout` must be 0 or more milliseconds, where 0 disables the timeout.',
+      );
+    }
+    if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) {
+      throw new GravixLayerInvalidArgumentError('`maxRetries` must be an integer of 0 or more.');
+    }
+
+    const fetchImpl = options.fetch ?? resolveFetch();
+
+    // Tracing stays off unless the environment asks for it, so a plain client
+    // never starts an exporter on its own.
+    maybeEnableFromEnv();
+
+    this.transport = new Transport({
+      baseUrl: this.baseUrl,
+      apiKey,
+      timeout: this.timeout,
+      maxRetries: this.maxRetries,
+      defaultHeaders: {
+        authorization: `Bearer ${apiKey}`,
+        'user-agent': `gravixlayer-ts/${VERSION}`,
+        accept: 'application/json',
+        ...lowercaseKeys(options.defaultHeaders ?? {}),
+      },
+      fetch: fetchImpl,
+    });
+
+    this.runtimes = new Runtimes(this);
+    this.templates = new Templates(this);
+    this.snapshots = new Snapshots(this);
+    this.agents = new Agents(this);
+    this.identity = new Identity(this);
+    this.networkPolicies = new NetworkPolicies(this);
+  }
+
+  /**
+   * Open a connection to the API ahead of the first real request.
+   *
+   * Sends one small authenticated request so that TCP, TLS, and protocol
+   * negotiation are already done when latency matters. Most useful right
+   * before issuing several requests at once, since otherwise each one races
+   * to establish its own connection.
+   *
+   * Throws the same errors any request would, which makes it a cheap way to
+   * verify credentials at startup.
+   */
+  async warmup(options: RequestOptions = {}): Promise<void> {
+    await this.transport.requestVoid({
+      method: 'GET',
+      path: buildListEndpoint('runtime', { limit: 1, offset: 0 }),
+      service: SERVICES.agents,
+      options,
+    });
+  }
+}
+
+/** Lower-case header names so caller overrides replace the defaults. */
+function lowercaseKeys(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) out[key.toLowerCase()] = value;
+  return out;
+}
+
+/**
+ * Find the runtime's `fetch`.
+ *
+ * Bound to `globalThis` because some implementations reject a detached
+ * reference with an illegal-invocation error.
+ */
+function resolveFetch(): FetchLike {
+  if (typeof globalThis.fetch !== 'function') {
+    throw new GravixLayerInvalidArgumentError(
+      'This runtime has no global fetch. Use Node 18 or newer, or pass a `fetch` implementation.',
+    );
+  }
+  return globalThis.fetch.bind(globalThis) as FetchLike;
+}

@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      # No dependency cache in the publish job: a release should be built from
+      # the lockfile and nothing else. Node 24 carries an npm new enough for
+      # trusted publishing, and the explicit upgrade keeps that true over time.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+      - run: npm run check
+
+      # The tag is the source of truth for the release, so it has to agree with
+      # the manifest. The dist-tag comes from the same string: a prerelease
+      # publishes under its own identifier, which keeps `latest` — and so every
+      # `npm install gravixlayer` — on the newest stable version.
+      - name: Resolve version and dist-tag from the git tag
+        id: release
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          manifest="$(node -p "require('./package.json').version")"
+          if [ "$version" != "$manifest" ]; then
+            echo "Tag $version does not match package.json version $manifest" >&2
+            exit 1
+          fi
+
+          case "$version" in
+            *-*)
+              suffix="${version#*-}"
+              channel="${suffix%%.*}"
+              ;;
+            *)
+              channel="latest"
+              ;;
+          esac
+
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([ "$channel" = latest ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+
+      # Authenticates through the trusted publisher configured on npmjs.com: the
+      # `id-token: write` permission above lets the CLI mint a short-lived OIDC
+      # credential for this exact workflow, so there is no npm token to leak or
+      # rotate. Provenance is attached from the same identity, which is what
+      # lets consumers verify the build came from this repo.
+      #
+      # NODE_AUTH_TOKEN is deliberately unset: if it were present the CLI would
+      # take the legacy token path instead.
+      - run: npm publish --provenance --access public --tag "${{ steps.release.outputs.channel }}"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ steps.release.outputs.prerelease == 'true' }}
