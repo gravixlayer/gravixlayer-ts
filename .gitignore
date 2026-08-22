@@ -16,5 +16,6 @@ npm-debug.log*
 .vscode/*
 !.vscode/extensions.json
 
-# Internal release runbook. Never publish.
+# Internal release runbook and its script. Never publish.
 RELEASE.md
+scripts/release.sh

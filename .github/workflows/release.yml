@@ -53,6 +53,7 @@ jobs:
               ;;
           esac
 
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
           echo "prerelease=$([ "$channel" = latest ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
 
@@ -64,7 +65,21 @@ jobs:
       #
       # NODE_AUTH_TOKEN is deliberately unset: if it were present the CLI would
       # take the legacy token path instead.
-      - run: npm publish --provenance --access public --tag "${{ steps.release.outputs.channel }}"
+      #
+      # Publishing is skipped when the registry already has this version, so a
+      # re-run of the workflow still gets as far as the release notes instead of
+      # dying on a version npm will never accept twice.
+      - name: Publish to npm
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          CHANNEL: ${{ steps.release.outputs.channel }}
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+            echo "$name@$VERSION is already on the registry; skipping publish."
+            exit 0
+          fi
+          npm publish --provenance --access public --tag "$CHANNEL"
 
       - uses: softprops/action-gh-release@v2
         with:
