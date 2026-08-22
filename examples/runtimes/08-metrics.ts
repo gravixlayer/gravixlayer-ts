@@ -1,5 +1,5 @@
 /**
- * Read a runtime's resource usage.
+ * Read a sandbox's resource usage.
  *
  * Each call samples CPU, memory, disk, and network counters at that instant.
  * Poll it to watch a workload, or read it once to size a template.
@@ -26,16 +26,16 @@ function report(label: string, metrics: RuntimeMetrics): void {
   console.log(`Sampled at : ${metrics.timestamp}`);
 }
 
-const runtime = await client.runtime.create({ template: TEMPLATE });
-console.log(`Runtime    : ${runtime.runtimeId}`);
+const sandbox = await client.runtime.create({ template: TEMPLATE });
+console.log(`Runtime    : ${sandbox.runtimeId}`);
 
-report('Idle', await runtime.getMetrics());
+report('Idle', await sandbox.getMetrics());
 
 // Give it something to do, then sample again.
-await runtime.runCode('sum(i * i for i in range(10_000_000))');
+await sandbox.runCode('sum(i * i for i in range(10_000_000))');
 await new Promise((resolve) => setTimeout(resolve, 1000));
 
-report('After a CPU-bound job', await runtime.getMetrics());
+report('After a CPU-bound job', await sandbox.getMetrics());
 
-await runtime.kill();
+await sandbox.kill();
 console.log('\nRuntime terminated.');

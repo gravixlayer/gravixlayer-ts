@@ -3,8 +3,8 @@
  *
  * `client.runtime.create()` and `client.runtime.get()` return this instead of
  * a plain object, so every operation is available without repeating the
- * runtime id: `runtime.runCode(...)`, `runtime.file.write(...)`,
- * `runtime.kill()`.
+ * runtime id: `sandbox.runCode(...)`, `sandbox.file.write(...)`,
+ * `sandbox.kill()`.
  */
 
 import type { BinaryLike } from '../../core/binary.js';
@@ -246,8 +246,8 @@ export class Runtime {
    * @example
    * ```ts
    * {
-   *   await using runtime = await client.runtime.create();
-   *   await runtime.runCmd('npm test');
+   *   await using sandbox = await client.runtime.create();
+   *   await sandbox.runCmd('npm test');
    * } // stopped here, even if the command threw
    * ```
    */
@@ -287,7 +287,7 @@ export class Runtime {
    *
    * @example
    * ```ts
-   * const result = await runtime.runCode('print("hello")');
+   * const result = await sandbox.runCode('print("hello")');
    * console.log(result.stdout);
    * ```
    */
@@ -300,7 +300,7 @@ export class Runtime {
    *
    * @example
    * ```ts
-   * const result = await runtime.runCmd('node -v');
+   * const result = await sandbox.runCmd('node -v');
    * console.log(result.stdout.trim());
    * ```
    */
@@ -387,7 +387,7 @@ export class Runtime {
 }
 
 /**
- * `runtime.file`: the filesystem API with the runtime id already applied.
+ * `sandbox.file`: the filesystem API with the runtime id already applied.
  *
  * Every method mirrors `client.runtime.file`, minus the first argument.
  */
@@ -515,7 +515,7 @@ export class BoundFile {
   }
 }
 
-/** `runtime.pty`: terminal sessions with the runtime id already applied. */
+/** `sandbox.pty`: terminal sessions with the runtime id already applied. */
 export class BoundPty {
   constructor(
     private readonly runtimes: Runtimes,
@@ -586,7 +586,7 @@ export class BoundPty {
   }
 }
 
-/** `runtime.git`: git operations with the runtime id already applied. */
+/** `sandbox.git`: git operations with the runtime id already applied. */
 export class BoundGit {
   constructor(
     private readonly runtimes: Runtimes,

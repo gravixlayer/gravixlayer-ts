@@ -18,10 +18,10 @@ import { GravixLayer } from 'gravixlayer';
 
 const client = new GravixLayer();
 
-const runtime = await client.runtime.create({ template: 'base-small' });
-const result = await runtime.runCode('print("Hello from GravixLayer")');
-console.log(result.stdout);
-await runtime.kill();
+const sandbox = await client.runtime.create(); // defaults to template="base-small"
+const result = await sandbox.runCode('print("Hello from GravixLayer")');
+console.log(result.text);
+await sandbox.kill();
 ```
 
 Cloud and region default to `aws` / `us-east-1`. Override with
@@ -63,11 +63,11 @@ if you want TCP and TLS paid before the first request that matters.
 
 ## Runtimes
 
-A runtime is an isolated virtual machine that boots from a template. It runs
+A sandbox is an isolated virtual machine that boots from a template. It runs
 until you stop it, or until a timeout you set expires.
 
 ```ts
-const runtime = await client.runtime.create({
+const sandbox = await client.runtime.create({
   template: 'base-small',
   envVars: { APP_ENV: 'staging' },
   timeoutSeconds: 600,
@@ -75,22 +75,22 @@ const runtime = await client.runtime.create({
 ```
 
 ```ts
-await using runtime = await client.runtime.create({ template: 'base-small' });
+await using sandbox = await client.runtime.create({ template: 'base-small' });
 // stopped when the block exits
 ```
 
 `await using` needs TypeScript 5.2 and Node 20. Elsewhere, `try` / `finally`
-with `runtime.kill()` does the same job.
+with `sandbox.kill()` does the same job.
 
 ### Code and commands
 
 ```ts
-const result = await runtime.runCode('print(sum(range(100)))');
+const result = await sandbox.runCode('print(sum(range(100)))');
 console.log(result.stdout, result.exitCode);
 
 // Pass `args` when any part comes from user input — nothing in the list is
 // interpreted by a shell.
-await runtime.runCmd('python', { args: ['--version'] });
+await sandbox.runCmd('python', { args: ['--version'] });
 ```
 
 Failures are reported, not thrown: check `success` and `exitCode`. An error
@@ -102,11 +102,11 @@ needs a [network policy](#network-policies).
 Stream output as it arrives:
 
 ```ts
-await runtime.runCmd('npm test', {
+await sandbox.runCmd('npm test', {
   onStdout: (chunk) => process.stdout.write(chunk),
 });
 
-for await (const event of runtime.streamCmd('npm run build')) {
+for await (const event of sandbox.streamCmd('npm run build')) {
   if (event.type === 'stdout') process.stdout.write(event.data);
 }
 ```
@@ -114,8 +114,8 @@ for await (const event of runtime.streamCmd('npm run build')) {
 ### Files
 
 ```ts
-await runtime.file.write('/workspace/note.txt', 'hello\n');
-const { content } = await runtime.file.read('/workspace/note.txt');
+await sandbox.file.write('/workspace/note.txt', 'hello\n');
+const { content } = await sandbox.file.read('/workspace/note.txt');
 ```
 
 Also: `list`, `upload`, `download`, `writeMany`, `move`, `copy`, `find`,
@@ -125,18 +125,18 @@ Also: `list`, `upload`, `download`, `writeMany`, `move`, `copy`, `find`,
 ### State, ports, git, SSH
 
 ```ts
-const context = await runtime.createContext();
-await runtime.runCode('x = 1', { contextId: context.contextId });
+const context = await sandbox.createContext();
+await sandbox.runCode('x = 1', { contextId: context.contextId });
 
-const api = await runtime.service(8000);
+const api = await sandbox.service(8000);
 console.log(api.url); // https://*.service.gravixlayer.ai
 await api.get('/items');
 
-await runtime.git.clone('https://github.com/org/repo.git', '/workspace/repo', {
+await sandbox.git.clone('https://github.com/org/repo.git', '/workspace/repo', {
   depth: 1,
 });
 
-const ssh = await runtime.enableSsh();
+const ssh = await sandbox.enableSsh();
 console.log(ssh.connectCmd);
 ```
 
@@ -158,18 +158,18 @@ const template = new TemplateBuilder('data-science', 'Pandas and friends')
   .readyCmd(TemplateBuilder.waitForPort(8080), 60);
 
 const status = await client.templates.buildAndWait(template);
-const runtime = await client.runtime.create({ template: status.templateId });
+const sandbox = await client.runtime.create({ template: status.templateId });
 ```
 
 ## Snapshots
 
 ```ts
-await client.snapshots.create(runtime.runtimeId, 'ready-to-work', { kind: 'cold' });
+await client.snapshots.create(sandbox.runtimeId, 'ready-to-work', { kind: 'cold' });
 const restored = await client.runtime.create({ snapshot: 'ready-to-work' });
 ```
 
 A `cold` snapshot stores the filesystem; a `hot` snapshot stores memory too, so
-the restored runtime resumes mid-process.
+the restored sandbox resumes mid-process.
 
 ## Agents
 
@@ -189,7 +189,7 @@ for await (const event of client.agents.stream(agent.agentId, { input: { prompt:
 
 ## Network policies
 
-A runtime starts fail-closed. Grant access explicitly:
+A sandbox starts fail-closed. Grant access explicitly:
 
 ```ts
 const policy = await client.networkPolicies.create('model-access', {
@@ -197,7 +197,7 @@ const policy = await client.networkPolicies.create('model-access', {
   rules: [{ destination: 'api.example.com', port: 443 }],
 });
 
-const runtime = await client.runtime.create({
+const sandbox = await client.runtime.create({
   template: 'base-small',
   networkPolicyIds: [policy.id],
 });
@@ -213,7 +213,7 @@ const provider = await client.identity.providers.create('Model API', {
   secrets: [{ key: 'MODEL_API_KEY', value: process.env.MODEL_API_KEY! }],
 });
 
-const runtime = await client.runtime.create({
+const sandbox = await client.runtime.create({
   template: 'base-small',
   providers: [provider.id],
 });

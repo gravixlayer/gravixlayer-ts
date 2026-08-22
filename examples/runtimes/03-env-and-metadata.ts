@@ -2,7 +2,7 @@
  * Environment variables and metadata.
  *
  * `envVars` are set inside the guest and visible to every process in it.
- * `metadata` is stored alongside the runtime and returned on every read, which
+ * `metadata` is stored alongside the sandbox and returned on every read, which
  * makes it useful for attributing runtimes to a project, owner, or job.
  *
  * Run:
@@ -16,7 +16,7 @@ const client = new GravixLayer();
 
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
-const runtime = await client.runtime.create({
+const sandbox = await client.runtime.create({
   template: TEMPLATE,
   envVars: {
     APP_ENV: 'staging',
@@ -30,22 +30,22 @@ const runtime = await client.runtime.create({
   },
 });
 
-console.log(`Runtime ID : ${runtime.runtimeId}`);
-console.log(`Metadata   : ${JSON.stringify(runtime.metadata)}`);
+console.log(`Runtime ID : ${sandbox.runtimeId}`);
+console.log(`Metadata   : ${JSON.stringify(sandbox.metadata)}`);
 
 // The variables are visible to code...
-const fromCode = await runtime.runCode("import os; print(os.environ.get('APP_ENV', 'not set'))");
+const fromCode = await sandbox.runCode("import os; print(os.environ.get('APP_ENV', 'not set'))");
 console.log(`\nAPP_ENV (code)  : ${fromCode.stdout.trim()}`);
 
 // ...and to shell commands.
-const fromShell = await runtime.runCmd('echo "${DEBUG:-not set}"');
+const fromShell = await sandbox.runCmd('echo "${DEBUG:-not set}"');
 console.log(`DEBUG   (shell) : ${fromShell.stdout.trim()}`);
 
 // A single command can also carry variables of its own, which apply only to it.
-const perCommand = await runtime.runCmd('echo "$GREETING"', {
+const perCommand = await sandbox.runCmd('echo "$GREETING"', {
   environment: { GREETING: 'set for this command only' },
 });
 console.log(`Per-command     : ${perCommand.stdout.trim()}`);
 
-await runtime.kill();
+await sandbox.kill();
 console.log('\nRuntime terminated.');

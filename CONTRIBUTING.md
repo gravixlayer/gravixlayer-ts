@@ -44,11 +44,11 @@ went out as well as the value that came back:
 ```ts
 const { client, http } = testClient([jsonResponse(runtimePayload())]);
 
-const runtime = await client.runtime.create({ template: 'base-small' });
+const sandbox = await client.runtime.create({ template: 'base-small' });
 
 expect(http.last().method).toBe('POST');
 expect(http.jsonBody()).toMatchObject({ template: 'base-small' });
-expect(runtime.runtimeId).toBe(RUNTIME_ID);
+expect(sandbox.runtimeId).toBe(RUNTIME_ID);
 ```
 
 A change to a request body, a URL, or a parsed field should come with a test

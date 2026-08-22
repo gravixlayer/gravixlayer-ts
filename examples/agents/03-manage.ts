@@ -47,7 +47,7 @@ if (!agentId) {
     console.log(`  ${protocol.padEnd(6)} ${url}`);
   }
 
-  // 3. Destroying releases the hostname and stops the runtime behind it. The
+  // 3. Destroying releases the hostname and stops the sandbox behind it. The
   //    image stays, so the agent can be deployed again.
   const destroyed = await client.agents.destroy(agentId);
   console.log(`\nDestroyed  : ${destroyed.agentId} (${destroyed.status})`);

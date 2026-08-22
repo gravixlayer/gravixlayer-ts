@@ -6,7 +6,7 @@
  * the `fromImage` route and the two cannot be combined.
  *
  * `startCmd` and `readyCmd` are still needed: a `CMD` in the Dockerfile
- * describes the image, while these describe what a runtime should launch and
+ * describes the image, while these describe what a sandbox should launch and
  * how to know it came up.
  *
  * Run:

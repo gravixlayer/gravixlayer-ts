@@ -161,7 +161,7 @@ function requestOptions(options: RequestOptions): RequestOptions {
  * Read, write, and manage files inside a runtime.
  *
  * Reached through `client.runtime.file` or, with the runtime already bound,
- * through `runtime.file`.
+ * through `sandbox.file`.
  */
 export class RuntimeFile extends APIResource {
   /** Read a text file. */

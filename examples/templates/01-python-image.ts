@@ -2,8 +2,8 @@
  * Build a Python template from a public container image.
  *
  * A template is a prebuilt image. Installing packages once at build time means
- * every runtime created from the template already has them, which is the
- * difference between a runtime that is usable immediately and one that spends
+ * every sandbox created from the template already has them, which is the
+ * difference between a sandbox that is usable immediately and one that spends
  * its first minute installing.
  *
  * Run:
@@ -38,7 +38,7 @@ const template = new TemplateBuilder(
   .pipInstall('fastapi', 'uvicorn')
   .mkdir('/app')
   .addFile('/app/main.py', APP)
-  // What to start when a runtime boots, and how to tell it is ready.
+  // What to start when a sandbox boots, and how to tell it is ready.
   .startCmd('uvicorn main:app --host 0.0.0.0 --port 8080 --app-dir /app')
   .readyCmd(TemplateBuilder.waitForPort(8080), 120);
 

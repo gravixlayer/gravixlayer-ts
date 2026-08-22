@@ -99,12 +99,12 @@ export interface ClientOptions {
  * ```ts
  * import { GravixLayer } from 'gravixlayer';
  *
- * const client = new GravixLayer();
+ * const client = new GravixLayer(); // defaults to cloud="aws", region="us-east-1"
  *
- * const runtime = await client.runtime.create({ template: 'base-small' });
- * const result = await runtime.runCode('print("hello")');
+ * const sandbox = await client.runtime.create(); // defaults to template="base-small"
+ * const result = await sandbox.runCode('print("hello")');
  * console.log(result.stdout);
- * await runtime.kill();
+ * await sandbox.kill();
  * ```
  */
 export class GravixLayer implements ClientContext {

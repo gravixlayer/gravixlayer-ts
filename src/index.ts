@@ -5,12 +5,12 @@
  * import { GravixLayer } from 'gravixlayer';
  *
  * const client = new GravixLayer();
- * const runtime = await client.runtime.create();
+ * const sandbox = await client.runtime.create();
  *
- * const result = await runtime.runCode('print("hello")');
+ * const result = await sandbox.runCode('print("hello")');
  * console.log(result.stdout);
  *
- * await runtime.kill();
+ * await sandbox.kill();
  * ```
  */
 

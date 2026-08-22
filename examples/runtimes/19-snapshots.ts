@@ -1,12 +1,12 @@
 /**
- * Save a runtime and start new ones from it.
+ * Save a sandbox and start new ones from it.
  *
- * Set a runtime up once — dependencies installed, data loaded — capture it, and
- * every later runtime created from that snapshot begins in exactly that state
+ * Set a sandbox up once — dependencies installed, data loaded — capture it, and
+ * every later sandbox created from that snapshot begins in exactly that state
  * instead of repeating the work.
  *
- *   cold  filesystem only. Smaller to store; the new runtime boots fresh.
- *   hot   filesystem and memory. The new runtime resumes mid-process.
+ *   cold  filesystem only. Smaller to store; the new sandbox boots fresh.
+ *   hot   filesystem and memory. The new sandbox resumes mid-process.
  *
  * The kind is chosen when you capture, not when you restore.
  *
@@ -26,20 +26,20 @@ const KIND = process.env['GRAVIXLAYER_SNAPSHOT_KIND'] ?? 'cold';
 const MARKER = '/workspace/checkpoint.txt';
 const NAME = `demo-${KIND}-${Date.now()}`;
 
-let source: Runtime | undefined;
+let sandbox: Runtime | undefined;
 let restored: Runtime | undefined;
 let captured = false;
 
 try {
-  source = await client.runtime.create({ template: TEMPLATE });
-  console.log(`Source     : ${source.runtimeId}`);
+  sandbox = await client.runtime.create({ template: TEMPLATE });
+  console.log(`Source     : ${sandbox.runtimeId}`);
 
-  // Put the runtime into the state worth keeping.
-  await source.file.write(MARKER, 'state at capture time');
+  // Put the sandbox into the state worth keeping.
+  await sandbox.file.write(MARKER, 'state at capture time');
 
   // Capturing pauses the guest briefly, so it can take a while. The SDK already
   // allows for that with a longer request budget.
-  const snapshot = await client.snapshots.create(source.runtimeId, NAME, {
+  const snapshot = await client.snapshots.create(sandbox.runtimeId, NAME, {
     kind: KIND,
     description: 'Snapshot lifecycle example',
   });
@@ -48,15 +48,15 @@ try {
 
   // Change the source afterwards, so the restore is clearly not just a copy of
   // whatever the source happens to look like now.
-  await source.file.write(MARKER, 'mutated after capture');
+  await sandbox.file.write(MARKER, 'mutated after capture');
 
-  const listed = await client.snapshots.list({ kind: KIND, runtimeId: source.runtimeId });
+  const listed = await client.snapshots.list({ kind: KIND, runtimeId: sandbox.runtimeId });
   console.log(`Listed     : ${listed.total} snapshot(s) from this runtime`);
 
   const found = await client.snapshots.get(NAME);
   console.log(`Fetched    : ${found.id} state=${found.state} active=${found.isActive}`);
 
-  // Restoring always produces a new runtime. `snapshot` and `template` are
+  // Restoring always produces a new sandbox. `snapshot` and `template` are
   // mutually exclusive, because a snapshot already carries its template.
   restored = await client.runtime.create({ snapshot: NAME });
   console.log(`\nRestored   : ${restored.runtimeId}`);
@@ -85,7 +85,7 @@ try {
   console.log('Reactivated: usable again');
 } finally {
   await restored?.kill();
-  await source?.kill();
+  await sandbox?.kill();
   if (captured) {
     const deleted = await client.snapshots.delete(NAME);
     console.log(`\nDeleted    : ${deleted.snapshotId}`);

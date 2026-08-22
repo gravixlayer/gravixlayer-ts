@@ -1,5 +1,5 @@
 /**
- * Put a server running inside a runtime on the public internet.
+ * Put a server running inside a sandbox on the public internet.
  *
  * A port inside the guest is unreachable until you publish it. Publishing
  * returns an HTTPS URL and, unless you ask for a public one, a token that every
@@ -36,15 +36,15 @@ def create_item(item: dict):
 `;
 
 /** Poll until the guest accepts connections on the port, or give up. */
-async function waitForPort(runtime: Runtime, port: number, attempts = 30): Promise<void> {
+async function waitForPort(sandbox: Runtime, port: number, attempts = 30): Promise<void> {
   for (let i = 0; i < attempts; i += 1) {
-    const probe = await runtime.runCmd(
+    const probe = await sandbox.runCmd(
       `python -c "import socket; socket.create_connection(('127.0.0.1', ${port}), 2)"`,
     );
     if (probe.exitCode === 0) return;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  const logs = await runtime.runCmd('tail -n 50 /tmp/server.log');
+  const logs = await sandbox.runCmd('tail -n 50 /tmp/server.log');
   throw new Error(`The server never started listening.\n${logs.stdout}`);
 }
 
@@ -54,33 +54,33 @@ const policy = await client.networkPolicies.create(`web-service-${Date.now()}`, 
   description: 'Temporary egress for the web-service example',
 });
 
-let runtime: Runtime | undefined;
+let sandbox: Runtime | undefined;
 try {
-  runtime = await client.runtime.create({
+  sandbox = await client.runtime.create({
     template: TEMPLATE,
     networkPolicyIds: [policy.id],
     timeoutSeconds: 600,
   });
-  console.log(`Runtime    : ${runtime.runtimeId}`);
+  console.log(`Runtime    : ${sandbox.runtimeId}`);
 
-  await runtime.file.createDirectory(APP_DIR);
-  await runtime.file.write(`${APP_DIR}/main.py`, APP);
+  await sandbox.file.createDirectory(APP_DIR);
+  await sandbox.file.write(`${APP_DIR}/main.py`, APP);
 
-  const install = await runtime.runCmd('pip install fastapi uvicorn --quiet', {
+  const install = await sandbox.runCmd('pip install fastapi uvicorn --quiet', {
     timeoutSeconds: 240,
   });
   if (install.exitCode !== 0) throw new Error(install.stderr || install.stdout);
 
   // Start the server detached so the command returns while it keeps running.
-  await runtime.runCmd(
+  await sandbox.runCmd(
     `nohup python -m uvicorn main:app --host 0.0.0.0 --port ${PORT} > /tmp/server.log 2>&1 &`,
     { workingDir: APP_DIR },
   );
-  await waitForPort(runtime, PORT);
+  await waitForPort(sandbox, PORT);
   console.log('Server     : listening inside the guest');
 
   // Publish the port and call it from here.
-  const api = await runtime.service(PORT);
+  const api = await sandbox.service(PORT);
   console.log(`Public URL : ${api.url}`);
 
   await api.postJson('/items', { name: 'widget', price: 9.99 });
@@ -89,14 +89,14 @@ try {
   const items = await (await api.get('/items')).json();
   console.log(`Items      : ${JSON.stringify(items)}`);
 
-  // Every published port for this runtime, and how to take one down.
-  const published = await client.runtime.service.list(runtime.runtimeId);
+  // Every published port for this sandbox, and how to take one down.
+  const published = await client.runtime.service.list(sandbox.runtimeId);
   console.log(`Published  : ${published.map((service) => service.port).join(', ')}`);
 
-  await client.runtime.service.revoke(runtime.runtimeId, PORT);
+  await client.runtime.service.revoke(sandbox.runtimeId, PORT);
   console.log('Revoked    : the URL stops resolving immediately');
 } finally {
-  await runtime?.kill();
+  await sandbox?.kill();
   await client.networkPolicies.delete(policy.id);
   console.log('\nRuntime terminated and policy removed.');
 }

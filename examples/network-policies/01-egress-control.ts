@@ -1,7 +1,7 @@
 /**
- * Control what a runtime can reach on the network.
+ * Control what a sandbox can reach on the network.
  *
- * A runtime starts fail-closed: a baseline policy is always attached, is never
+ * A sandbox starts fail-closed: a baseline policy is always attached, is never
  * listed, and cannot be detached. Anything you want to allow, you allow
  * explicitly.
  *
@@ -29,8 +29,8 @@ const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 const NAME = `demo-egress-${Date.now()}`;
 
 /** Try to open a TCP connection from inside the guest. */
-async function canReach(runtime: Runtime, host: string, port = 443): Promise<boolean> {
-  const probe = await runtime.runCmd('python', {
+async function canReach(sandbox: Runtime, host: string, port = 443): Promise<boolean> {
+  const probe = await sandbox.runCmd('python', {
     args: ['-c', `import socket; socket.create_connection(('${host}', ${port}), 5)`],
     timeoutSeconds: 30,
   });
@@ -38,7 +38,7 @@ async function canReach(runtime: Runtime, host: string, port = 443): Promise<boo
 }
 
 let policy: NetworkPolicy | undefined;
-let runtime: Runtime | undefined;
+let sandbox: Runtime | undefined;
 
 try {
   // 1. Create a policy with its rules in one call. If a rule is rejected the
@@ -81,32 +81,32 @@ try {
 
   // 5. Attaching at creation applies the policy before the guest's first
   //    packet, rather than after it is already running.
-  runtime = await client.runtime.create({
+  sandbox = await client.runtime.create({
     template: TEMPLATE,
     networkPolicyIds: [policy.id],
     timeoutSeconds: 600,
   });
-  console.log(`\nRuntime    : ${runtime.runtimeId}`);
+  console.log(`\nRuntime    : ${sandbox.runtimeId}`);
 
-  const attached = await policies.listForRuntime(runtime.runtimeId);
+  const attached = await policies.listForRuntime(sandbox.runtimeId);
   console.log(`Attached   : ${attached.policies.map((p) => p.name).join(', ')}`);
 
-  const withBaseline = await policies.listForRuntime(runtime.runtimeId, { includeSystem: true });
+  const withBaseline = await policies.listForRuntime(sandbox.runtimeId, { includeSystem: true });
   console.log(`With baseline: ${withBaseline.policies.length} polic(ies)`);
 
   // 6. The allowlist is enforced in the data path, not by the guest, so code
-  //    inside the runtime cannot talk its way around it.
-  console.log(`\nexample.com    : reachable=${await canReach(runtime, 'example.com')}`);
-  console.log(`api.github.com : reachable=${await canReach(runtime, 'api.github.com')}`);
+  //    inside the sandbox cannot talk its way around it.
+  console.log(`\nexample.com    : reachable=${await canReach(sandbox, 'example.com')}`);
+  console.log(`api.github.com : reachable=${await canReach(sandbox, 'api.github.com')}`);
 
   // 7. Detaching takes effect immediately, as does attaching again.
-  await policies.detach(policy.id, runtime.runtimeId);
-  console.log(`\nDetached   : ${(await policies.listForRuntime(runtime.runtimeId)).total} left`);
+  await policies.detach(policy.id, sandbox.runtimeId);
+  console.log(`\nDetached   : ${(await policies.listForRuntime(sandbox.runtimeId)).total} left`);
 
-  await policies.attach(policy.id, runtime.runtimeId);
-  console.log(`Re-attached: ${(await policies.listForRuntime(runtime.runtimeId)).total} attached`);
+  await policies.attach(policy.id, sandbox.runtimeId);
+  console.log(`Re-attached: ${(await policies.listForRuntime(sandbox.runtimeId)).total} attached`);
 } finally {
-  await runtime?.kill();
+  await sandbox?.kill();
   if (policy) await policies.delete(policy.id);
   console.log('\nRuntime terminated and policy deleted.');
 }

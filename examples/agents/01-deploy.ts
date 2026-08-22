@@ -1,7 +1,7 @@
 /**
  * Deploy an agent from a source directory.
  *
- * A runtime is something you drive; an agent is something you deploy once and
+ * A sandbox is something you drive; an agent is something you deploy once and
  * then call. `deploy` packages the project, builds an image, waits for the
  * build, starts it, and gives it a public hostname.
  *

@@ -13,7 +13,7 @@ import { GravixLayer } from 'gravixlayer';
 
 const client = new GravixLayer();
 
-// 1. Templates a runtime can boot from.
+// 1. Templates a sandbox can boot from.
 console.log('--- Templates ---');
 const templates = await client.runtime.templates.list();
 for (const template of templates.templates) {
@@ -30,11 +30,11 @@ console.log(`Total      : ${total}`);
 if (runtimes.length === 0) {
   console.log('  (none running)');
 } else {
-  for (const info of runtimes) {
-    console.log(`  ${info.runtimeId}  status=${info.status.padEnd(10)} template=${info.template}`);
+  for (const sandbox of runtimes) {
+    console.log(`  ${sandbox.runtimeId}  status=${sandbox.status.padEnd(10)} template=${sandbox.template}`);
   }
 
-  // 3. `retrieve` reads one runtime's state without binding a handle to it.
+  // 3. `retrieve` reads one sandbox's state without binding a handle to it.
   const first = runtimes[0]!;
   const info = await client.runtime.retrieve(first.runtimeId);
   console.log(`\n--- ${info.runtimeId} ---`);

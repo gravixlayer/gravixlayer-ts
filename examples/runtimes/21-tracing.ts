@@ -9,7 +9,7 @@
  * telemetry off, the instrumentation costs one boolean check per call.
  *
  * Anything the guest prints is collected separately and appears under the
- * runtime's id in the dashboard, so you get application traces and process
+ * sandbox's id in the dashboard, so you get application traces and process
  * output for the same piece of work.
  *
  * Run:
@@ -41,14 +41,14 @@ const MARKER = `trace-demo-${Date.now()}`;
 // while it runs nest underneath, which is what makes a trace readable.
 const analyze = traced(
   async (rows: number) => {
-    const runtime = await client.runtime.create({ template: TEMPLATE });
-    console.log(`Runtime    : ${runtime.runtimeId}`);
+    const sandbox = await client.runtime.create({ template: TEMPLATE });
+    console.log(`Runtime    : ${sandbox.runtimeId}`);
 
     try {
       // `trace` is the inline form, for a step that does not deserve its own
       // named function.
       const total = await trace('sum-rows', async () => {
-        const result = await runtime.runCode(
+        const result = await sandbox.runCode(
           `import sys
 total = sum(range(${rows}))
 print(f"${MARKER} computed {total}")
@@ -61,7 +61,7 @@ print(total)`,
       console.log(`Total      : ${total}`);
       return total;
     } finally {
-      await runtime.kill();
+      await sandbox.kill();
     }
   },
   { name: 'analyze', attributes: { 'app.component': 'tracing-example' } },

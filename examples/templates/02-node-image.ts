@@ -44,7 +44,7 @@ const template = new TemplateBuilder(
   .disk(4096)
   .env('NODE_ENV', 'production')
   // Tags are labels for organizing templates; they do not affect the build.
-  .tags({ runtime: 'node', framework: 'express' })
+  .tags({ sandbox: 'node', framework: 'express' })
   .aptInstall('curl')
   .mkdir('/app')
   .addFiles([

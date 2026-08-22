@@ -76,9 +76,9 @@ try {
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
 try {
-  const runtime = await client.runtime.create({ template: TEMPLATE });
-  console.log(`\nCreated    : ${runtime.runtimeId}`);
-  await runtime.kill();
+  const sandbox = await client.runtime.create({ template: TEMPLATE });
+  console.log(`\nCreated    : ${sandbox.runtimeId}`);
+  await sandbox.kill();
   console.log('Terminated.');
 } catch (error) {
   if (error instanceof GravixLayerRateLimitError) {

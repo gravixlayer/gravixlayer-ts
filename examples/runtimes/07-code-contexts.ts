@@ -16,46 +16,46 @@ const client = new GravixLayer();
 
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
-const runtime = await client.runtime.create({ template: TEMPLATE });
-console.log(`Runtime    : ${runtime.runtimeId}`);
+const sandbox = await client.runtime.create({ template: TEMPLATE });
+console.log(`Runtime    : ${sandbox.runtimeId}`);
 
 // Create the session. Everything below runs inside it.
-const context = await runtime.createContext({ language: 'python' });
+const context = await sandbox.createContext({ language: 'python' });
 console.log(`Context    : ${context.contextId} (${context.language})`);
 
 // 1. Define some data.
-await runtime.runCode('data = [10, 20, 30, 40, 50]', { contextId: context.contextId });
+await sandbox.runCode('data = [10, 20, 30, 40, 50]', { contextId: context.contextId });
 
 // 2. A later call still sees it.
-const stats = await runtime.runCode(
+const stats = await sandbox.runCode(
   "total = sum(data)\nprint(f'total={total} mean={total / len(data)}')",
   { contextId: context.contextId },
 );
 console.log(`\nComputed   : ${stats.stdout.trim()}`);
 
 // 3. Functions persist too.
-await runtime.runCode(
+await sandbox.runCode(
   `def describe(values):
     return {'count': len(values), 'min': min(values), 'max': max(values)}
 `,
   { contextId: context.contextId },
 );
 
-const described = await runtime.runCode('import json; print(json.dumps(describe(data)))', {
+const described = await sandbox.runCode('import json; print(json.dumps(describe(data)))', {
   contextId: context.contextId,
 });
 console.log(`Describe   : ${described.stdout.trim()}`);
 
 // 4. Without the context, the same code has nothing to work with.
-const isolated = await runtime.runCode('print(data)');
+const isolated = await sandbox.runCode('print(data)');
 console.log(`\nNo context : success=${isolated.success}`);
 
 // 5. Inspect and then release the session.
-const info = await runtime.getContext(context.contextId);
+const info = await sandbox.getContext(context.contextId);
 console.log(`\nContext    : language=${info.language} cwd=${info.cwd}`);
 
-await runtime.deleteContext(context.contextId);
+await sandbox.deleteContext(context.contextId);
 console.log('Context deleted.');
 
-await runtime.kill();
+await sandbox.kill();
 console.log('\nRuntime terminated.');

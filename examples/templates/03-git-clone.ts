@@ -2,7 +2,7 @@
  * Build a template from a git repository.
  *
  * The repository is cloned during the build, so the code is baked into the
- * image and a runtime starts with it already present. A shallow clone of one
+ * image and a sandbox starts with it already present. A shallow clone of one
  * branch keeps builds quick.
  *
  * For a private repository, pass an auth token. It is used only while the build
@@ -32,7 +32,7 @@ const template = new TemplateBuilder(
   .memory(512)
   .disk(4096)
   .env('NODE_ENV', 'production')
-  .tags({ runtime: 'node', source: 'git' })
+  .tags({ sandbox: 'node', source: 'git' })
   // `git` and CA certificates are needed to clone over HTTPS.
   .aptInstall('git', 'ca-certificates')
   .gitClone(REPO, {

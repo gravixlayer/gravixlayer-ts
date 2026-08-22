@@ -236,9 +236,9 @@ export class Runtimes extends APIResource {
    *
    * @example
    * ```ts
-   * const runtime = await client.runtime.create({ template: 'base-small' });
-   * const result = await runtime.runCode('print("hello")');
-   * await runtime.kill();
+   * const sandbox = await client.runtime.create(); // defaults to template="base-small"
+   * const result = await sandbox.runCode('print("hello")');
+   * await sandbox.kill();
    * ```
    */
   async create(options: CreateRuntimeOptions = {}): Promise<Runtime> {

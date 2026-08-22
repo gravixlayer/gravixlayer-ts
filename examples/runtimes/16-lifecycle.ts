@@ -1,5 +1,5 @@
 /**
- * The runtime lifecycle: create, pause, resume, stop.
+ * The sandbox lifecycle: create, pause, resume, stop.
  *
  *   create()  ->  running
  *   pause()   ->  paused      the machine is frozen and stops accruing cost
@@ -20,29 +20,29 @@ const client = new GravixLayer();
 
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
-const runtime = await client.runtime.create({ template: TEMPLATE, timeoutSeconds: 1800 });
-console.log(`1. Created : ${runtime.runtimeId} (${runtime.status})`);
+const sandbox = await client.runtime.create({ template: TEMPLATE, timeoutSeconds: 1800 });
+console.log(`1. Created : ${sandbox.runtimeId} (${sandbox.status})`);
 
 // Put some state in the interpreter and on disk.
-const context = await runtime.createContext();
-await runtime.runCode('answer = 42', { contextId: context.contextId });
-await runtime.file.write('/workspace/state.txt', 'written before pausing');
+const context = await sandbox.createContext();
+await sandbox.runCode('answer = 42', { contextId: context.contextId });
+await sandbox.file.write('/workspace/state.txt', 'written before pausing');
 console.log('2. Working : set a variable and wrote a file');
 
-await runtime.pause();
-await runtime.refresh();
-console.log(`3. Paused  : ${runtime.status}`);
+await sandbox.pause();
+await sandbox.refresh();
+console.log(`3. Paused  : ${sandbox.status}`);
 
-await runtime.resume();
-await runtime.refresh();
-console.log(`4. Resumed : ${runtime.status}`);
+await sandbox.resume();
+await sandbox.refresh();
+console.log(`4. Resumed : ${sandbox.status}`);
 
 // Both survive, because the machine itself was frozen rather than restarted.
-const variable = await runtime.runCode('print(f"answer is still {answer}")', {
+const variable = await sandbox.runCode('print(f"answer is still {answer}")', {
   contextId: context.contextId,
 });
 console.log(`5. Memory  : ${variable.stdout.trim()}`);
-console.log(`   Disk    : ${(await runtime.file.read('/workspace/state.txt')).content}`);
+console.log(`   Disk    : ${(await sandbox.file.read('/workspace/state.txt')).content}`);
 
-await runtime.kill();
-console.log(`6. Stopped : alive=${await runtime.isAlive()}`);
+await sandbox.kill();
+console.log(`6. Stopped : alive=${await sandbox.isAlive()}`);

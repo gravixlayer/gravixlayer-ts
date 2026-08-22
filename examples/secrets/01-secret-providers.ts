@@ -1,7 +1,7 @@
 /**
- * Inject secrets into a runtime.
+ * Inject secrets into a sandbox.
  *
- * A provider is a named bundle of key/value secrets. Attach one to a runtime
+ * A provider is a named bundle of key/value secrets. Attach one to a sandbox
  * and its secrets appear as environment variables inside the guest, so
  * credentials stay out of your source and out of template images.
  *
@@ -26,7 +26,7 @@ const SECRET_VALUE = process.env['DEMO_SECRET_VALUE'] ?? 'demo-value-not-a-real-
 const NAME = `demo-provider-${Date.now()}`;
 
 let provider: SecretProvider | undefined;
-let runtime: Runtime | undefined;
+let sandbox: Runtime | undefined;
 
 try {
   // 1. Create the provider with a secret already on it.
@@ -64,30 +64,30 @@ try {
 
   // 5. Attaching at creation means the secrets are present before the first
   //    line of your code runs.
-  runtime = await client.runtime.create({
+  sandbox = await client.runtime.create({
     template: TEMPLATE,
     providers: [provider.id],
     timeoutSeconds: 600,
   });
-  console.log(`\nRuntime    : ${runtime.runtimeId}`);
+  console.log(`\nRuntime    : ${sandbox.runtimeId}`);
 
   // Print only a prefix: the whole point is not to move the value around.
-  const seen = await runtime.runCode(
+  const seen = await sandbox.runCode(
     "import os; print(os.environ.get('MODEL_API_KEY', '')[:6] or 'MISSING')",
   );
   console.log(`In guest   : MODEL_API_KEY starts with ${seen.stdout.trim()}`);
 
   // 6. Attachments can be listed, removed, and restored while it runs.
-  const attached = await providers.listForRuntime(runtime.runtimeId);
+  const attached = await providers.listForRuntime(sandbox.runtimeId);
   console.log(`Attached   : ${attached.providers.map((p) => p.name).join(', ')}`);
 
-  await providers.detach(provider.id, runtime.runtimeId);
-  console.log(`Detached   : ${(await providers.listForRuntime(runtime.runtimeId)).total} left`);
+  await providers.detach(provider.id, sandbox.runtimeId);
+  console.log(`Detached   : ${(await providers.listForRuntime(sandbox.runtimeId)).total} left`);
 
-  await providers.attach(provider.id, runtime.runtimeId);
-  console.log(`Re-attached: ${(await providers.listForRuntime(runtime.runtimeId)).total} attached`);
+  await providers.attach(provider.id, sandbox.runtimeId);
+  console.log(`Re-attached: ${(await providers.listForRuntime(sandbox.runtimeId)).total} attached`);
 } finally {
-  await runtime?.kill();
+  await sandbox?.kill();
   if (provider) await providers.delete(provider.id);
   console.log('\nRuntime terminated and provider deleted.');
 }

@@ -1,7 +1,7 @@
 /**
- * Drive a real terminal inside a runtime.
+ * Drive a real terminal inside a sandbox.
  *
- * A terminal session is owned by the runtime, not by the client that opened it,
+ * A terminal session is owned by the sandbox, not by the client that opened it,
  * so the shell keeps running after you disconnect and you can attach again
  * later from anywhere. A handle wraps the session: it holds the output stream,
  * buffers what it receives, and tracks the exit status.
@@ -21,11 +21,11 @@ const decoder = new TextDecoder();
 const show = (chunk: Uint8Array) => process.stdout.write(decoder.decode(chunk));
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const runtime = await client.runtime.create({ template: TEMPLATE });
-console.log(`Runtime    : ${runtime.runtimeId}`);
+const sandbox = await client.runtime.create({ template: TEMPLATE });
+console.log(`Runtime    : ${sandbox.runtimeId}`);
 
 // 1. Start a session with the shell, size, and environment you want.
-const session = await runtime.pty.create({
+const session = await sandbox.pty.create({
   shell: '/bin/bash',
   workingDir: '/workspace',
   environment: { DEMO: 'terminal' },
@@ -37,7 +37,7 @@ console.log(
 );
 
 // 2. Attach. Output arrives through the callback and is buffered on the handle.
-const terminal = runtime.pty.handle(session.sessionId).connect({ onData: show });
+const terminal = sandbox.pty.handle(session.sessionId).connect({ onData: show });
 console.log('\n--- attached ---');
 
 // 3. Type into it.
@@ -62,14 +62,14 @@ console.log('\n--- interrupted, the shell is still alive ---');
 
 // 6. Detaching leaves the session running.
 await terminal.disconnect();
-const survived = await runtime.pty.get(session.sessionId);
+const survived = await sandbox.pty.get(session.sessionId);
 console.log(`Detached   : session is still ${survived.status}`);
 
-const sessions = await runtime.pty.list();
+const sessions = await sandbox.pty.list();
 console.log(`Sessions   : ${sessions.length}`);
 
 // 7. Attaching again replays the retained scrollback, then continues live.
-const reattached = runtime.pty.handle(session.sessionId).connect({ onData: show });
+const reattached = sandbox.pty.handle(session.sessionId).connect({ onData: show });
 console.log('\n--- re-attached ---');
 await reattached.sendInput('echo back in the same shell\n');
 await pause(1000);
@@ -82,13 +82,13 @@ await reattached.disconnect();
 
 // 9. Signals can also be sent out of band, without attaching. `HUP` is the one
 //    a terminal sends when it goes away, and a shell exits on it.
-const scratch = await runtime.pty.create({ shell: '/bin/bash' });
-await runtime.pty.handle(scratch.sessionId).sendSignal('HUP');
+const scratch = await sandbox.pty.create({ shell: '/bin/bash' });
+await sandbox.pty.handle(scratch.sessionId).sendSignal('HUP');
 await pause(1000);
-console.log(`\nScratch    : ${(await runtime.pty.get(scratch.sessionId)).status}`);
+console.log(`\nScratch    : ${(await sandbox.pty.get(scratch.sessionId)).status}`);
 
 // 10. Killing a session ends it if it is still running, and releases it either way.
-console.log(`Released   : ${await runtime.pty.kill(scratch.sessionId)}`);
+console.log(`Released   : ${await sandbox.pty.kill(scratch.sessionId)}`);
 
-await runtime.kill();
+await sandbox.kill();
 console.log('\nRuntime terminated.');
