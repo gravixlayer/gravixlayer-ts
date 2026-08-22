@@ -74,12 +74,7 @@ export {
   type RunCommandOptions,
 } from './resources/runtimes/runtimes.js';
 
-export {
-  BoundFile,
-  BoundGit,
-  BoundPty,
-  Runtime,
-} from './resources/runtimes/runtime.js';
+export { BoundFile, BoundGit, BoundPty, Runtime } from './resources/runtimes/runtime.js';
 
 export {
   DEFAULT_WORKING_DIR,

@@ -221,7 +221,7 @@ describe('templates', () => {
     expect(http.jsonBody()).toMatchObject({ cloud: 'azure', region: 'eastus2' });
   });
 
-    it('forwards cloud and region from buildAndWait to the build request', async () => {
+  it('forwards cloud and region from buildAndWait to the build request', async () => {
     const { client, http } = testClient([jsonResponse(STARTED), jsonResponse(DONE)]);
     await client.templates.buildAndWait(new TemplateBuilder('base'), {
       pollIntervalMs: 0,
