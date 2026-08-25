@@ -1,10 +1,13 @@
 /**
  * Node HTTP client.
  *
- * HTTPS defaults to HTTP/1.1: IPv4 resolved once, TLS pinned to that address
- * with hostname SNI, and a keep-alive pool with enough sockets for parallel
- * create+exec. HTTP/2 is opt-in (`http2: true`): one session per origin,
- * concurrent calls as streams, HTTP/1.1 fallback if ALPN is not `h2`.
+ * HTTPS defaults to HTTP/2: one session per origin, IPv4 resolved once, TLS
+ * pinned to that address with hostname SNI, concurrent calls as streams.
+ * If ALPN is not `h2`, the origin is pinned to an HTTP/1.1 keep-alive pool
+ * with enough sockets for parallel work — never a single HTTP/1.1 connection.
+ *
+ * `close()` destroys the session immediately. Graceful GOAWAY is not waited
+ * on; that is what kept Node processes alive after the last request.
  *
  * `node:*` modules are imported dynamically so Bun, Deno, and edge bundles
  * never evaluate them.
@@ -21,7 +24,7 @@ export type DnsLookup = (hostname: string, options: unknown, callback?: DnsLooku
 
 export interface NativeNodeFetchOptions {
   /**
-   * Negotiate HTTP/2 on HTTPS. Defaults to false (HTTP/1.1 keep-alive).
+   * Negotiate HTTP/2 on HTTPS. Defaults to true. Set false to force HTTP/1.1.
    */
   http2?: boolean;
   /**
@@ -43,7 +46,7 @@ export interface NativeNodeFetch {
 }
 
 /**
- * HTTP/1.1 sockets per origin.
+ * HTTP/1.1 sockets per origin when HTTP/2 is unavailable.
  *
  * Must stay well above 1. Concurrent create+exec needs one socket per
  * in-flight request. A single-connection pool serializes them.
@@ -56,7 +59,7 @@ const TCP_KEEPALIVE_DELAY_MS = 15_000;
 /**
  * HTTP/2 PING interval.
  *
- * Keeps an opt-in session up so the next create/exec does not handshake again.
+ * Keeps the session up so the next create/exec does not handshake again.
  */
 const H2_PING_MS = 25_000;
 
@@ -152,7 +155,13 @@ interface Http2Session {
 }
 
 interface Http2Lib {
-  connect(authority: string, options?: { createConnection?: () => TlsSocket }): Http2Session;
+  connect(
+    authority: string,
+    options?: {
+      createConnection?: () => TlsSocket;
+      settings?: { enablePush?: boolean; maxConcurrentStreams?: number };
+    },
+  ): Http2Session;
   constants: { NGHTTP2_CANCEL: number };
 }
 
@@ -214,7 +223,7 @@ async function loadMods(): Promise<NodeHttpMods | null> {
 }
 
 export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): NativeNodeFetch {
-  const http2Wanted = options.http2 === true;
+  const http2Wanted = options.http2 !== false;
   const rejectUnauthorized = options.rejectUnauthorized !== false;
   const lookup = options.lookup;
 
@@ -487,6 +496,7 @@ async function connectH2(
       }
       const session = node.http2.connect(url.origin, {
         createConnection: () => socket,
+        settings: { enablePush: false, maxConcurrentStreams: 100 },
       });
       const timer = setTimeout(() => {
         session.destroy();

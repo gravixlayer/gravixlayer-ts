@@ -4,8 +4,9 @@
  * Node's global `fetch` speaks HTTP/1.1 with a short keep-alive. Concurrent
  * create+exec would each pay a new TCP+TLS handshake.
  *
- * On Node the SDK uses an HTTP/1.1 keep-alive pool (IPv4, hostname SNI).
- * HTTP/2 is available when `http2` is set. Bun, Deno, and edge runtimes keep
+ * On Node the SDK opens one HTTP/2 session per origin (IPv4, hostname SNI)
+ * and multiplexes concurrent requests. Origins that do not speak HTTP/2 fall
+ * back to a keep-alive HTTP/1.1 pool. Bun, Deno, and edge runtimes keep
  * their native `fetch`. A caller-supplied `fetch` always wins.
  */
 
@@ -29,8 +30,8 @@ export interface PooledFetch {
 /** Options for {@link createPooledFetch}. */
 export interface PooledFetchOptions {
   /**
-   * Enable HTTP/2 on Node HTTPS origins. Defaults to false (HTTP/1.1
-   * keep-alive). Set true to multiplex on one session per origin.
+   * Enable HTTP/2 on Node HTTPS origins. Defaults to true. Set false to force
+   * an HTTP/1.1 keep-alive pool.
    */
   http2?: boolean;
   /**
@@ -63,8 +64,8 @@ export function hostRuntime(): HostRuntime {
 }
 
 /**
- * Bind a fetch that, on Node, rides a keep-alive HTTP/1.1 pool (HTTP/2 when
- * `http2` is set).
+ * Bind a fetch that, on Node, rides a pooled HTTP/2 session (HTTP/1.1 if the
+ * origin cannot).
  *
  * Everywhere else this is `globalThis.fetch`. Construction does not touch
  * the network; sockets open on the first request (or {@link PooledFetch.preconnect}).

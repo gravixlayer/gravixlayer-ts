@@ -81,7 +81,9 @@ export interface ClientOptions {
    * Replacement for the global `fetch`.
    *
    * Useful for a custom agent, a proxy, or deterministic tests. When omitted
-   * on Node, the SDK reuses a keep-alive HTTP/1.1 pool.
+   * on Node, the SDK reuses one HTTP/2 session per origin (HTTP/1.1 keep-alive
+   * if the origin does not speak HTTP/2). Closing the client destroys that
+   * session immediately so the process can exit.
    */
   fetch?: FetchLike;
   /**
@@ -185,7 +187,7 @@ export class GravixLayer implements ClientContext {
           'This runtime has no global fetch. Use Node 20 or newer, or pass a `fetch` implementation.',
         );
       }
-      const pooled = createPooledFetch();
+      const pooled = createPooledFetch({ http2: true });
       fetchImpl = pooled.fetch;
       preconnect = () => pooled.preconnect();
       closePool = () => pooled.close();
@@ -223,8 +225,9 @@ export class GravixLayer implements ClientContext {
    * Open a connection to the API ahead of the first real request.
    *
    * Loads native HTTP bindings, then sends one small authenticated request so
-   * that TCP, TLS, and keep-alive sockets are already ready when latency
-   * matters. Most useful right before issuing several requests at once.
+   * that TCP, TLS, and the HTTP/2 session are already ready when latency
+   * matters. Most useful right before issuing several requests at once, so the
+   * first batch multiplexes instead of sharing one handshake.
    *
    * Throws the same errors any request would, which makes it a cheap way to
    * verify credentials at startup.
@@ -242,9 +245,11 @@ export class GravixLayer implements ClientContext {
   /**
    * Drain pooled HTTP connections so the process can exit.
    *
-   * Safe to call more than once. After this, further requests open a new pool
-   * only if the client is constructed again; this instance's pool is closed.
-   * No-op when a custom `fetch` was supplied.
+   * HTTP/2 sessions are destroyed immediately rather than waiting for a
+   * graceful GOAWAY, which would otherwise keep Node running after the last
+   * request. Safe to call more than once. After this, further requests open a
+   * new pool only if the client is constructed again; this instance's pool is
+   * closed. No-op when a custom `fetch` was supplied.
    */
   async close(): Promise<void> {
     await this.transport.close();

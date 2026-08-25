@@ -215,7 +215,7 @@ describe('pooled fetch', () => {
     }
   });
 
-  it('multiplexes HTTPS on one HTTP/2 session when enabled', async () => {
+  it('multiplexes HTTPS on one HTTP/2 session by default', async () => {
     const certs = selfSignedCerts();
 
     let sessions = 0;
@@ -229,7 +229,7 @@ describe('pooled fetch', () => {
     });
     await listen(server);
     const port = (server.address() as AddressInfo).port;
-    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
+    const pooled = createPooledFetch({ rejectUnauthorized: false });
 
     try {
       const [a, b] = await Promise.all([
@@ -255,7 +255,7 @@ describe('pooled fetch', () => {
     });
     await listen(server);
     const port = (server.address() as AddressInfo).port;
-    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
+    const pooled = createPooledFetch({ rejectUnauthorized: false });
 
     try {
       const res = await pooled.fetch(`https://127.0.0.1:${port}/`, {});
@@ -290,7 +290,7 @@ describe('pooled fetch', () => {
     }
   });
 
-  it('opens parallel HTTP/1.1 sockets by default on HTTPS', async () => {
+  it('opens parallel HTTP/1.1 sockets after HTTP/2 is unavailable', async () => {
     const certs = selfSignedCerts();
     let connections = 0;
     let inFlight = 0;
@@ -322,6 +322,47 @@ describe('pooled fetch', () => {
         expect(await response.json()).toEqual({ via: 'h1' });
       }
       expect(connections).toBeGreaterThanOrEqual(4);
+      expect(maxInFlight).toBeGreaterThanOrEqual(4);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('multiplexes four concurrent HTTPS requests on one HTTP/2 session', async () => {
+    const certs = selfSignedCerts();
+    let sessions = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const server = createSecureServer(certs);
+    server.on('session', () => {
+      sessions += 1;
+    });
+    server.on('stream', (stream) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      setTimeout(() => {
+        inFlight -= 1;
+        stream.respond({ ':status': 200, 'content-type': 'application/json' });
+        stream.end(JSON.stringify({ via: 'h2' }));
+      }, 40);
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const pooled = createPooledFetch({ rejectUnauthorized: false });
+
+    try {
+      const responses = await Promise.all([
+        pooled.fetch(`https://127.0.0.1:${port}/a`, {}),
+        pooled.fetch(`https://127.0.0.1:${port}/b`, {}),
+        pooled.fetch(`https://127.0.0.1:${port}/c`, {}),
+        pooled.fetch(`https://127.0.0.1:${port}/d`, {}),
+      ]);
+      for (const response of responses) {
+        expect(await response.json()).toEqual({ via: 'h2' });
+      }
+      expect(sessions).toBe(1);
       expect(maxInFlight).toBeGreaterThanOrEqual(4);
     } finally {
       await pooled.close();
