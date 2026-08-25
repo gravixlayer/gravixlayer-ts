@@ -33,8 +33,8 @@ Cloud and region default to `aws` / `us-east-1`. Override with
 ## Requirements
 
 Node 20 or newer. The SDK is built on `fetch` and web streams, so it also runs
-on Deno, Bun, and edge runtimes. On Node, HTTPS multiplexes requests on one
-HTTP/2 session per origin (HTTP/1.1 keep-alive if the origin cannot).
+on Deno, Bun, and edge runtimes. On Node, HTTPS reuses a keep-alive HTTP/1.1
+pool.
 
 Browsers are refused by default — a browser build would hand your API key to
 every visitor. Call the API from your own server.

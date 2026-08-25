@@ -215,7 +215,7 @@ describe('pooled fetch', () => {
     }
   });
 
-  it('multiplexes HTTPS on one HTTP/2 session by default', async () => {
+  it('multiplexes HTTPS on one HTTP/2 session when enabled', async () => {
     const certs = selfSignedCerts();
 
     let sessions = 0;
@@ -229,7 +229,7 @@ describe('pooled fetch', () => {
     });
     await listen(server);
     const port = (server.address() as AddressInfo).port;
-    const pooled = createPooledFetch({ rejectUnauthorized: false });
+    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
 
     try {
       const [a, b] = await Promise.all([
@@ -239,6 +239,30 @@ describe('pooled fetch', () => {
       expect(await a.json()).toEqual({ path: '/one' });
       expect(await b.json()).toEqual({ path: '/two' });
       expect(sessions).toBe(1);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('closes an HTTP/2 session without waiting for GOAWAY', async () => {
+    const certs = selfSignedCerts();
+    const server = createSecureServer(certs);
+    server.on('stream', (stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+      stream.end(JSON.stringify({ ok: true }));
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
+
+    try {
+      const res = await pooled.fetch(`https://127.0.0.1:${port}/`, {});
+      expect(await res.json()).toEqual({ ok: true });
+      const started = Date.now();
+      await pooled.close();
+      expect(Date.now() - started).toBeLessThan(500);
     } finally {
       await pooled.close();
       await closeServer(server);
@@ -259,6 +283,46 @@ describe('pooled fetch', () => {
     try {
       const res = await pooled.fetch(`https://127.0.0.1:${port}/fallback`, {});
       expect(await res.json()).toEqual({ path: '/fallback', via: 'h1' });
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('opens parallel HTTP/1.1 sockets by default on HTTPS', async () => {
+    const certs = selfSignedCerts();
+    let connections = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const server = createHttpsServer({ key: certs.key, cert: certs.cert }, (_req, res) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      setTimeout(() => {
+        inFlight -= 1;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ via: 'h1' }));
+      }, 40);
+    });
+    server.on('connection', () => {
+      connections += 1;
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const pooled = createPooledFetch({ rejectUnauthorized: false });
+
+    try {
+      const responses = await Promise.all([
+        pooled.fetch(`https://127.0.0.1:${port}/a`, {}),
+        pooled.fetch(`https://127.0.0.1:${port}/b`, {}),
+        pooled.fetch(`https://127.0.0.1:${port}/c`, {}),
+        pooled.fetch(`https://127.0.0.1:${port}/d`, {}),
+      ]);
+      for (const response of responses) {
+        expect(await response.json()).toEqual({ via: 'h1' });
+      }
+      expect(connections).toBeGreaterThanOrEqual(4);
+      expect(maxInFlight).toBeGreaterThanOrEqual(4);
     } finally {
       await pooled.close();
       await closeServer(server);

@@ -6,12 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.1.10] - 2026-08-25
+## [0.1.11] - 2026-08-25
 
 ### Fixed
 
-- Concurrent Node requests share one HTTPS session, so parallel creates no
-  longer each open a new connection.
+- Node processes exit after the last request. Closing the client destroys
+  pooled sockets instead of waiting on a graceful HTTP/2 shutdown.
+
+### Changed
+
+- Node HTTPS uses an HTTP/1.1 keep-alive pool by default.
+
+## [0.1.10] - 2026-08-25
+
+### Changed
+
+- Node HTTPS defaults to HTTP/2 (one session per origin). Origins that do not
+  speak HTTP/2 fall back to an HTTP/1.1 keep-alive pool.
 
 ## [0.1.9] - 2026-08-25
 
@@ -122,7 +133,8 @@ First release. Full coverage of the GravixLayer API.
   `trace`, `traced`, and `runtimeSpan` helpers, active only when
   `@opentelemetry/api` is installed and telemetry is enabled.
 
-[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.11
 [0.1.10]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.10
 [0.1.9]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.9
 [0.1.8]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.8

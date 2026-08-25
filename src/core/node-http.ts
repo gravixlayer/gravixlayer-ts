@@ -1,11 +1,10 @@
 /**
  * Node HTTP client.
  *
- * HTTPS opens one HTTP/2 session per origin: IPv4 is resolved once, TLS is
- * pinned to that address (SNI stays on the hostname), and concurrent calls
- * share the session. Origins that do not speak HTTP/2 fall back to an
- * HTTP/1.1 keep-alive pool, still IPv4-pinned, with enough sockets for
- * parallel work.
+ * HTTPS defaults to HTTP/1.1: IPv4 resolved once, TLS pinned to that address
+ * with hostname SNI, and a keep-alive pool with enough sockets for parallel
+ * create+exec. HTTP/2 is opt-in (`http2: true`): one session per origin,
+ * concurrent calls as streams, HTTP/1.1 fallback if ALPN is not `h2`.
  *
  * `node:*` modules are imported dynamically so Bun, Deno, and edge bundles
  * never evaluate them.
@@ -22,7 +21,7 @@ export type DnsLookup = (hostname: string, options: unknown, callback?: DnsLooku
 
 export interface NativeNodeFetchOptions {
   /**
-   * Negotiate HTTP/2 on HTTPS. Defaults to true. Set false to force HTTP/1.1.
+   * Negotiate HTTP/2 on HTTPS. Defaults to false (HTTP/1.1 keep-alive).
    */
   http2?: boolean;
   /**
@@ -44,10 +43,10 @@ export interface NativeNodeFetch {
 }
 
 /**
- * HTTP/1.1 sockets per origin when HTTP/2 is unavailable.
+ * HTTP/1.1 sockets per origin.
  *
- * Concurrent create+exec across sandboxes needs one socket per in-flight
- * request. Sized like a small keep-alive pool, not a single connection.
+ * Must stay well above 1. Concurrent create+exec needs one socket per
+ * in-flight request. A single-connection pool serializes them.
  */
 const H1_CONNECTIONS = 16;
 
@@ -57,11 +56,11 @@ const TCP_KEEPALIVE_DELAY_MS = 15_000;
 /**
  * HTTP/2 PING interval.
  *
- * Keeps the session up so the next create/exec does not handshake again.
+ * Keeps an opt-in session up so the next create/exec does not handshake again.
  */
 const H2_PING_MS = 25_000;
 
-/** TCP/TLS connect deadline. */
+/** TCP/TLS/HTTP/2 connect deadline. */
 const CONNECT_TIMEOUT_MS = 10_000;
 
 const IPV4_LITERAL = /^(?:\d{1,3}\.){3}\d{1,3}$/;
@@ -93,10 +92,18 @@ interface HttpIncomingMessage {
   statusMessage?: string;
   headers: NodeJS.Dict<string | string[] | undefined>;
   resume(): void;
+  on(event: 'data', listener: (chunk: Buffer | string) => void): void;
+  once(event: 'end', listener: () => void): void;
+  once(event: 'error', listener: (error: Error) => void): void;
+}
+
+interface NetSocket {
+  setNoDelay(noDelay?: boolean): void;
 }
 
 interface HttpClientRequest {
   on(event: 'error', listener: (error: Error) => void): void;
+  on(event: 'socket', listener: (socket: NetSocket) => void): void;
   end(chunk?: string | Buffer): void;
 }
 
@@ -112,6 +119,7 @@ interface TlsSocket {
   alpnProtocol: string | false | null;
   setTimeout(ms: number, callback?: () => void): TlsSocket;
   setKeepAlive(enable: boolean, initialDelay?: number): TlsSocket;
+  setNoDelay(noDelay?: boolean): TlsSocket;
   destroy(): void;
   once(event: 'error', listener: (error: Error) => void): TlsSocket;
   once(event: 'secureConnect', listener: () => void): TlsSocket;
@@ -125,7 +133,9 @@ interface Http2Stream {
   writableEnded: boolean;
   end(chunk?: string | Buffer): void;
   close(code?: number): void;
+  on(event: 'data', listener: (chunk: Buffer | string) => void): void;
   once(event: 'error', listener: (error: Error) => void): void;
+  once(event: 'end', listener: () => void): void;
   once(event: 'response', listener: (headers: Http2Headers) => void): void;
 }
 
@@ -204,7 +214,7 @@ async function loadMods(): Promise<NodeHttpMods | null> {
 }
 
 export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): NativeNodeFetch {
-  const http2Wanted = options.http2 !== false;
+  const http2Wanted = options.http2 === true;
   const rejectUnauthorized = options.rejectUnauthorized !== false;
   const lookup = options.lookup;
 
@@ -213,6 +223,8 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
   let h1Ready: Promise<NodeH1Pool | undefined> | undefined;
   const h2FailedOrigins = new Set<string>();
   const h2Sessions = new Map<string, Promise<H2Session>>();
+  const h2Live = new Map<string, H2Session>();
+  const connectingSockets = new Set<TlsSocket>();
   const ipv4Cache = new Map<string, Promise<string>>();
 
   const loaded = loadMods();
@@ -267,7 +279,11 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     const origin = url.origin;
     const existing = h2Sessions.get(origin);
     if (existing) return existing;
-    const pending = connectH2(node, url, { rejectUnauthorized, resolveIpv4 }).then((session) => {
+    const pending = connectH2(node, url, {
+      rejectUnauthorized,
+      resolveIpv4,
+      connectingSockets,
+    }).then((session) => {
       const ping = setInterval(() => {
         if (session.destroyed || session.closed) return;
         session.ping((error) => {
@@ -276,18 +292,32 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
       }, H2_PING_MS);
       ping.unref();
       const handle: H2Session = { session, ping };
+      h2Live.set(origin, handle);
       session.once('close', () => {
         clearInterval(ping);
         h2Sessions.delete(origin);
+        h2Live.delete(origin);
       });
       session.once('error', () => {
         session.destroy();
       });
       return handle;
     });
-    pending.catch(() => h2Sessions.delete(origin));
+    void pending.catch((error: unknown) => {
+      h2Sessions.delete(origin);
+      h2Live.delete(origin);
+      if (isHttp2HandshakeFailure(error)) h2FailedOrigins.add(origin);
+    });
     h2Sessions.set(origin, pending);
     return pending;
+  };
+
+  const liveSession = async (url: URL, node: NodeHttpMods): Promise<H2Session> => {
+    const handle = await sessionFor(url, node);
+    if (!handle.session.closed && !handle.session.destroyed) return handle;
+    h2Sessions.delete(url.origin);
+    h2Live.delete(url.origin);
+    return sessionFor(url, node);
   };
 
   const fetch: FetchLike = async (input, init = {}) => {
@@ -303,8 +333,11 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
         throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
       }
       if (node) {
+        // Only the handshake falls back to HTTP/1.1. A failure after the
+        // session is up must not replay the request (POST create is not
+        // idempotent).
         try {
-          const handle = await sessionFor(url, node);
+          const handle = await liveSession(url, node);
           if (closed) {
             throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
           }
@@ -313,11 +346,6 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
           if (closed) throw error;
           if (isHttp2HandshakeFailure(error) && isReplayableBody(init.body)) {
             h2FailedOrigins.add(url.origin);
-            const stale = h2Sessions.get(url.origin);
-            h2Sessions.delete(url.origin);
-            if (stale) {
-              void stale.then((handle) => closeH2(handle)).catch(() => undefined);
-            }
           } else {
             throw error;
           }
@@ -346,19 +374,18 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     },
     async close() {
       closed = true;
-      const sessions = [...h2Sessions.values()];
       h2Sessions.clear();
       h2FailedOrigins.clear();
       ipv4Cache.clear();
+      for (const socket of connectingSockets) {
+        socket.destroy();
+      }
+      connectingSockets.clear();
+      const live = [...h2Live.values()];
+      h2Live.clear();
+      for (const handle of live) closeH2(handle);
       const h1 = h1Pool;
       h1Pool = undefined;
-      for (const pending of sessions) {
-        try {
-          closeH2(await pending);
-        } catch {
-          // Connect failed; nothing to close.
-        }
-      }
       h1?.close();
     },
   };
@@ -394,16 +421,27 @@ function ipv4FromLookup(address: unknown): string | undefined {
 }
 
 function closeH2(handle: H2Session): void {
-  if (handle.ping) clearInterval(handle.ping);
-  if (!handle.session.closed && !handle.session.destroyed) {
-    handle.session.close();
+  if (handle.ping) {
+    clearInterval(handle.ping);
+    handle.ping = undefined;
+  }
+  // destroy(), not close(): graceful GOAWAY against some origins never
+  // finishes, and the session handle keeps the process alive.
+  try {
+    handle.session.destroy();
+  } catch {
+    // Already gone.
   }
 }
 
 async function connectH2(
   node: NodeHttpMods,
   url: URL,
-  opts: { rejectUnauthorized: boolean; resolveIpv4: (hostname: string) => Promise<string> },
+  opts: {
+    rejectUnauthorized: boolean;
+    resolveIpv4: (hostname: string) => Promise<string>;
+    connectingSockets: Set<TlsSocket>;
+  },
 ): Promise<Http2Session> {
   const address = await opts.resolveIpv4(url.hostname);
   const port = Number(url.port) || 443;
@@ -413,11 +451,13 @@ async function connectH2(
     const fail = (error: Error) => {
       if (settled) return;
       settled = true;
+      opts.connectingSockets.delete(socket);
       reject(error);
     };
     const ok = (session: Http2Session) => {
       if (settled) return;
       settled = true;
+      opts.connectingSockets.delete(socket);
       resolve(session);
     };
 
@@ -425,28 +465,42 @@ async function connectH2(
     const socket = node.tls.connect({
       host: address,
       port,
-      ALPNProtocols: ['h2'],
+      ALPNProtocols: ['h2', 'http/1.1'],
       rejectUnauthorized: opts.rejectUnauthorized,
+      noDelay: true,
       ...(servername ? { servername } : {}),
     });
+    opts.connectingSockets.add(socket);
+    socket.setNoDelay(true);
     socket.setKeepAlive(true, TCP_KEEPALIVE_DELAY_MS);
     socket.setTimeout(CONNECT_TIMEOUT_MS, () => {
       socket.destroy();
-      fail(Object.assign(new Error('HTTP/2 connect timed out'), { code: 'ERR_HTTP2' }));
+      fail(handshakeError('HTTP/2 connect timed out'));
     });
-    socket.once('error', fail);
+    socket.once('error', (error) => fail(markHandshake(error)));
     socket.once('secureConnect', () => {
       socket.setTimeout(0);
       if (socket.alpnProtocol !== 'h2') {
         socket.destroy();
-        fail(Object.assign(new Error('ALPN did not negotiate HTTP/2'), { code: 'ERR_HTTP2' }));
+        fail(handshakeError('ALPN did not negotiate HTTP/2'));
         return;
       }
       const session = node.http2.connect(url.origin, {
         createConnection: () => socket,
       });
-      session.once('error', fail);
-      session.once('connect', () => ok(session));
+      const timer = setTimeout(() => {
+        session.destroy();
+        fail(handshakeError('HTTP/2 session timed out'));
+      }, CONNECT_TIMEOUT_MS);
+      timer.unref();
+      session.once('error', (error) => {
+        clearTimeout(timer);
+        fail(markHandshake(error));
+      });
+      session.once('connect', () => {
+        clearTimeout(timer);
+        ok(session);
+      });
     });
   });
 }
@@ -473,6 +527,7 @@ function h2Fetch(
 
     const toWeb = node.toWeb;
     const signal = init.signal ?? undefined;
+    const streamBody = wantsStreamingBody(init);
 
     return await new Promise<Response>((resolve, reject) => {
       if (signal?.aborted) {
@@ -490,14 +545,33 @@ function h2Fetch(
         reject(error);
       });
       req.once('response', (incoming) => {
-        signal?.removeEventListener('abort', onAbort);
         const status = Number(incoming[':status'] ?? 200);
         const empty = status === 204 || status === 205 || status === 304 || method === 'HEAD';
-        resolve(
-          new Response(empty ? null : (toWeb(req) as ReadableStream<Uint8Array>), {
-            status,
-            headers: h2ToHeaders(incoming),
-          }),
+        const headersOut = h2ToHeaders(incoming);
+        if (empty) {
+          signal?.removeEventListener('abort', onAbort);
+          resolve(new Response(null, { status, headers: headersOut }));
+          return;
+        }
+        if (streamBody) {
+          signal?.removeEventListener('abort', onAbort);
+          resolve(
+            new Response(toWeb(req) as ReadableStream<Uint8Array>, {
+              status,
+              headers: headersOut,
+            }),
+          );
+          return;
+        }
+        void readNodeBody(req).then(
+          (buf) => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve(new Response(new Uint8Array(buf), { status, headers: headersOut }));
+          },
+          (error) => {
+            signal?.removeEventListener('abort', onAbort);
+            reject(error);
+          },
         );
       });
       if (body === undefined) {
@@ -542,6 +616,7 @@ function createNodeH1Pool(
     const method = (init.method ?? 'GET').toUpperCase();
     const address = await opts.resolveIpv4(url.hostname);
     if (!headerHas(headers, 'host')) headers.host = url.host;
+    const streamBody = wantsStreamingBody(init);
 
     return await new Promise<Response>((resolve, reject) => {
       const reqOpts: Record<string, unknown> = {
@@ -553,6 +628,8 @@ function createNodeH1Pool(
         headers,
         agent,
         family: 4,
+        autoSelectFamily: false,
+        noDelay: true,
         signal: init.signal ?? undefined,
       };
       if (isHttps) {
@@ -562,17 +639,34 @@ function createNodeH1Pool(
       }
       const req = lib.request(reqOpts, (res) => {
         const status = res.statusCode ?? 200;
+        const statusText = res.statusMessage ?? '';
         const empty = status === 204 || status === 205 || status === 304 || method === 'HEAD';
-        if (empty) res.resume();
-        resolve(
-          new Response(empty ? null : (toWeb(res) as ReadableStream<Uint8Array>), {
-            status,
-            statusText: res.statusMessage ?? '',
-            headers: incomingToHeaders(res.headers),
-          }),
+        const headersOut = incomingToHeaders(res.headers);
+        if (empty) {
+          res.resume();
+          resolve(new Response(null, { status, statusText, headers: headersOut }));
+          return;
+        }
+        if (streamBody) {
+          resolve(
+            new Response(toWeb(res) as ReadableStream<Uint8Array>, {
+              status,
+              statusText,
+              headers: headersOut,
+            }),
+          );
+          return;
+        }
+        void readNodeBody(res).then(
+          (buf) =>
+            resolve(new Response(new Uint8Array(buf), { status, statusText, headers: headersOut })),
+          reject,
         );
       });
       req.on('error', reject);
+      req.on('socket', (socket) => {
+        socket.setNoDelay(true);
+      });
       if (body === undefined) req.end();
       else req.end(body);
     });
@@ -669,6 +763,31 @@ function h2ToHeaders(raw: Http2Headers): Headers {
   return headers;
 }
 
+function wantsStreamingBody(init: RequestInit): boolean {
+  const headers = outgoingHeaders(init.headers);
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== 'accept' || value == null) continue;
+    const text = Array.isArray(value) ? value.join(',') : String(value);
+    if (text.toLowerCase().includes('text/event-stream')) return true;
+  }
+  return false;
+}
+
+function readNodeBody(stream: {
+  on(event: 'data', listener: (chunk: Buffer | string) => void): void;
+  once(event: 'end', listener: () => void): void;
+  once(event: 'error', listener: (error: Error) => void): void;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    stream.on('data', (chunk) => {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    });
+    stream.once('end', () => resolve(Buffer.concat(chunks)));
+    stream.once('error', reject);
+  });
+}
+
 /**
  * Handshake fallback must not replay a consumed stream (FormData, fetch
  * streams). Strings and byte buffers are safe to send a second time.
@@ -681,28 +800,23 @@ function isReplayableBody(body: BodyInit | null | undefined): boolean {
   return false;
 }
 
-/** Handshake / ALPN failures — safe to retry the same request on HTTP/1.1. */
+const H2_HANDSHAKE = 'h2handshake';
+
+function handshakeError(message: string): Error {
+  return markHandshake(Object.assign(new Error(message), { code: 'ERR_HTTP2' }));
+}
+
+function markHandshake(error: Error): Error {
+  (error as Error & { [H2_HANDSHAKE]?: boolean })[H2_HANDSHAKE] = true;
+  return error;
+}
+
+/**
+ * True only for failures before any HTTP request is sent.
+ *
+ * HTTP/1.1 fallback is safe here. A later stream error is not: replaying a
+ * POST could create a second runtime.
+ */
 function isHttp2HandshakeFailure(error: unknown): boolean {
-  const err = error as {
-    code?: string;
-    message?: string;
-    cause?: { code?: string; message?: string };
-  };
-  const code = `${err.code ?? ''} ${err.cause?.code ?? ''}`;
-  const message = `${err.message ?? ''} ${err.cause?.message ?? ''}`.toLowerCase();
-  if (
-    code.includes('ERR_HTTP2') ||
-    code.includes('ERR_SSL_WRONG_VERSION_NUMBER') ||
-    code.includes('EPROTO') ||
-    code.includes('ERR_TLS') ||
-    code.includes('ERR_SSL')
-  ) {
-    return true;
-  }
-  return (
-    message.includes('http2') ||
-    message.includes('alpn') ||
-    message.includes('h2 protocol') ||
-    message.includes('unknown protocol')
-  );
+  return Boolean((error as { [H2_HANDSHAKE]?: boolean } | undefined)?.[H2_HANDSHAKE]);
 }
