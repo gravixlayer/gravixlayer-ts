@@ -17,6 +17,7 @@ import {
   errorFromStatus,
 } from '../src/core/errors.js';
 import { iterSSE, iterSSEJson } from '../src/core/sse.js';
+import { GUEST_DEADLINE_MARGIN_MS, timeoutForGuestDeadline } from '../src/core/time.js';
 import { createTar, createTarGz } from '../src/core/tar.js';
 import {
   buildListEndpoint,
@@ -135,6 +136,11 @@ describe('server-sent events', () => {
   it('dispatches a final event with no trailing blank line', async () => {
     const events = await collect(iterSSE(textStream('data: last')));
     expect(events[0]?.data).toBe('last');
+  });
+
+  it('reassembles a CRLF split across chunks', async () => {
+    const events = await collect(iterSSE(textStream('data: crlf\r\n\r\n', 1)));
+    expect(events[0]?.data).toBe('crlf');
   });
 
   it('releases the stream when the consumer stops early', async () => {
@@ -551,5 +557,21 @@ describe('errors', () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe('GravixLayerServerError');
     expect(String(error)).toContain('boom');
+  });
+});
+
+describe('guest deadlines', () => {
+  it('leaves the client default when neither timeout is set', () => {
+    expect(timeoutForGuestDeadline(undefined, undefined)).toBeUndefined();
+  });
+
+  it('keeps an explicit HTTP timeout', () => {
+    expect(timeoutForGuestDeadline(120, 5_000)).toBe(5_000);
+    expect(timeoutForGuestDeadline(undefined, 0)).toBe(0);
+  });
+
+  it('outlasts the guest deadline by the round-trip margin', () => {
+    expect(timeoutForGuestDeadline(30, undefined)).toBe(30_000 + GUEST_DEADLINE_MARGIN_MS);
+    expect(timeoutForGuestDeadline(120, undefined)).toBe(120_000 + GUEST_DEADLINE_MARGIN_MS);
   });
 });

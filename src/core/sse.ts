@@ -8,6 +8,33 @@
  * multiple lines and are joined with `\n`.
  */
 
+/**
+ * Locate the next CR, LF, or CRLF starting at `from`.
+ *
+ * A CR at the very end is `pending` unless `flush` is set: it may be the first
+ * half of a CRLF that arrives in the next chunk.
+ */
+function nextLineBreak(
+  buffer: string,
+  from: number,
+  flush = false,
+): { index: number; length: number; pending?: boolean } | null {
+  const cr = buffer.indexOf('\r', from);
+  const lf = buffer.indexOf('\n', from);
+  if (cr === -1 && lf === -1) return null;
+
+  if (lf !== -1 && (cr === -1 || lf < cr)) {
+    return { index: lf, length: 1 };
+  }
+
+  // CR, possibly followed by LF.
+  if (!flush && cr + 1 === buffer.length) return { index: cr, length: 1, pending: true };
+  if (cr + 1 < buffer.length && buffer.charCodeAt(cr + 1) === 10) {
+    return { index: cr, length: 2 };
+  }
+  return { index: cr, length: 1 };
+}
+
 /** One dispatched server-sent event. */
 export interface SSEEvent {
   /** The `event:` field, or `'message'` when the stream did not set one. */
@@ -107,30 +134,33 @@ export async function* iterSSE(
       }
       buffer += chunk;
 
-      // A trailing CR is held back: it may be the first half of a CRLF that
-      // lands at the start of the next chunk.
-      let searchFrom = 0;
-      for (;;) {
-        const match = /\r\n|\n|\r/.exec(buffer.slice(searchFrom));
-        if (!match) break;
+      let start = 0;
+      while (start < buffer.length) {
+        const lineBreak = nextLineBreak(buffer, start);
+        if (lineBreak === null) break;
+        // A trailing CR may be the first half of a CRLF that lands next.
+        if (lineBreak.pending) break;
 
-        const start = searchFrom + match.index;
-        if (match[0] === '\r' && start + 1 === buffer.length) break;
-
-        const line = buffer.slice(searchFrom, start);
-        searchFrom = start + match[0].length;
-
-        const event = handleLine(line);
+        const event = handleLine(buffer.slice(start, lineBreak.index));
+        start = lineBreak.index + lineBreak.length;
         if (event) yield event;
       }
-      buffer = buffer.slice(searchFrom);
+      if (start > 0) buffer = buffer.slice(start);
     }
 
     // Flush whatever the decoder was holding, then the final partial line.
     buffer += decoder.decode();
     if (buffer !== '') {
-      for (const line of buffer.split(/\r\n|\n|\r/)) {
-        const event = handleLine(line);
+      let start = 0;
+      while (start < buffer.length) {
+        const lineBreak = nextLineBreak(buffer, start, true);
+        if (lineBreak === null) {
+          const event = handleLine(buffer.slice(start));
+          if (event) yield event;
+          break;
+        }
+        const event = handleLine(buffer.slice(start, lineBreak.index));
+        start = lineBreak.index + lineBreak.length;
         if (event) yield event;
       }
     }

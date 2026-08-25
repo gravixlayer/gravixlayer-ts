@@ -31,7 +31,9 @@ if (runtimes.length === 0) {
   console.log('  (none running)');
 } else {
   for (const sandbox of runtimes) {
-    console.log(`  ${sandbox.runtimeId}  status=${sandbox.status.padEnd(10)} template=${sandbox.template}`);
+    console.log(
+      `  ${sandbox.runtimeId}  status=${sandbox.status.padEnd(10)} template=${sandbox.template}`,
+    );
   }
 
   // 3. `retrieve` reads one sandbox's state without binding a handle to it.

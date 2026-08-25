@@ -151,6 +151,14 @@ describe('warmup', () => {
   });
 });
 
+describe('close', () => {
+  it('is a no-op when fetch is injected', async () => {
+    const { client } = testClient([jsonResponse({ runtimes: [], total: 0 })]);
+    await expect(client.close()).resolves.toBeUndefined();
+    await expect(client.close()).resolves.toBeUndefined();
+  });
+});
+
 describe('telemetry opt-in', () => {
   afterEach(() => {
     resetTelemetry();

@@ -1,7 +1,7 @@
 /**
  * The HTTP engine shared by every resource.
  *
- * Built on the global `fetch`, so the same code runs on Node 18+, Deno, Bun,
+ * Built on the global `fetch`, so the same code runs on Node 20+, Deno, Bun,
  * Cloudflare Workers, and Vercel Edge without a platform adapter.
  */
 
@@ -9,6 +9,7 @@ import {
   GravixLayerAbortError,
   GravixLayerConnectionError,
   GravixLayerError,
+  GravixLayerInvalidArgumentError,
   GravixLayerTimeoutError,
   errorFromStatus,
 } from './errors.js';
@@ -71,6 +72,10 @@ export interface TransportConfig {
   maxRetries: number;
   defaultHeaders: Record<string, string>;
   fetch: FetchLike;
+  /** Drain pooled sockets. Absent when the client uses a caller-supplied fetch. */
+  close?: () => Promise<void>;
+  /** Load native HTTP bindings so the first request does not wait on them. */
+  preconnect?: () => Promise<void>;
 }
 
 const DEFAULT_SERVICE = 'v1/inference';
@@ -169,26 +174,31 @@ function withStreamCleanup(
     onDone();
   };
 
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read();
-        if (done) {
+  // highWaterMark of 1 forwards each chunk as soon as it arrives, so SSE
+  // stdout is not held in this wrapper while the consumer is ready.
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            finish();
+            controller.close();
+            return;
+          }
+          controller.enqueue(value);
+        } catch (error) {
           finish();
-          controller.close();
-          return;
+          controller.error(error);
         }
-        controller.enqueue(value);
-      } catch (error) {
+      },
+      async cancel(reason) {
         finish();
-        controller.error(error);
-      }
+        await reader.cancel(reason).catch(() => undefined);
+      },
     },
-    async cancel(reason) {
-      finish();
-      await reader.cancel(reason).catch(() => undefined);
-    },
-  });
+    { highWaterMark: 1 },
+  );
 }
 
 /** Issues authenticated requests with retries, timeouts, and tracing. */
@@ -208,6 +218,20 @@ export class Transport {
    */
   get fetch(): FetchLike {
     return this.config.fetch;
+  }
+
+  /**
+   * Load native HTTP bindings so the next request does not wait on them.
+   *
+   * Does not send an application request. Credential checks stay on `warmup()`.
+   */
+  async preconnect(): Promise<void> {
+    await this.config.preconnect?.();
+  }
+
+  /** Drain pooled sockets. Safe to call more than once. No-op without a pool. */
+  async close(): Promise<void> {
+    await this.config.close?.();
   }
 
   /** Send a request and parse the JSON response. */
@@ -275,6 +299,14 @@ export class Transport {
 
     const headers: Record<string, string> = { ...this.config.defaultHeaders };
     if (spec.body !== undefined && !spec.form) headers['content-type'] = 'application/json';
+    if (stream) {
+      // Gzip (the default Accept-Encoding on Node fetch) can hold SSE frames
+      // until a window fills, which is what makes console output look lagged.
+      // identity + event-stream matches the API's streaming contract.
+      headers['accept'] = 'text/event-stream';
+      headers['accept-encoding'] = 'identity';
+      headers['cache-control'] = 'no-cache';
+    }
     for (const [key, value] of Object.entries(options.headers ?? {})) {
       headers[key.toLowerCase()] = value;
     }
@@ -342,7 +374,9 @@ export class Transport {
         });
       } catch (error) {
         // A caller-initiated abort is final; a timeout or socket failure is not.
+        // Programmer errors (closed client, bad arguments) must not be retried.
         if (error instanceof GravixLayerAbortError) throw error;
+        if (error instanceof GravixLayerInvalidArgumentError) throw error;
         lastError = error;
         if (attempt < maxRetries) {
           await backoffSleep(backoffMs(attempt), userSignal);
@@ -429,6 +463,7 @@ export class Transport {
     } catch (error) {
       release();
 
+      if (error instanceof GravixLayerInvalidArgumentError) throw error;
       if (userSignal?.aborted) {
         throw new GravixLayerAbortError('Request aborted.', { cause: userSignal.reason });
       }

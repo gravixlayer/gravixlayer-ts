@@ -1,7 +1,7 @@
 # GravixLayer TypeScript SDK
 
 [![npm](https://img.shields.io/npm/v/gravixlayer.svg)](https://www.npmjs.com/package/gravixlayer)
-[![Node 18+](https://img.shields.io/badge/node-18+-brightgreen.svg)](https://nodejs.org/)
+[![Node 20+](https://img.shields.io/badge/node-20+-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 Official TypeScript client for [GravixLayer](https://gravixlayer.ai). Create
@@ -32,8 +32,9 @@ Cloud and region default to `aws` / `us-east-1`. Override with
 
 ## Requirements
 
-Node 18 or newer. The SDK is built on `fetch` and web streams, so it also runs
-on Deno, Bun, and edge runtimes. It has no runtime dependencies.
+Node 20 or newer. The SDK is built on `fetch` and web streams, so it also runs
+on Deno, Bun, and edge runtimes. On Node, HTTP uses undici (HTTP/2 first,
+HTTP/1.1 if `h2` is not negotiated).
 
 Browsers are refused by default — a browser build would hand your API key to
 every visitor. Call the API from your own server.
@@ -56,10 +57,13 @@ const client = new GravixLayer({
 | `region` | `GRAVIXLAYER_REGION`, then `us-east-1` | Runtimes and template builds. |
 | `timeout` | `60000` | Per request, in milliseconds. `0` disables it. |
 | `maxRetries` | `3` | Transient failures only. |
-| `fetch` | global `fetch` | For a proxy, a custom agent, or tests. |
+| `fetch` | Node pooled `fetch`, else global `fetch` | For a proxy, a custom agent, or tests. |
 
-Construct the client once and reuse it. Call `await client.warmup()` at startup
-if you want TCP and TLS paid before the first request that matters.
+Construct the client once and reuse it. On Node, one client keeps a pooled
+HTTP/2 session to the API (CloudFront or ALB). Call `await client.warmup()`
+at startup if you want TCP and TLS paid before the first request that
+matters. Call `await client.close()` when a short-lived process is done so
+keep-alive sockets can drain.
 
 ## Runtimes
 

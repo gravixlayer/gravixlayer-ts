@@ -10,6 +10,7 @@
 import { GravixLayerInvalidArgumentError } from '../../core/errors.js';
 import { asRecord, num, optStr, parseList, str } from '../../core/parse.js';
 import { iterSSEJson } from '../../core/sse.js';
+import { timeoutForGuestDeadline } from '../../core/time.js';
 import type { RequestOptions } from '../../core/transport.js';
 import { buildListEndpoint, pathSegment, SERVICES } from '../../core/url.js';
 import { assertNonEmpty, assertPositiveInt, assertRuntimeId } from '../../core/validate.js';
@@ -174,6 +175,20 @@ function requestOptions(options: RequestOptions): RequestOptions {
   if (options.timeout !== undefined) out.timeout = options.timeout;
   if (options.maxRetries !== undefined) out.maxRetries = options.maxRetries;
   if (options.headers) out.headers = options.headers;
+  return out;
+}
+
+/**
+ * Transport options for a guest command or code execution.
+ *
+ * When the caller sets a guest deadline but not an HTTP timeout, the request
+ * is kept open for that deadline plus a round-trip margin so the transport
+ * cannot kill a command the server is still running.
+ */
+function executionOptions(options: RequestOptions & { timeoutSeconds?: number }): RequestOptions {
+  const out = requestOptions(options);
+  const timeout = timeoutForGuestDeadline(options.timeoutSeconds, out.timeout);
+  if (timeout !== undefined) out.timeout = timeout;
   return out;
 }
 
@@ -536,7 +551,7 @@ export class Runtimes extends APIResource {
             path: `runtime/${runtimeId}/commands/run`,
             service: SERVICES.agents,
             body,
-            options: requestOptions(options),
+            options: executionOptions(options),
           }),
         ),
       );
@@ -547,7 +562,7 @@ export class Runtimes extends APIResource {
     let exitCode = 0;
     const startedAt = Date.now();
 
-    for await (const event of this.commandEvents(runtimeId, body, requestOptions(options))) {
+    for await (const event of this.commandEvents(runtimeId, body, executionOptions(options))) {
       if (event.type === 'stdout') {
         stdout.push(event.data);
         options.onStdout?.(event.data);
@@ -602,7 +617,7 @@ export class Runtimes extends APIResource {
     yield* this.commandEvents(
       runtimeId,
       this.commandBody(command, options),
-      requestOptions(options),
+      executionOptions(options),
     );
   }
 
@@ -698,7 +713,7 @@ export class Runtimes extends APIResource {
             path: `runtime/${runtimeId}/code/run`,
             service: SERVICES.agents,
             body,
-            options: requestOptions(options),
+            options: executionOptions(options),
           }),
         ),
       );
@@ -708,7 +723,7 @@ export class Runtimes extends APIResource {
     const results: ExecutionResult[] = [];
     let error: ExecutionError | undefined;
 
-    for await (const event of this.codeEvents(runtimeId, body, requestOptions(options))) {
+    for await (const event of this.codeEvents(runtimeId, body, executionOptions(options))) {
       if (event.type === 'stdout') {
         logs.stdout.push(event.text);
         options.onStdout?.(event.text);
@@ -748,7 +763,7 @@ export class Runtimes extends APIResource {
   ): AsyncGenerator<CodeStreamEvent, void, undefined> {
     assertRuntimeId(runtimeId);
 
-    yield* this.codeEvents(runtimeId, this.codeBody(code, options), requestOptions(options));
+    yield* this.codeEvents(runtimeId, this.codeBody(code, options), executionOptions(options));
   }
 
   /** Build the request body shared by buffered and streaming code runs. */

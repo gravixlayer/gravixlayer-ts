@@ -11,8 +11,7 @@ cd gravixlayer-ts
 npm install
 ```
 
-Node 18 or newer. There are no other prerequisites; the SDK itself has no
-runtime dependencies.
+Node 20 or newer.
 
 ## The loop
 

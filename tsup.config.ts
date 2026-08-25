@@ -9,10 +9,11 @@ export default defineConfig({
   treeshake: true,
   splitting: false,
   minify: false,
-  // The SDK targets any runtime with a global fetch: Node 18+, Deno, Bun,
+  // The SDK targets any runtime with a global fetch: Node 20+, Deno, Bun,
   // Cloudflare Workers, and Vercel Edge. No `node:*` module is imported
-  // statically, so nothing platform-specific reaches the bundle.
+  // statically. undici is loaded at runtime on Node only.
   platform: 'neutral',
+  external: ['undici'],
   target: 'es2022',
   outExtension({ format }) {
     return { js: format === 'cjs' ? '.cjs' : '.js' };

@@ -9,6 +9,7 @@
 
 import { isBrowser, readEnv, readEnvOr } from './core/env.js';
 import { GravixLayerInvalidArgumentError } from './core/errors.js';
+import { createPooledFetch } from './core/http.js';
 import { maybeEnableFromEnv } from './core/telemetry.js';
 import { Transport, type FetchLike, type RequestOptions } from './core/transport.js';
 import { buildListEndpoint, SERVICES } from './core/url.js';
@@ -79,7 +80,9 @@ export interface ClientOptions {
   /**
    * Replacement for the global `fetch`.
    *
-   * Useful for a custom agent, a proxy, or deterministic tests.
+   * Useful for a custom agent, a proxy, or deterministic tests. When omitted
+   * on Node, the SDK uses a pooled HTTP/2 session so successive calls reuse
+   * one TLS connection.
    */
   fetch?: FetchLike;
   /**
@@ -174,7 +177,20 @@ export class GravixLayer implements ClientContext {
       throw new GravixLayerInvalidArgumentError('`maxRetries` must be an integer of 0 or more.');
     }
 
-    const fetchImpl = options.fetch ?? resolveFetch();
+    let fetchImpl = options.fetch;
+    let preconnect: (() => Promise<void>) | undefined;
+    let closePool: (() => Promise<void>) | undefined;
+    if (!fetchImpl) {
+      if (typeof globalThis.fetch !== 'function') {
+        throw new GravixLayerInvalidArgumentError(
+          'This runtime has no global fetch. Use Node 20 or newer, or pass a `fetch` implementation.',
+        );
+      }
+      const pooled = createPooledFetch();
+      fetchImpl = pooled.fetch;
+      preconnect = () => pooled.preconnect();
+      closePool = () => pooled.close();
+    }
 
     // Tracing stays off unless the environment asks for it, so a plain client
     // never starts an exporter on its own.
@@ -192,6 +208,8 @@ export class GravixLayer implements ClientContext {
         ...lowercaseKeys(options.defaultHeaders ?? {}),
       },
       fetch: fetchImpl,
+      preconnect,
+      close: closePool,
     });
 
     this.runtime = new Runtimes(this);
@@ -205,21 +223,33 @@ export class GravixLayer implements ClientContext {
   /**
    * Open a connection to the API ahead of the first real request.
    *
-   * Sends one small authenticated request so that TCP, TLS, and protocol
-   * negotiation are already done when latency matters. Most useful right
-   * before issuing several requests at once, since otherwise each one races
-   * to establish its own connection.
+   * Loads native HTTP bindings, then sends one small authenticated request so
+   * that TCP, TLS, and protocol negotiation are already done when latency
+   * matters. Most useful right before issuing several requests at once, since
+   * otherwise each one races to establish its own connection.
    *
    * Throws the same errors any request would, which makes it a cheap way to
    * verify credentials at startup.
    */
   async warmup(options: RequestOptions = {}): Promise<void> {
+    await this.transport.preconnect();
     await this.transport.requestVoid({
       method: 'GET',
       path: buildListEndpoint('runtime', { limit: 1, offset: 0 }),
       service: SERVICES.agents,
       options,
     });
+  }
+
+  /**
+   * Drain pooled HTTP connections so the process can exit.
+   *
+   * Safe to call more than once. After this, further requests open a new pool
+   * only if the client is constructed again; this instance's pool is closed.
+   * No-op when a custom `fetch` was supplied.
+   */
+  async close(): Promise<void> {
+    await this.transport.close();
   }
 }
 
@@ -228,19 +258,4 @@ function lowercaseKeys(headers: Record<string, string>): Record<string, string> 
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) out[key.toLowerCase()] = value;
   return out;
-}
-
-/**
- * Find the runtime's `fetch`.
- *
- * Bound to `globalThis` because some implementations reject a detached
- * reference with an illegal-invocation error.
- */
-function resolveFetch(): FetchLike {
-  if (typeof globalThis.fetch !== 'function') {
-    throw new GravixLayerInvalidArgumentError(
-      'This runtime has no global fetch. Use Node 18 or newer, or pass a `fetch` implementation.',
-    );
-  }
-  return globalThis.fetch.bind(globalThis) as FetchLike;
 }

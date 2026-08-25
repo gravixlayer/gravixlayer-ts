@@ -297,6 +297,9 @@ describe('commands', () => {
     const result = await client.runtime.runCmd(RUNTIME_ID, 'build', { onStdout, onExit });
 
     expect(http.query().get('stream')).toBe('true');
+    expect(http.last().headers['accept']).toBe('text/event-stream');
+    expect(http.last().headers['accept-encoding']).toBe('identity');
+    expect(http.last().headers['cache-control']).toBe('no-cache');
     expect(onStdout).toHaveBeenCalledWith('one\n');
     expect(onExit).toHaveBeenCalledWith(0);
     expect(result.stdout).toBe('one\n');

@@ -4,7 +4,13 @@ import tsparser from '@typescript-eslint/parser';
 
 export default [
   {
-    ignores: ['dist/**', 'coverage/**', 'node_modules/**'],
+    ignores: [
+      'dist/**',
+      'coverage/**',
+      'node_modules/**',
+      'examples/runtimes/tti-isorun.mjs',
+      'ts.ts',
+    ],
   },
   js.configs.recommended,
   {
@@ -34,6 +40,8 @@ export default [
         URLSearchParams: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
         queueMicrotask: 'readonly',
         btoa: 'readonly',
         atob: 'readonly',
