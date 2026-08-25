@@ -578,10 +578,7 @@ export class TemplateBuilder {
     if (this._readyPort !== undefined) data['ready_port'] = this._readyPort;
     if (this._readyCmd) data['ready_cmd'] = this._readyCmd;
     if (this._readyCmd || this._readyPort !== undefined) {
-      data['ready_timeout_secs'] = Math.max(
-        DEFAULT_READY_TIMEOUT_SECS,
-        this._readyTimeoutSeconds,
-      );
+      data['ready_timeout_secs'] = Math.max(DEFAULT_READY_TIMEOUT_SECS, this._readyTimeoutSeconds);
     }
     if (Object.keys(this._environment).length > 0) data['environment'] = this._environment;
     if (this._buildSteps.length > 0) data['build_steps'] = this._buildSteps;
