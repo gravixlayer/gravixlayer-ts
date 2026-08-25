@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-08-25
+
+### Fixed
+
+- Node processes exit after the last request. Closing the client destroys
+  keep-alive sockets and HTTP/2 sessions immediately. Idle pooled sockets are
+  also unref'd so they cannot hold the event loop open.
+
+### Changed
+
+- Node HTTPS uses an HTTP/1.1 keep-alive pool by default. Pass `http2: true` on
+  the client to multiplex on one HTTP/2 session per origin.
+
 ## [0.1.12] - 2026-08-25
 
 ### Changed
@@ -141,7 +154,8 @@ First release. Full coverage of the GravixLayer API.
   `trace`, `traced`, and `runtimeSpan` helpers, active only when
   `@opentelemetry/api` is installed and telemetry is enabled.
 
-[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.12...HEAD
+[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.13...HEAD
+[0.1.13]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.13
 [0.1.12]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.12
 [0.1.11]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.11
 [0.1.10]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.10

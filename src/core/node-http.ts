@@ -1,13 +1,14 @@
 /**
  * Node HTTP client.
  *
- * HTTPS defaults to HTTP/2: one session per origin, IPv4 resolved once, TLS
- * pinned to that address with hostname SNI, concurrent calls as streams.
- * If ALPN is not `h2`, the origin is pinned to an HTTP/1.1 keep-alive pool
- * with enough sockets for parallel work — never a single HTTP/1.1 connection.
+ * HTTPS defaults to an HTTP/1.1 keep-alive pool (IPv4, hostname SNI, enough
+ * sockets for concurrent create+exec). Pass `http2: true` to multiplex on one
+ * HTTP/2 session per origin instead, with HTTP/1.1 fallback if ALPN is not
+ * `h2`.
  *
- * `close()` destroys the session immediately. Graceful GOAWAY is not waited
- * on; that is what kept Node processes alive after the last request.
+ * Keep-alive sockets and HTTP/2 sessions are unref'd when idle so they do not
+ * hold the process open. `close()` still destroys them immediately — graceful
+ * GOAWAY is not waited on.
  *
  * `node:*` modules are imported dynamically so Bun, Deno, and edge bundles
  * never evaluate them.
@@ -24,7 +25,7 @@ export type DnsLookup = (hostname: string, options: unknown, callback?: DnsLooku
 
 export interface NativeNodeFetchOptions {
   /**
-   * Negotiate HTTP/2 on HTTPS. Defaults to true. Set false to force HTTP/1.1.
+   * Negotiate HTTP/2 on HTTPS. Defaults to false (HTTP/1.1 keep-alive).
    */
   http2?: boolean;
   /**
@@ -46,7 +47,7 @@ export interface NativeNodeFetch {
 }
 
 /**
- * HTTP/1.1 sockets per origin when HTTP/2 is unavailable.
+ * HTTP/1.1 sockets per origin.
  *
  * Must stay well above 1. Concurrent create+exec needs one socket per
  * in-flight request. A single-connection pool serializes them.
@@ -88,6 +89,9 @@ const H2_FORBIDDEN = new Set([
 
 interface DestroyableAgent {
   destroy(): void;
+  on?(event: 'free', listener: (socket: NetSocket) => void): void;
+  sockets?: NodeJS.Dict<NetSocket[]>;
+  freeSockets?: NodeJS.Dict<NetSocket[]>;
 }
 
 interface HttpIncomingMessage {
@@ -102,6 +106,9 @@ interface HttpIncomingMessage {
 
 interface NetSocket {
   setNoDelay(noDelay?: boolean): void;
+  destroy(): void;
+  ref(): void;
+  unref(): void;
 }
 
 interface HttpClientRequest {
@@ -124,6 +131,8 @@ interface TlsSocket {
   setKeepAlive(enable: boolean, initialDelay?: number): TlsSocket;
   setNoDelay(noDelay?: boolean): TlsSocket;
   destroy(): void;
+  ref(): void;
+  unref(): void;
   once(event: 'error', listener: (error: Error) => void): TlsSocket;
   once(event: 'secureConnect', listener: () => void): TlsSocket;
 }
@@ -149,6 +158,8 @@ interface Http2Session {
   ping(callback: (error: Error | null) => void): boolean;
   close(): void;
   destroy(): void;
+  unref(): void;
+  setTimeout(ms: number, callback?: () => void): void;
   once(event: 'error', listener: (error: Error) => void): void;
   once(event: 'close', listener: () => void): void;
   once(event: 'connect', listener: () => void): void;
@@ -187,6 +198,7 @@ interface NodeH1Pool {
 
 interface H2Session {
   session: Http2Session;
+  socket: TlsSocket;
   ping: ReturnType<typeof setInterval> | undefined;
 }
 
@@ -223,7 +235,7 @@ async function loadMods(): Promise<NodeHttpMods | null> {
 }
 
 export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): NativeNodeFetch {
-  const http2Wanted = options.http2 !== false;
+  const http2Wanted = options.http2 === true;
   const rejectUnauthorized = options.rejectUnauthorized !== false;
   const lookup = options.lookup;
 
@@ -292,15 +304,22 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
       rejectUnauthorized,
       resolveIpv4,
       connectingSockets,
-    }).then((session) => {
+    }).then(({ session, socket }) => {
+      if (closed) {
+        dropH2(session, socket);
+        throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
+      }
       const ping = setInterval(() => {
         if (session.destroyed || session.closed) return;
         session.ping((error) => {
-          if (error) session.destroy();
+          if (error) dropH2(session, socket);
         });
       }, H2_PING_MS);
       ping.unref();
-      const handle: H2Session = { session, ping };
+      // Idle sessions must not keep a CLI alive after the last request.
+      silenceHandle(session);
+      silenceHandle(socket);
+      const handle: H2Session = { session, socket, ping };
       h2Live.set(origin, handle);
       session.once('close', () => {
         clearInterval(ping);
@@ -308,7 +327,7 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
         h2Live.delete(origin);
       });
       session.once('error', () => {
-        session.destroy();
+        dropH2(session, socket);
       });
       return handle;
     });
@@ -383,18 +402,26 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     },
     async close() {
       closed = true;
-      h2Sessions.clear();
       h2FailedOrigins.clear();
       ipv4Cache.clear();
       for (const socket of connectingSockets) {
-        socket.destroy();
+        dropSocket(socket);
       }
       connectingSockets.clear();
+      const pending = [...h2Sessions.values()];
+      h2Sessions.clear();
       const live = [...h2Live.values()];
       h2Live.clear();
       for (const handle of live) closeH2(handle);
+      for (const ready of pending) {
+        void ready.then(
+          (handle) => closeH2(handle),
+          () => undefined,
+        );
+      }
       const h1 = h1Pool;
       h1Pool = undefined;
+      h1Ready = undefined;
       h1?.close();
     },
   };
@@ -434,13 +461,57 @@ function closeH2(handle: H2Session): void {
     clearInterval(handle.ping);
     handle.ping = undefined;
   }
-  // destroy(), not close(): graceful GOAWAY against some origins never
-  // finishes, and the session handle keeps the process alive.
+  dropH2(handle.session, handle.socket);
+}
+
+/** Tear down an HTTP/2 session without waiting for GOAWAY. */
+function dropH2(session: Http2Session, socket: TlsSocket): void {
   try {
-    handle.session.destroy();
+    session.setTimeout(0);
   } catch {
     // Already gone.
   }
+  try {
+    session.destroy();
+  } catch {
+    // Already gone.
+  }
+  dropSocket(socket);
+  silenceHandle(session);
+}
+
+function dropSocket(socket: { destroy(): void; unref?: () => void }): void {
+  try {
+    socket.destroy();
+  } catch {
+    // Already gone.
+  }
+  silenceHandle(socket);
+}
+
+function silenceHandle(handle: { unref?: () => void }): void {
+  try {
+    handle.unref?.();
+  } catch {
+    // Already gone.
+  }
+}
+
+function destroyAgent(agent: DestroyableAgent): void {
+  for (const bucket of [agent.sockets, agent.freeSockets]) {
+    if (!bucket) continue;
+    for (const list of Object.values(bucket)) {
+      if (!list) continue;
+      for (const socket of [...list]) dropSocket(socket);
+    }
+  }
+  agent.destroy();
+}
+
+function releaseIdleSockets(agent: DestroyableAgent): void {
+  agent.on?.('free', (socket) => {
+    silenceHandle(socket);
+  });
 }
 
 async function connectH2(
@@ -451,7 +522,7 @@ async function connectH2(
     resolveIpv4: (hostname: string) => Promise<string>;
     connectingSockets: Set<TlsSocket>;
   },
-): Promise<Http2Session> {
+): Promise<{ session: Http2Session; socket: TlsSocket }> {
   const address = await opts.resolveIpv4(url.hostname);
   const port = Number(url.port) || 443;
 
@@ -461,13 +532,14 @@ async function connectH2(
       if (settled) return;
       settled = true;
       opts.connectingSockets.delete(socket);
+      dropSocket(socket);
       reject(error);
     };
     const ok = (session: Http2Session) => {
       if (settled) return;
       settled = true;
       opts.connectingSockets.delete(socket);
-      resolve(session);
+      resolve({ session, socket });
     };
 
     const servername = tlsServername(url.hostname);
@@ -509,6 +581,11 @@ async function connectH2(
       });
       session.once('connect', () => {
         clearTimeout(timer);
+        try {
+          session.setTimeout(0);
+        } catch {
+          // Optional on this Node version.
+        }
         ok(session);
       });
     });
@@ -613,7 +690,10 @@ function createNodeH1Pool(
     ...shared,
     rejectUnauthorized: opts.rejectUnauthorized,
     maxCachedSessions: 100,
+    ALPNProtocols: ['http/1.1'],
   });
+  releaseIdleSockets(httpAgent);
+  releaseIdleSockets(httpsAgent);
 
   const toWeb = node.toWeb;
 
@@ -646,6 +726,7 @@ function createNodeH1Pool(
         const servername = tlsServername(url.hostname);
         if (servername) reqOpts['servername'] = servername;
         reqOpts['rejectUnauthorized'] = opts.rejectUnauthorized;
+        reqOpts['ALPNProtocols'] = ['http/1.1'];
       }
       const req = lib.request(reqOpts, (res) => {
         const status = res.statusCode ?? 200;
@@ -676,6 +757,7 @@ function createNodeH1Pool(
       req.on('error', reject);
       req.on('socket', (socket) => {
         socket.setNoDelay(true);
+        socket.ref();
       });
       if (body === undefined) req.end();
       else req.end(body);
@@ -685,8 +767,8 @@ function createNodeH1Pool(
   return {
     fetch,
     close() {
-      (httpAgent as DestroyableAgent).destroy();
-      (httpsAgent as DestroyableAgent).destroy();
+      destroyAgent(httpAgent);
+      destroyAgent(httpsAgent);
     },
   };
 }

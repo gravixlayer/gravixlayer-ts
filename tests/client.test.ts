@@ -65,6 +65,11 @@ describe('construction', () => {
     );
   });
 
+  it('accepts http2 as an opt-in constructor flag', () => {
+    expect(() => new GravixLayer({ apiKey: 'k', http2: true })).not.toThrow();
+    expect(() => new GravixLayer({ apiKey: 'k', http2: false })).not.toThrow();
+  });
+
   it('exposes every resource namespace', () => {
     const client = new GravixLayer({ apiKey: 'k' });
     expect(client.runtime).toBeDefined();

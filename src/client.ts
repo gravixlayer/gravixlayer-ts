@@ -81,11 +81,18 @@ export interface ClientOptions {
    * Replacement for the global `fetch`.
    *
    * Useful for a custom agent, a proxy, or deterministic tests. When omitted
-   * on Node, the SDK reuses one HTTP/2 session per origin (HTTP/1.1 keep-alive
-   * if the origin does not speak HTTP/2). Closing the client destroys that
-   * session immediately so the process can exit.
+   * on Node, the SDK reuses an HTTP/1.1 keep-alive pool (or one HTTP/2 session
+   * per origin when {@link ClientOptions.http2} is true). Closing the client
+   * destroys those sockets immediately so the process can exit.
    */
   fetch?: FetchLike;
+  /**
+   * Use HTTP/2 multiplexing on Node.
+   *
+   * Defaults to `false` (HTTP/1.1 keep-alive). Pass `true` to open one HTTP/2
+   * session per origin. Ignored when a custom `fetch` is supplied.
+   */
+  http2?: boolean;
   /**
    * Permit construction in a browser.
    *
@@ -187,7 +194,7 @@ export class GravixLayer implements ClientContext {
           'This runtime has no global fetch. Use Node 20 or newer, or pass a `fetch` implementation.',
         );
       }
-      const pooled = createPooledFetch({ http2: true });
+      const pooled = createPooledFetch({ http2: options.http2 === true });
       fetchImpl = pooled.fetch;
       preconnect = () => pooled.preconnect();
       closePool = () => pooled.close();
@@ -225,9 +232,8 @@ export class GravixLayer implements ClientContext {
    * Open a connection to the API ahead of the first real request.
    *
    * Loads native HTTP bindings, then sends one small authenticated request so
-   * that TCP, TLS, and the HTTP/2 session are already ready when latency
-   * matters. Most useful right before issuing several requests at once, so the
-   * first batch multiplexes instead of sharing one handshake.
+   * that TCP, TLS, and the pooled connection are already ready when latency
+   * matters. Most useful right before issuing several requests at once.
    *
    * Throws the same errors any request would, which makes it a cheap way to
    * verify credentials at startup.
@@ -245,11 +251,12 @@ export class GravixLayer implements ClientContext {
   /**
    * Drain pooled HTTP connections so the process can exit.
    *
-   * HTTP/2 sessions are destroyed immediately rather than waiting for a
-   * graceful GOAWAY, which would otherwise keep Node running after the last
-   * request. Safe to call more than once. After this, further requests open a
-   * new pool only if the client is constructed again; this instance's pool is
-   * closed. No-op when a custom `fetch` was supplied.
+   * Keep-alive sockets and HTTP/2 sessions are destroyed immediately rather
+   * than waiting for a graceful shutdown, which would otherwise keep Node
+   * running after the last request. Idle pooled sockets are also unref'd, so a
+   * short-lived process can exit even if `close()` is skipped. Safe to call
+   * more than once. After this, further requests on this instance fail. No-op
+   * when a custom `fetch` was supplied.
    */
   async close(): Promise<void> {
     await this.transport.close();
