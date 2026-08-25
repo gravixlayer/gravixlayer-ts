@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { createPooledFetch, hostRuntime } from '../src/core/http.js';
+import { wrapIpv4Lookup } from '../src/core/node-http.js';
 import { GravixLayer } from '../src/index.js';
 import { jsonResponse } from './helpers.js';
 
@@ -60,6 +61,62 @@ describe('pooled fetch', () => {
     await client.runtime.list();
     expect(sawDispatcher).toBe(false);
     await client.close();
+  });
+
+  it('forces DNS lookup onto IPv4 A records', () => {
+    const calls: Array<{ hostname: string; options: Record<string, unknown> }> = [];
+    const wrapped = wrapIpv4Lookup((hostname, options, callback) => {
+      const opts =
+        typeof options === 'function' ? {} : ((options as Record<string, unknown>) ?? {});
+      calls.push({ hostname, options: opts });
+      if (typeof options === 'function') options(null, '1.2.3.4', 4);
+      else callback?.(null, '1.2.3.4', 4);
+    });
+    expect(wrapped).toBeDefined();
+    wrapped!('api.gravixlayer.ai', { all: true, family: 0 }, () => undefined);
+    expect(calls).toEqual([
+      {
+        hostname: 'api.gravixlayer.ai',
+        options: expect.objectContaining({ family: 4, all: false }),
+      },
+    ]);
+  });
+
+  it('uses the IPv4 lookup when opening a pooled socket', async () => {
+    const server = createHttpServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const seen: Array<{ hostname: string; family?: unknown; all?: unknown }> = [];
+    const { lookup } = await import('node:dns');
+    const pooled = createPooledFetch({
+      http2: false,
+      lookup: (hostname, options, callback) => {
+        const opts =
+          typeof options === 'function' ? {} : ((options as Record<string, unknown>) ?? {});
+        seen.push({ hostname, family: opts.family, all: opts.all });
+        const cb = (typeof options === 'function' ? options : callback) as (
+          err: NodeJS.ErrnoException | null,
+          address: string,
+          family: number,
+        ) => void;
+        lookup(hostname, { family: 4, all: false }, cb);
+      },
+    });
+
+    try {
+      const response = await pooled.fetch(`http://localhost:${port}/`, {});
+      expect(response.status).toBe(200);
+      await response.body?.cancel().catch(() => undefined);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((entry) => entry.family === 4)).toBe(true);
+      expect(seen.every((entry) => entry.all === false)).toBe(true);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+    }
   });
 
   it('opens parallel HTTP/1.1 sockets for concurrent requests', async () => {

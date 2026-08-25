@@ -34,7 +34,7 @@ Cloud and region default to `aws` / `us-east-1`. Override with
 
 Node 20 or newer. The SDK is built on `fetch` and web streams, so it also runs
 on Deno, Bun, and edge runtimes. On Node, HTTP uses undici with an HTTP/1.1
-keep-alive pool (same default as the Python SDK).
+keep-alive pool and IPv4-first DNS (same default shape as the Python SDK).
 
 Browsers are refused by default — a browser build would hand your API key to
 every visitor. Call the API from your own server.

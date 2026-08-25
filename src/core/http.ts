@@ -6,12 +6,13 @@
  * behind a handful of sockets.
  *
  * On Node the SDK uses undici with an HTTP/1.1 keep-alive pool (same default
- * as the Python client). HTTP/2 is opt-in. HTTP/3 stays on the CloudFront
- * viewer path. Bun, Deno, and edge runtimes keep their native `fetch`. A
- * caller-supplied `fetch` always wins.
+ * as the Python client) and IPv4-only DNS so CloudFront AAAA records cannot
+ * insert Node's 250ms Happy Eyeballs delay. HTTP/2 is opt-in. HTTP/3 stays
+ * on the CloudFront viewer path. Bun, Deno, and edge runtimes keep their
+ * native `fetch`. A caller-supplied `fetch` always wins.
  */
 
-import { createNativeNodeFetch } from './node-http.js';
+import { createNativeNodeFetch, type DnsLookup } from './node-http.js';
 
 /** A `fetch`-compatible function. */
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -37,6 +38,11 @@ export interface PooledFetchOptions {
    * Not part of the public client.
    */
   rejectUnauthorized?: boolean;
+  /**
+   * Override DNS lookup. Tests inject this to assert IPv4-only resolution.
+   * Not part of the public client.
+   */
+  lookup?: DnsLookup;
 }
 
 interface NodeProcess {
@@ -71,6 +77,7 @@ export function createPooledFetch(options: PooledFetchOptions = {}): PooledFetch
   const native = createNativeNodeFetch({
     http2: options.http2,
     rejectUnauthorized: options.rejectUnauthorized,
+    lookup: options.lookup,
   });
 
   // Load undici in the background so the first real request does not.

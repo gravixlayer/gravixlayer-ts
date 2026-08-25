@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-08-25
+
+### Fixed
+
+- Concurrent Node creates no longer sit at ~250ms while Python, on the same
+  CloudFront → ALB path, returns in ~70ms. The API itself spends ~30ms for
+  both clients. The extra time was Node Happy Eyeballs: CloudFront publishes
+  AAAA, a broken IPv6 hop waits `autoSelectFamilyAttemptTimeout` (250ms),
+  then IPv4 succeeds. `family: 4` on the undici connect object was not
+  enough. The pool now resolves A records only (custom lookup, `ipv4first`,
+  `autoSelectFamily: false`) so create matches Python.
+
 ## [0.1.7] - 2026-08-25
 
 ### Changed
@@ -107,7 +119,8 @@ First release. Full coverage of the GravixLayer API.
   `trace`, `traced`, and `runtimeSpan` helpers, active only when
   `@opentelemetry/api` is installed and telemetry is enabled.
 
-[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.8
 [0.1.7]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.7
 [0.1.6]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.6
 [0.1.5]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.5

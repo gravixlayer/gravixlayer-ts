@@ -4,7 +4,8 @@
  * Default is HTTP/1.1 keep-alive with a multi-socket pool — the same shape as
  * the Python SDK (httpx, http2=False, max_connections=20). Create-then-exec is
  * two sequential calls; concurrent sandboxes need parallel sockets, not one
- * multiplexed session.
+ * multiplexed session. DNS is IPv4-only so CloudFront AAAA records cannot
+ * trigger Node's 250ms Happy Eyeballs delay (Python getaddrinfo does not).
  *
  * HTTP/2 is opt-in. A single H2 session is only a win when ALPN actually
  * selects `h2`. If the origin speaks HTTP/1.1, `connections: 1` serializes
@@ -18,6 +19,11 @@ import { GravixLayerInvalidArgumentError } from './errors.js';
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
+/** Callback-style lookup matching `node:dns.lookup` / `net.connect`. */
+export type DnsLookupCallback = (err: Error | null, address: unknown, family?: number) => void;
+
+export type DnsLookup = (hostname: string, options: unknown, callback?: DnsLookupCallback) => void;
+
 export interface NativeNodeFetchOptions {
   /**
    * Negotiate HTTP/2 on HTTPS. Defaults to false (HTTP/1.1 pool), matching
@@ -29,6 +35,11 @@ export interface NativeNodeFetchOptions {
    * Not part of the public client.
    */
   rejectUnauthorized?: boolean;
+  /**
+   * Override DNS lookup. Tests inject this to assert IPv4-only resolution.
+   * Not part of the public client.
+   */
+  lookup?: DnsLookup;
 }
 
 export interface NativeNodeFetch {
@@ -85,12 +96,15 @@ interface UndiciDispatcher {
   destroy?: () => void;
 }
 
+type UndiciConnector = (options: unknown, callback: unknown) => unknown;
+
 interface UndiciModule {
   Agent: new (options: Record<string, unknown>) => UndiciDispatcher;
   fetch: (
     input: string,
     init?: RequestInit & { dispatcher?: UndiciDispatcher },
   ) => Promise<Response>;
+  buildConnector?: (options: Record<string, unknown>) => UndiciConnector;
 }
 
 let undici: UndiciModule | undefined;
@@ -105,12 +119,22 @@ async function loadUndici(): Promise<UndiciModule | null> {
       )) as unknown as {
         Agent?: UndiciModule['Agent'];
         fetch?: UndiciModule['fetch'];
-        default?: { Agent?: UndiciModule['Agent']; fetch?: UndiciModule['fetch'] };
+        buildConnector?: UndiciModule['buildConnector'];
+        default?: {
+          Agent?: UndiciModule['Agent'];
+          fetch?: UndiciModule['fetch'];
+          buildConnector?: UndiciModule['buildConnector'];
+        };
       };
       const Agent = mod.Agent ?? mod.default?.Agent;
       const fetchImpl = mod.fetch ?? mod.default?.fetch;
+      const buildConnector = mod.buildConnector ?? mod.default?.buildConnector;
       if (typeof Agent !== 'function' || typeof fetchImpl !== 'function') return null;
-      undici = { Agent, fetch: fetchImpl };
+      undici = {
+        Agent,
+        fetch: fetchImpl,
+        ...(typeof buildConnector === 'function' ? { buildConnector } : {}),
+      };
       return undici;
     } catch {
       return null;
@@ -129,21 +153,26 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
   const h2FailedOrigins = new Set<string>();
   const h2ConfirmedOrigins = new Set<string>();
   let ready: Promise<UndiciModule | null> | undefined;
+  let ipv4Lookup: DnsLookup | undefined;
 
-  const ensureH1 = (loaded: UndiciModule): UndiciDispatcher | undefined => {
-    h1Agent ??= createAgent(loaded.Agent, { http2: false, rejectUnauthorized });
+  const ensureH1 = (
+    loaded: UndiciModule,
+    lookup: DnsLookup | undefined,
+  ): UndiciDispatcher | undefined => {
+    h1Agent ??= createAgent(loaded, { http2: false, rejectUnauthorized, lookup });
     return h1Agent;
   };
 
   const ensure = (): Promise<UndiciModule | null> => {
     ready ??= (async () => {
       if (closed) return null;
-      const loaded = await loadUndici();
+      const [loaded] = await Promise.all([loadUndici(), applyIpv4Prefs()]);
       if (!loaded || closed) return null;
+      ipv4Lookup = wrapIpv4Lookup(options.lookup ?? (await defaultDnsLookup()));
       if (http2Wanted && !h2Agent) {
-        h2Agent = createAgent(loaded.Agent, { http2: true, rejectUnauthorized });
+        h2Agent = createAgent(loaded, { http2: true, rejectUnauthorized, lookup: ipv4Lookup });
       }
-      if (!http2Wanted) ensureH1(loaded);
+      if (!http2Wanted) ensureH1(loaded, ipv4Lookup);
       return loaded;
     })();
     return ready;
@@ -163,7 +192,7 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     const origin = originOf(input);
     const preferH2 =
       http2Wanted && !h2FailedOrigins.has(origin) && isHttpsOrigin(origin) && !!h2Agent;
-    const primary = preferH2 ? h2Agent : ensureH1(loaded);
+    const primary = preferH2 ? h2Agent : ensureH1(loaded, ipv4Lookup);
     if (!primary) {
       throw new GravixLayerInvalidArgumentError(
         'The GravixLayer client could not create an HTTP dispatcher.',
@@ -183,7 +212,7 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
         isReplayableBody(init.body)
       ) {
         h2FailedOrigins.add(origin);
-        const fallback = ensureH1(loaded);
+        const fallback = ensureH1(loaded, ipv4Lookup);
         if (!fallback) throw error;
         return loaded.fetch(input, { ...init, dispatcher: fallback });
       }
@@ -215,23 +244,76 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
   };
 }
 
+let ipv4Prefs: Promise<void> | undefined;
+let cachedDnsLookup: DnsLookup | undefined;
+
+/**
+ * Match Python/glibc getaddrinfo order. Node's default `verbatim` lookup
+ * returns CloudFront AAAA first; Happy Eyeballs then waits 250ms on a
+ * blackholed IPv6 path before trying IPv4. Same CloudFront + ALB, Python
+ * never pays that delay.
+ *
+ * Process-wide, once. `dns.lookup` is what `net`/`tls.connect` use.
+ */
+function applyIpv4Prefs(): Promise<void> {
+  ipv4Prefs ??= (async () => {
+    try {
+      const dns = await import('node:dns');
+      dns.setDefaultResultOrder('ipv4first');
+    } catch {
+      // Non-Node or restricted runtime. The Agent still forces IPv4 below.
+    }
+  })();
+  return ipv4Prefs;
+}
+
+async function defaultDnsLookup(): Promise<DnsLookup | undefined> {
+  if (cachedDnsLookup) return cachedDnsLookup;
+  try {
+    const dns = await import('node:dns');
+    cachedDnsLookup = dns.lookup as unknown as DnsLookup;
+    return cachedDnsLookup;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Force A-record resolution. `family: 4` on `tls.connect` is not enough:
+ * Node 20+ Happy Eyeballs still asks `lookup` for every address when
+ * `autoSelectFamily` is left at its default.
+ */
+export function wrapIpv4Lookup(lookup: DnsLookup | undefined): DnsLookup | undefined {
+  if (!lookup) return undefined;
+  return (hostname, options, callback) => {
+    if (typeof options === 'function') {
+      lookup(hostname, { family: 4, all: false }, options as DnsLookupCallback);
+      return;
+    }
+    const opts =
+      options && typeof options === 'object' ? { ...(options as Record<string, unknown>) } : {};
+    opts.family = 4;
+    opts.all = false;
+    lookup(hostname, opts, callback);
+  };
+}
+
 function createAgent(
-  Agent: UndiciModule['Agent'],
-  opts: { http2: boolean; rejectUnauthorized: boolean },
+  loaded: UndiciModule,
+  opts: { http2: boolean; rejectUnauthorized: boolean; lookup?: DnsLookup },
 ): UndiciDispatcher | undefined {
-  /**
-   * IPv4 first. `autoSelectFamily: true` waits 250ms for a broken IPv6 AAAA
-   * (CloudFront publishes both). That is the ~270ms first-create vs Python's
-   * ~50ms. httpx uses getaddrinfo order and does not insert that delay.
-   */
-  const connect = {
+  const connectObject: Record<string, unknown> = {
     timeout: CONNECT_TIMEOUT_MS,
     family: 4,
     autoSelectFamily: false,
     rejectUnauthorized: opts.rejectUnauthorized,
     keepAlive: true,
     keepAliveInitialDelay: TCP_KEEPALIVE_DELAY_MS,
+    allowH2: opts.http2,
   };
+  if (opts.lookup) connectObject.lookup = opts.lookup;
+
+  const connect = buildIpv4Connector(loaded, connectObject) ?? connectObject;
 
   const shared = {
     pipelining: 1,
@@ -241,59 +323,82 @@ function createAgent(
     // is the real deadline. A 300s undici body timeout would kill them.
     bodyTimeout: 0,
     headersTimeout: 300_000,
+    autoSelectFamily: false,
     connect,
   };
 
-  const h2 = {
-    ...shared,
-    connections: H2_SESSIONS,
-    allowH2: true,
-    maxConcurrentStreams: 128,
-    pingInterval: H2_PING_MS,
-    initialWindowSize: 262_144,
-    connectionWindowSize: 524_288,
-  };
-  const h1 = {
-    ...shared,
-    connections: H1_CONNECTIONS,
-    allowH2: false,
-  };
+  const full: Record<string, unknown> = opts.http2
+    ? {
+        ...shared,
+        connections: H2_SESSIONS,
+        allowH2: true,
+        maxConcurrentStreams: 128,
+        pingInterval: H2_PING_MS,
+        initialWindowSize: 262_144,
+        connectionWindowSize: 524_288,
+      }
+    : {
+        ...shared,
+        connections: H1_CONNECTIONS,
+        allowH2: false,
+      };
 
-  const variants: Record<string, unknown>[] = opts.http2
-    ? [
-        h2,
-        {
-          ...h2,
-          connect: {
-            timeout: CONNECT_TIMEOUT_MS,
-            family: 4,
-            rejectUnauthorized: opts.rejectUnauthorized,
-            keepAlive: true,
-          },
-        },
-        { allowH2: true, connections: H2_SESSIONS, keepAliveTimeout: KEEP_ALIVE_MS },
-      ]
-    : [
-        h1,
-        {
-          ...h1,
-          connect: {
-            timeout: CONNECT_TIMEOUT_MS,
-            rejectUnauthorized: opts.rejectUnauthorized,
-            keepAlive: true,
-          },
-        },
-        { allowH2: false, connections: H1_CONNECTIONS, keepAliveTimeout: KEEP_ALIVE_MS },
-      ];
+  // Fallbacks drop only keys older undici rejects. IPv4 lookup/family stay.
+  const variants: Record<string, unknown>[] = [
+    full,
+    {
+      pipelining: 1,
+      keepAliveTimeout: KEEP_ALIVE_MS,
+      autoSelectFamily: false,
+      connections: opts.http2 ? H2_SESSIONS : H1_CONNECTIONS,
+      allowH2: opts.http2,
+      connect: connectObject,
+    },
+    {
+      connections: opts.http2 ? H2_SESSIONS : H1_CONNECTIONS,
+      allowH2: opts.http2,
+      autoSelectFamily: false,
+      connect: {
+        family: 4,
+        autoSelectFamily: false,
+        rejectUnauthorized: opts.rejectUnauthorized,
+        allowH2: opts.http2,
+        ...(opts.lookup ? { lookup: opts.lookup } : {}),
+      },
+    },
+  ];
 
   for (const options of variants) {
     try {
-      return new Agent(options);
+      return new loaded.Agent(options);
     } catch {
       // Older undici rejects unknown keys.
     }
   }
   return undefined;
+}
+
+function buildIpv4Connector(
+  loaded: UndiciModule,
+  connectObject: Record<string, unknown>,
+): UndiciConnector | undefined {
+  if (typeof loaded.buildConnector !== 'function') return undefined;
+  try {
+    return loaded.buildConnector(connectObject);
+  } catch {
+    try {
+      return loaded.buildConnector({
+        timeout: CONNECT_TIMEOUT_MS,
+        family: 4,
+        autoSelectFamily: false,
+        rejectUnauthorized: connectObject.rejectUnauthorized,
+        allowH2: connectObject.allowH2,
+        ...(connectObject.lookup ? { lookup: connectObject.lookup } : {}),
+      });
+    } catch {
+      return undefined;
+    }
+  }
 }
 
 function originOf(input: string): string {
