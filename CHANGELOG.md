@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-08-25
+
+### Changed
+
+- Node HTTP defaults to an HTTP/1.1 keep-alive pool (16 sockets, IPv4),
+  matching the Python SDK. 0.1.6 pinned one HTTP/2 session; when the origin spoke HTTP/1.1, concurrent create+exec serialized and first-request TTI jumped ~220ms.HTTP/2 remains available via the internal pooled-fetch `http2: true` flag.
+
 ## [0.1.6] - 2026-08-25
 
 ### Changed
@@ -101,7 +108,8 @@ First release. Full coverage of the GravixLayer API.
   `trace`, `traced`, and `runtimeSpan` helpers, active only when
   `@opentelemetry/api` is installed and telemetry is enabled.
 
-[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.7
 [0.1.6]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.6
 [0.1.5]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.5
 [0.1.4]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.4

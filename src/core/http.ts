@@ -5,10 +5,10 @@
  * then exec can each open a new TCP+TLS session, and concurrent work queues
  * behind a handful of sockets.
  *
- * On Node the SDK uses undici: HTTP/2 first (few multiplexed sessions), then
- * HTTP/1.1 keep-alive if ALPN does not negotiate `h2`. HTTP/3 stays on the
- * CloudFront viewer path. Bun, Deno, and edge runtimes keep their native
- * `fetch`. A caller-supplied `fetch` always wins.
+ * On Node the SDK uses undici with an HTTP/1.1 keep-alive pool (same default
+ * as the Python client). HTTP/2 is opt-in. HTTP/3 stays on the CloudFront
+ * viewer path. Bun, Deno, and edge runtimes keep their native `fetch`. A
+ * caller-supplied `fetch` always wins.
  */
 
 import { createNativeNodeFetch } from './node-http.js';
@@ -30,7 +30,7 @@ export interface PooledFetch {
 
 /** Options for {@link createPooledFetch}. */
 export interface PooledFetchOptions {
-  /** Enable HTTP/2 on Node HTTPS origins. Defaults to true. */
+  /** Enable HTTP/2 on Node HTTPS origins. Defaults to false (HTTP/1.1 pool). */
   http2?: boolean;
   /**
    * TLS verification. Tests against a self-signed server set this false.
@@ -57,7 +57,7 @@ export function hostRuntime(): HostRuntime {
 }
 
 /**
- * Bind a fetch that, on Node, rides a pooled HTTP/2 session.
+ * Bind a fetch that, on Node, rides a pooled HTTP/1.1 keep-alive agent.
  *
  * Everywhere else this is `globalThis.fetch`. Construction does not touch
  * the network; sockets open on the first request (or {@link PooledFetch.preconnect}).

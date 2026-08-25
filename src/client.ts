@@ -81,8 +81,8 @@ export interface ClientOptions {
    * Replacement for the global `fetch`.
    *
    * Useful for a custom agent, a proxy, or deterministic tests. When omitted
-   * on Node, the SDK uses a pooled HTTP/2 session so successive calls reuse
-   * one TLS connection.
+   * on Node, the SDK uses a pooled HTTP/1.1 keep-alive agent so successive
+   * calls reuse sockets (same default as the Python client).
    */
   fetch?: FetchLike;
   /**

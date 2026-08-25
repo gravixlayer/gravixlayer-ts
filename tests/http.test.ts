@@ -62,6 +62,45 @@ describe('pooled fetch', () => {
     await client.close();
   });
 
+  it('opens parallel HTTP/1.1 sockets for concurrent requests', async () => {
+    let connections = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const server = createHttpServer((req, res) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      setTimeout(() => {
+        inFlight -= 1;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ path: req.url }));
+      }, 40);
+    });
+    server.on('connection', () => {
+      connections += 1;
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const pooled = createPooledFetch({ http2: false });
+
+    try {
+      const responses = await Promise.all([
+        pooled.fetch(`http://127.0.0.1:${port}/a`, {}),
+        pooled.fetch(`http://127.0.0.1:${port}/b`, {}),
+        pooled.fetch(`http://127.0.0.1:${port}/c`, {}),
+        pooled.fetch(`http://127.0.0.1:${port}/d`, {}),
+      ]);
+      for (const response of responses) {
+        expect(response.status).toBe(200);
+        await response.body?.cancel().catch(() => undefined);
+      }
+      expect(connections).toBeGreaterThanOrEqual(4);
+      expect(maxInFlight).toBeGreaterThanOrEqual(4);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+    }
+  });
+
   it('reuses a keep-alive HTTP/1.1 socket', async () => {
     let connections = 0;
     const server = createHttpServer((req, res) => {
@@ -102,7 +141,7 @@ describe('pooled fetch', () => {
     });
     await listen(server);
     const port = (server.address() as AddressInfo).port;
-    const pooled = createPooledFetch({ rejectUnauthorized: false });
+    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
 
     try {
       const [a, b] = await Promise.all([
@@ -127,7 +166,7 @@ describe('pooled fetch', () => {
     });
     await listen(server);
     const port = (server.address() as AddressInfo).port;
-    const pooled = createPooledFetch({ rejectUnauthorized: false });
+    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
 
     try {
       const res = await pooled.fetch(`https://127.0.0.1:${port}/fallback`, {});
@@ -161,7 +200,7 @@ describe('pooled fetch', () => {
     await listen(h2);
     const h1Port = (h1.address() as AddressInfo).port;
     const h2Port = (h2.address() as AddressInfo).port;
-    const pooled = createPooledFetch({ rejectUnauthorized: false });
+    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
 
     try {
       expect(await (await pooled.fetch(`https://127.0.0.1:${h1Port}/a`, {})).json()).toEqual({

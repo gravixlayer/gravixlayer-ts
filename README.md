@@ -33,8 +33,8 @@ Cloud and region default to `aws` / `us-east-1`. Override with
 ## Requirements
 
 Node 20 or newer. The SDK is built on `fetch` and web streams, so it also runs
-on Deno, Bun, and edge runtimes. On Node, HTTP uses undici (HTTP/2 first,
-HTTP/1.1 if `h2` is not negotiated).
+on Deno, Bun, and edge runtimes. On Node, HTTP uses undici with an HTTP/1.1
+keep-alive pool (same default as the Python SDK).
 
 Browsers are refused by default — a browser build would hand your API key to
 every visitor. Call the API from your own server.
@@ -60,10 +60,10 @@ const client = new GravixLayer({
 | `fetch` | Node pooled `fetch`, else global `fetch` | For a proxy, a custom agent, or tests. |
 
 Construct the client once and reuse it. On Node, one client keeps a pooled
-HTTP/2 session to the API (CloudFront or ALB). Call `await client.warmup()`
-at startup if you want TCP and TLS paid before the first request that
-matters. Call `await client.close()` when a short-lived process is done so
-keep-alive sockets can drain.
+HTTP/1.1 keep-alive agent to the API. Call `await client.warmup()` at
+startup if you want TCP and TLS paid before the first request that matters.
+Call `await client.close()` when a short-lived process is done so keep-alive
+sockets can drain.
 
 ## Runtimes
 

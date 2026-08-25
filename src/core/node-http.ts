@@ -1,11 +1,14 @@
 /**
- * Node HTTP client: HTTP/2 first, HTTP/1.1 if HTTP/2 is not negotiated.
+ * Node HTTP client.
  *
- * Built on undici (Node 20+). HTTPS origins (CloudFront, ALB) multiplex many
- * streams on one TLS session. A failed HTTP/2 handshake on an origin sticks
- * that origin to HTTP/1.1 keep-alive for the rest of the client life.
- * Confirmed HTTP/2 sessions are not abandoned on a later blip — the transport
- * retry loop handles those.
+ * Default is HTTP/1.1 keep-alive with a multi-socket pool — the same shape as
+ * the Python SDK (httpx, http2=False, max_connections=20). Create-then-exec is
+ * two sequential calls; concurrent sandboxes need parallel sockets, not one
+ * multiplexed session.
+ *
+ * HTTP/2 is opt-in. A single H2 session is only a win when ALPN actually
+ * selects `h2`. If the origin speaks HTTP/1.1, `connections: 1` serializes
+ * every in-flight request (the 0.1.6 TTI regression vs Python).
  *
  * Loaded only on Node. `undici` is imported dynamically so Bun, Deno, and
  * edge bundles never evaluate it.
@@ -16,7 +19,10 @@ import { GravixLayerInvalidArgumentError } from './errors.js';
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export interface NativeNodeFetchOptions {
-  /** Negotiate HTTP/2 on HTTPS. Defaults to true. */
+  /**
+   * Negotiate HTTP/2 on HTTPS. Defaults to false (HTTP/1.1 pool), matching
+   * the Python client.
+   */
   http2?: boolean;
   /**
    * TLS verification. Tests against a self-signed server set this false.
@@ -32,17 +38,19 @@ export interface NativeNodeFetch {
 }
 
 /**
- * HTTP/2 sessions per origin.
+ * HTTP/2 sessions per origin when HTTP/2 is requested and negotiated.
  *
- * Must stay at 1. A larger `connections` count opens that many TLS sessions
- * and skips multiplexing — concurrent create+exec would each pay a handshake.
- * HTTP/2 carries many streams on this one session (ALB allows 128).
- * Isorun's HTTP/2 fallback uses `connections: 32`; that is the wrong default
- * once `h2` is the primary protocol.
+ * Must stay at 1. A larger count opens that many TLS sessions and skips
+ * multiplexing. Only used when `http2: true`.
  */
 const H2_SESSIONS = 1;
 
-/** HTTP/1.1 sockets per origin after HTTP/2 is abandoned. */
+/**
+ * HTTP/1.1 sockets per origin.
+ *
+ * Matches the Python pool (20 max / 10 keep-alive). Concurrent create+exec
+ * across sandboxes needs one socket per in-flight request.
+ */
 const H1_CONNECTIONS = 16;
 
 /**
@@ -56,11 +64,10 @@ const KEEP_ALIVE_MS = 50_000;
 const KEEP_ALIVE_MAX_MS = 600_000;
 
 /**
- * HTTP/2 PING interval.
+ * HTTP/2 PING interval (only when HTTP/2 is on).
  *
  * ALB and CloudFront drop idle origin connections around 60s. A PING at 25s
- * keeps the multiplexed session up so the next create/exec does not handshake.
- * Matches the idea behind Isorun's 10s HTTP/3 PING, at an HTTP/2-safe cadence.
+ * keeps the session up so the next create/exec does not handshake.
  */
 const H2_PING_MS = 25_000;
 
@@ -113,7 +120,7 @@ async function loadUndici(): Promise<UndiciModule | null> {
 }
 
 export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): NativeNodeFetch {
-  const http2Wanted = options.http2 !== false;
+  const http2Wanted = options.http2 === true;
   const rejectUnauthorized = options.rejectUnauthorized !== false;
 
   let closed = false;
@@ -212,13 +219,18 @@ function createAgent(
   Agent: UndiciModule['Agent'],
   opts: { http2: boolean; rejectUnauthorized: boolean },
 ): UndiciDispatcher | undefined {
+  /**
+   * IPv4 first. `autoSelectFamily: true` waits 250ms for a broken IPv6 AAAA
+   * (CloudFront publishes both). That is the ~270ms first-create vs Python's
+   * ~50ms. httpx uses getaddrinfo order and does not insert that delay.
+   */
   const connect = {
     timeout: CONNECT_TIMEOUT_MS,
-    autoSelectFamily: true,
+    family: 4,
+    autoSelectFamily: false,
     rejectUnauthorized: opts.rejectUnauthorized,
     keepAlive: true,
     keepAliveInitialDelay: TCP_KEEPALIVE_DELAY_MS,
-    ...(opts.http2 ? { ALPNProtocols: ['h2', 'http/1.1'] } : {}),
   };
 
   const shared = {
@@ -238,8 +250,6 @@ function createAgent(
     allowH2: true,
     maxConcurrentStreams: 128,
     pingInterval: H2_PING_MS,
-    // undici defaults (256 KiB / 512 KiB) already beat Node core; keep them
-    // explicit so an older Agent cannot silently drop to 64 KiB.
     initialWindowSize: 262_144,
     connectionWindowSize: 524_288,
   };
@@ -256,13 +266,25 @@ function createAgent(
           ...h2,
           connect: {
             timeout: CONNECT_TIMEOUT_MS,
+            family: 4,
             rejectUnauthorized: opts.rejectUnauthorized,
             keepAlive: true,
           },
         },
         { allowH2: true, connections: H2_SESSIONS, keepAliveTimeout: KEEP_ALIVE_MS },
       ]
-    : [h1, { allowH2: false, connections: H1_CONNECTIONS, keepAliveTimeout: KEEP_ALIVE_MS }];
+    : [
+        h1,
+        {
+          ...h1,
+          connect: {
+            timeout: CONNECT_TIMEOUT_MS,
+            rejectUnauthorized: opts.rejectUnauthorized,
+            keepAlive: true,
+          },
+        },
+        { allowH2: false, connections: H1_CONNECTIONS, keepAliveTimeout: KEEP_ALIVE_MS },
+      ];
 
   for (const options of variants) {
     try {
