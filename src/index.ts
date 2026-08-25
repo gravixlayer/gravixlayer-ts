@@ -172,7 +172,9 @@ export {
 
 export {
   BuildStepType,
+  DEFAULT_READY_TIMEOUT_SECS,
   TemplateBuilder,
+  TcpPortCheck,
   TemplateBuildPhase,
   TemplateBuildState,
   isSuccessfulBuildState,

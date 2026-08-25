@@ -34,7 +34,7 @@ import { APIResource } from './resource.js';
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
 /** How long {@link Templates.buildAndWait} waits before giving up, in milliseconds. */
-const DEFAULT_BUILD_TIMEOUT_MS = 600_000;
+const DEFAULT_BUILD_TIMEOUT_MS = 900_000;
 
 /** A build finished, but not successfully. */
 export class TemplateBuildError extends GravixLayerError {
@@ -91,7 +91,7 @@ export interface BuildTemplateOptions extends RequestOptions {
 export interface BuildAndWaitOptions extends BuildTemplateOptions {
   /** Milliseconds between status polls. Defaults to 5000. */
   pollIntervalMs?: number;
-  /** Milliseconds to wait before giving up. Defaults to 600000. */
+  /** Milliseconds to wait before giving up. Defaults to 900000. */
   timeoutMs?: number;
   /**
    * Invoked when the build enters a new phase, not on every poll.

@@ -40,13 +40,13 @@ const template = new TemplateBuilder(
   .addFile('/app/main.py', APP)
   // What to start when a sandbox boots, and how to tell it is ready.
   .startCmd('uvicorn main:app --host 0.0.0.0 --port 8080 --app-dir /app')
-  .readyCmd(TemplateBuilder.waitForPort(8080), 120);
+  .readyCmd(TemplateBuilder.waitForPort(8080), 300);
 
 console.log(`Building   : ${template.name}`);
 
 const status = await client.templates.buildAndWait(template, {
   pollIntervalMs: 10_000,
-  timeoutMs: 600_000,
+  timeoutMs: 900_000,
   onPhase: (s) => console.log(`  ${s.phase.padEnd(12)} ${s.progressPercent}%`),
 });
 

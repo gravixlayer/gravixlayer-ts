@@ -29,7 +29,7 @@ const template = new TemplateBuilder(
 )
   .fromImage('node:20-slim')
   .vcpu(2)
-  .memory(512)
+  .memory(1024)
   .disk(4096)
   .env('NODE_ENV', 'production')
   .tags({ sandbox: 'node', source: 'git' })
@@ -43,7 +43,7 @@ const template = new TemplateBuilder(
   })
   .run('cd /app && npm install --production')
   .startCmd('cd /app && node app.js')
-  .readyCmd(TemplateBuilder.waitForPort(8080), 60);
+  .readyCmd(TemplateBuilder.waitForPort(8080), 300);
 
 console.log(`Repository : ${REPO} (${BRANCH})`);
 console.log(`Auth       : ${TOKEN ? 'token supplied' : 'none, so the repo must be public'}`);

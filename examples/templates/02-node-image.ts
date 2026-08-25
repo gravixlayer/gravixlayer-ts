@@ -40,7 +40,7 @@ const template = new TemplateBuilder(
 )
   .fromImage('node:20-slim')
   .vcpu(2)
-  .memory(512)
+  .memory(1024)
   .disk(4096)
   .env('NODE_ENV', 'production')
   // Tags are labels for organizing templates; they do not affect the build.
@@ -53,7 +53,7 @@ const template = new TemplateBuilder(
   ])
   .run('cd /app && npm install')
   .startCmd('node /app/server.js')
-  .readyCmd(TemplateBuilder.waitForPort(8080), 30);
+  .readyCmd(TemplateBuilder.waitForPort(8080), 300);
 
 console.log(`Building   : ${template.name}`);
 

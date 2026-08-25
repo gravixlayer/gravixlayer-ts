@@ -277,6 +277,30 @@ export interface TemplateFileEntry extends AddFileOptions {
 }
 
 /**
+ * Host-side TCP readiness check for a published port.
+ *
+ * Serialized as `ready_port` so the platform probes the port from the host.
+ * The process must listen on `0.0.0.0`, not loopback-only.
+ */
+export class TcpPortCheck {
+  readonly port: number;
+
+  constructor(port: number) {
+    const p = Math.trunc(port);
+    if (!Number.isFinite(p) || p < 1 || p > 65535) {
+      throw new GravixLayerInvalidArgumentError('Port must be between 1 and 65535.');
+    }
+    this.port = p;
+  }
+}
+
+/**
+ * Default `ready_timeout_secs` sent with a ready check. Values below this
+ * are raised to this minimum.
+ */
+export const DEFAULT_READY_TIMEOUT_SECS = 300;
+
+/**
  * Describes a template image with a fluent API.
  *
  * Every method returns the builder, so steps chain. Steps run in the order
@@ -307,7 +331,8 @@ export class TemplateBuilder {
   private _diskMb = 4096;
   private _startCmd?: string;
   private _readyCmd?: string;
-  private _readyTimeoutSeconds = 60;
+  private _readyPort?: number;
+  private _readyTimeoutSeconds = DEFAULT_READY_TIMEOUT_SECS;
   private readonly _environment: Record<string, string> = {};
   private readonly _tags: Record<string, string> = {};
   private readonly _buildSteps: BuildStep[] = [];
@@ -374,13 +399,23 @@ export class TemplateBuilder {
   }
 
   /**
-   * Command polled until it exits zero, marking the runtime ready.
+   * Snapshot-phase ready check.
    *
-   * Pair this with {@link startCmd} for a server that needs a moment to accept
-   * connections. See the `waitFor*` static helpers for common checks.
+   * Pass a shell command that must exit zero, or
+   * {@link TemplateBuilder.waitForPort} for a host-side TCP probe.
+   * Timeouts below 300 seconds are raised to 300.
    */
-  readyCmd(command: string, timeoutSeconds = 60): this {
-    this._readyCmd = command;
+  readyCmd(command: string | TcpPortCheck, timeoutSeconds = DEFAULT_READY_TIMEOUT_SECS): this {
+    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 1) {
+      throw new GravixLayerInvalidArgumentError('Ready timeout must be at least 1 second.');
+    }
+    if (command instanceof TcpPortCheck) {
+      this._readyPort = command.port;
+      this._readyCmd = undefined;
+    } else {
+      this._readyCmd = command;
+      this._readyPort = undefined;
+    }
     this._readyTimeoutSeconds = timeoutSeconds;
     return this;
   }
@@ -494,9 +529,14 @@ export class TemplateBuilder {
     return this;
   }
 
-  /** A readiness check that waits for a TCP port to start listening. */
-  static waitForPort(port: number): string {
-    return `ss -tuln | grep -q :${port}`;
+  /**
+   * Wait until a published TCP port accepts connections.
+   *
+   * The platform probes the port from the host. Bind the process to `0.0.0.0`,
+   * not `127.0.0.1`.
+   */
+  static waitForPort(port: number): TcpPortCheck {
+    return new TcpPortCheck(port);
   }
 
   /** A readiness check that waits for a URL to return an expected status. */
@@ -535,9 +575,13 @@ export class TemplateBuilder {
     data['disk_mb'] = this._diskMb;
 
     if (this._startCmd) data['start_cmd'] = this._startCmd;
-    if (this._readyCmd) {
-      data['ready_cmd'] = this._readyCmd;
-      data['ready_timeout_secs'] = this._readyTimeoutSeconds;
+    if (this._readyPort !== undefined) data['ready_port'] = this._readyPort;
+    if (this._readyCmd) data['ready_cmd'] = this._readyCmd;
+    if (this._readyCmd || this._readyPort !== undefined) {
+      data['ready_timeout_secs'] = Math.max(
+        DEFAULT_READY_TIMEOUT_SECS,
+        this._readyTimeoutSeconds,
+      );
     }
     if (Object.keys(this._environment).length > 0) data['environment'] = this._environment;
     if (this._buildSteps.length > 0) data['build_steps'] = this._buildSteps;

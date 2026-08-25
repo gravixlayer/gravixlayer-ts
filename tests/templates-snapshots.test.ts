@@ -66,8 +66,8 @@ describe('describing a template', () => {
       memory_mb: 4096,
       disk_mb: 20480,
       start_cmd: 'python -m http.server 8080',
-      ready_cmd: 'ss -tuln | grep -q :8080',
-      ready_timeout_secs: 30,
+      ready_port: 8080,
+      ready_timeout_secs: 300,
       environment: { STAGE: 'test', REGION: 'local' },
       tags: { team: 'research' },
     });
@@ -141,10 +141,23 @@ describe('describing a template', () => {
   });
 
   it('offers readiness checks for the usual cases', () => {
-    expect(TemplateBuilder.waitForPort(5432)).toContain(':5432');
+    const check = TemplateBuilder.waitForPort(5432);
+    expect(check.port).toBe(5432);
+    expect(new TemplateBuilder('t').readyCmd(check).toJSON()).toMatchObject({
+      ready_port: 5432,
+    });
+    expect(new TemplateBuilder('t').readyCmd(check).toJSON()['ready_cmd']).toBeUndefined();
+    expect(() => TemplateBuilder.waitForPort(0)).toThrow(GravixLayerInvalidArgumentError);
+    expect(() => TemplateBuilder.waitForPort(70000)).toThrow(GravixLayerInvalidArgumentError);
     expect(TemplateBuilder.waitForUrl('http://localhost:8080/health')).toContain('200');
     expect(TemplateBuilder.waitForFile('/opt/ready')).toBe('test -f /opt/ready');
     expect(TemplateBuilder.waitForProcess('nginx')).toContain('nginx');
+  });
+
+  it('floors ready timeout at 300 seconds', () => {
+    expect(new TemplateBuilder('t').readyCmd('true', 30).toJSON()['ready_timeout_secs']).toBe(300);
+    expect(new TemplateBuilder('t').readyCmd('true').toJSON()['ready_timeout_secs']).toBe(300);
+    expect(new TemplateBuilder('t').readyCmd('true').toJSON()['ready_port']).toBeUndefined();
   });
 
   it('targets an existing template when rebuilding', () => {

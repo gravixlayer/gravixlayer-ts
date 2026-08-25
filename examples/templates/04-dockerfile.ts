@@ -58,7 +58,7 @@ const template = new TemplateBuilder(
   .disk(4096)
   .tags({ source: 'dockerfile' })
   .startCmd('cd /app && uvicorn main:app --host 0.0.0.0 --port 8080')
-  .readyCmd(TemplateBuilder.waitForPort(8080), 60);
+  .readyCmd(TemplateBuilder.waitForPort(8080), 300);
 
 console.log(`Building   : ${template.name}`);
 

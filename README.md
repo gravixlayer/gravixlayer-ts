@@ -160,7 +160,7 @@ const template = new TemplateBuilder('data-science', 'Pandas and friends')
   .aptInstall('git')
   .pipInstall('pandas', 'matplotlib')
   .startCmd('python -m http.server 8080')
-  .readyCmd(TemplateBuilder.waitForPort(8080), 60);
+  .readyCmd(TemplateBuilder.waitForPort(8080), 300);
 
 const status = await client.templates.buildAndWait(template);
 const sandbox = await client.runtime.create({ template: status.templateId });

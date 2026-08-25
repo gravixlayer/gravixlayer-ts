@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-08-25
+
+### Changed
+
+- `waitForPort` sends `ready_port` so the platform probes the published TCP
+  port from the host. Custom `readyCmd` strings are unchanged.
+
+## [0.1.14] - 2026-08-25
+
+### Fixed
+
+- `TemplateBuilder.readyCmd` sends a ready timeout of at least 300 seconds.
+
 ## [0.1.13] - 2026-08-25
 
 ### Fixed
