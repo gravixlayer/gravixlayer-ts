@@ -10,8 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Node HTTP defaults to an HTTP/1.1 keep-alive pool (16 sockets, IPv4),
-  matching the Python SDK. 0.1.6 pinned one HTTP/2 session; when the origin spoke HTTP/1.1, concurrent create+exec serialized and first-request TTI jumped ~220ms.HTTP/2 remains available via the internal pooled-fetch `http2: true` flag.
+- Node HTTP defaults to an HTTP/1.1 keep-alive pool (16 sockets, IPv4),HTTP/2 remains available via the internal pooled-fetch `http2: true` flag.
 
 ## [0.1.6] - 2026-08-25
 
