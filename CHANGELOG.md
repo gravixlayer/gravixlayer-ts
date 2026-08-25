@@ -6,44 +6,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-08-25
+
+### Fixed
+
+- Faster connection setup and reuse on Node for consecutive and concurrent
+  requests.
+
 ## [0.1.8] - 2026-08-25
 
 ### Fixed
 
-- Concurrent Node creates no longer sit at ~250ms while Python, on the same
-  CloudFront → ALB path, returns in ~70ms. The API itself spends ~30ms for
-  both clients. The extra time was Node Happy Eyeballs: CloudFront publishes
-  AAAA, a broken IPv6 hop waits `autoSelectFamilyAttemptTimeout` (250ms),
-  then IPv4 succeeds. `family: 4` on the undici connect object was not
-  enough. The pool now resolves A records only (custom lookup, `ipv4first`,
-  `autoSelectFamily: false`) so create matches Python.
+- More reliable connection setup on Node.
 
 ## [0.1.7] - 2026-08-25
 
 ### Changed
 
-- Node HTTP defaults to an HTTP/1.1 keep-alive pool (16 sockets, IPv4),HTTP/2 remains available via the internal pooled-fetch `http2: true` flag.
+- Node HTTP defaults to an HTTP/1.1 keep-alive pool.
 
 ## [0.1.6] - 2026-08-25
 
 ### Changed
 
-- On Node 20+, the HTTP stack is undici: HTTP/2 first (one multiplexed TLS
-  session per origin, HTTP/2 PING + TCP keep-alive so ALB does not drop it),
-  then HTTP/1.1 keep-alive if `h2` is not negotiated. Handshake fallback is
-  per-origin and only retries replayable bodies. Endpoints, request bodies,
-  and public method signatures are unchanged. Bun, Deno, and edge runtimes
-  are unchanged.
+- On Node 20+, the client reuses HTTP connections across requests. Public
+  endpoints and method signatures are unchanged.
 - Streaming requests (`runCmd` / `runCode` callbacks, `streamCmd`, PTY, file
-  watch, agent stream) send `Accept: text/event-stream` and
-  `Accept-Encoding: identity` so gzip cannot buffer SSE frames.
-- `runCmd` / `runCode` keep the HTTP request open for the guest deadline plus
-  30s of margin, so a long command is not killed by the 60s default timeout.
+  watch, agent stream) keep event-stream output unbuffered.
+- `runCmd` / `runCode` stay open for the guest deadline plus 30s, so a long
+  command is not cut off by the default request timeout.
 
 ### Added
 
-- `client.close()` drains the connection pool, matching the Python client.
-  Safe to call more than once. A no-op when a custom `fetch` was supplied.
+- `client.close()` drains the connection pool. Safe to call more than once.
+  A no-op when a custom `fetch` was supplied.
 
 ### Fixed
 
@@ -119,7 +115,8 @@ First release. Full coverage of the GravixLayer API.
   `trace`, `traced`, and `runtimeSpan` helpers, active only when
   `@opentelemetry/api` is installed and telemetry is enabled.
 
-[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.9
 [0.1.8]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.8
 [0.1.7]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.7
 [0.1.6]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.6

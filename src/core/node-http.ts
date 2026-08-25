@@ -1,18 +1,14 @@
 /**
  * Node HTTP client.
  *
- * Default is HTTP/1.1 keep-alive with a multi-socket pool — the same shape as
- * the Python SDK (httpx, http2=False, max_connections=20). Create-then-exec is
- * two sequential calls; concurrent sandboxes need parallel sockets, not one
- * multiplexed session. DNS is IPv4-only so CloudFront AAAA records cannot
- * trigger Node's 250ms Happy Eyeballs delay (Python getaddrinfo does not).
+ * Default HTTP/1.1 uses Node `http.Agent` / `https.Agent` with `family: 4`.
+ * That option is passed through to `net.connect` / `tls.connect` — the same
+ * path axios, got, and node-fetch v2 use. undici's `connect.family` did not
+ * stop Happy Eyeballs on CloudFront AAAA (0.1.7–0.1.8 still ~250ms/create
+ * while Python, same CloudFront → ALB, is ~80ms).
  *
- * HTTP/2 is opt-in. A single H2 session is only a win when ALPN actually
- * selects `h2`. If the origin speaks HTTP/1.1, `connections: 1` serializes
- * every in-flight request (the 0.1.6 TTI regression vs Python).
- *
- * Loaded only on Node. `undici` is imported dynamically so Bun, Deno, and
- * edge bundles never evaluate it.
+ * HTTP/2 stays opt-in on undici. Loaded only on Node. `node:*` and `undici`
+ * are imported dynamically so Bun, Deno, and edge bundles never evaluate them.
  */
 
 import { GravixLayerInvalidArgumentError } from './errors.js';
@@ -107,6 +103,15 @@ interface UndiciModule {
   buildConnector?: (options: Record<string, unknown>) => UndiciConnector;
 }
 
+interface DestroyableAgent {
+  destroy(): void;
+}
+
+interface NodeH1Pool {
+  fetch: FetchLike;
+  close(): void;
+}
+
 let undici: UndiciModule | undefined;
 let loading: Promise<UndiciModule | null> | undefined;
 
@@ -149,97 +154,103 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
 
   let closed = false;
   let h2Agent: UndiciDispatcher | undefined;
-  let h1Agent: UndiciDispatcher | undefined;
+  let h1Pool: NodeH1Pool | undefined;
   const h2FailedOrigins = new Set<string>();
   const h2ConfirmedOrigins = new Set<string>();
-  let ready: Promise<UndiciModule | null> | undefined;
+  let h1Ready: Promise<NodeH1Pool | undefined> | undefined;
+  let h2Ready: Promise<UndiciModule | null> | undefined;
   let ipv4Lookup: DnsLookup | undefined;
 
-  const ensureH1 = (
-    loaded: UndiciModule,
-    lookup: DnsLookup | undefined,
-  ): UndiciDispatcher | undefined => {
-    h1Agent ??= createAgent(loaded, { http2: false, rejectUnauthorized, lookup });
-    return h1Agent;
+  const ensureH1 = (): Promise<NodeH1Pool | undefined> => {
+    h1Ready ??= (async () => {
+      if (closed) return undefined;
+      await applyIpv4Prefs();
+      ipv4Lookup = wrapIpv4Lookup(options.lookup ?? (await defaultDnsLookup()));
+      if (closed) return undefined;
+      h1Pool = await createNodeH1Pool({ rejectUnauthorized, lookup: ipv4Lookup });
+      return h1Pool;
+    })();
+    return h1Ready;
   };
 
-  const ensure = (): Promise<UndiciModule | null> => {
-    ready ??= (async () => {
+  const ensureH2 = (): Promise<UndiciModule | null> => {
+    h2Ready ??= (async () => {
       if (closed) return null;
       const [loaded] = await Promise.all([loadUndici(), applyIpv4Prefs()]);
       if (!loaded || closed) return null;
       ipv4Lookup = wrapIpv4Lookup(options.lookup ?? (await defaultDnsLookup()));
-      if (http2Wanted && !h2Agent) {
-        h2Agent = createAgent(loaded, { http2: true, rejectUnauthorized, lookup: ipv4Lookup });
-      }
-      if (!http2Wanted) ensureH1(loaded, ipv4Lookup);
+      h2Agent = createUndiciAgent(loaded, { http2: true, rejectUnauthorized, lookup: ipv4Lookup });
       return loaded;
     })();
-    return ready;
+    return h2Ready;
   };
 
   const fetch: FetchLike = async (input, init = {}) => {
     if (closed) {
       throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
     }
-    const loaded = await ensure();
-    if (!loaded) {
-      throw new GravixLayerInvalidArgumentError(
-        'The GravixLayer client could not load the Node HTTP stack.',
-      );
-    }
 
     const origin = originOf(input);
-    const preferH2 =
-      http2Wanted && !h2FailedOrigins.has(origin) && isHttpsOrigin(origin) && !!h2Agent;
-    const primary = preferH2 ? h2Agent : ensureH1(loaded, ipv4Lookup);
-    if (!primary) {
+    const tryH2 = http2Wanted && !h2FailedOrigins.has(origin) && isHttpsOrigin(origin);
+    if (tryH2) {
+      const loaded = await ensureH2();
+      if (closed) {
+        throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
+      }
+      if (loaded && h2Agent) {
+        try {
+          const response = await loaded.fetch(input, { ...init, dispatcher: h2Agent });
+          h2ConfirmedOrigins.add(origin);
+          return response;
+        } catch (error) {
+          if (closed) throw error;
+          if (
+            !h2ConfirmedOrigins.has(origin) &&
+            isHttp2HandshakeFailure(error) &&
+            isReplayableBody(init.body)
+          ) {
+            h2FailedOrigins.add(origin);
+          } else {
+            throw error;
+          }
+        }
+      }
+    }
+
+    const pool = await ensureH1();
+    if (closed) {
+      throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
+    }
+    if (!pool) {
       throw new GravixLayerInvalidArgumentError(
         'The GravixLayer client could not create an HTTP dispatcher.',
       );
     }
-
-    try {
-      const response = await loaded.fetch(input, { ...init, dispatcher: primary });
-      if (preferH2) h2ConfirmedOrigins.add(origin);
-      return response;
-    } catch (error) {
-      if (closed) throw error;
-      if (
-        preferH2 &&
-        !h2ConfirmedOrigins.has(origin) &&
-        isHttp2HandshakeFailure(error) &&
-        isReplayableBody(init.body)
-      ) {
-        h2FailedOrigins.add(origin);
-        const fallback = ensureH1(loaded, ipv4Lookup);
-        if (!fallback) throw error;
-        return loaded.fetch(input, { ...init, dispatcher: fallback });
-      }
-      throw error;
-    }
+    return pool.fetch(input, init);
   };
 
   return {
     fetch,
     async preconnect() {
-      await ensure();
+      if (http2Wanted) await ensureH2();
+      else await ensureH1();
     },
     async close() {
       closed = true;
-      const agents = [h2Agent, h1Agent];
+      const h2 = h2Agent;
+      const h1 = h1Pool;
       h2Agent = undefined;
-      h1Agent = undefined;
+      h1Pool = undefined;
       h2FailedOrigins.clear();
       h2ConfirmedOrigins.clear();
-      for (const agent of agents) {
-        if (!agent) continue;
+      if (h2) {
         try {
-          await agent.close();
+          await h2.close();
         } catch {
-          agent.destroy?.();
+          h2.destroy?.();
         }
       }
+      h1?.close();
     },
   };
 }
@@ -249,19 +260,18 @@ let cachedDnsLookup: DnsLookup | undefined;
 
 /**
  * Match Python/glibc getaddrinfo order. Node's default `verbatim` lookup
- * returns CloudFront AAAA first; Happy Eyeballs then waits 250ms on a
- * blackholed IPv6 path before trying IPv4. Same CloudFront + ALB, Python
- * never pays that delay.
- *
- * Process-wide, once. `dns.lookup` is what `net`/`tls.connect` use.
+ * returns CloudFront AAAA first. Process-wide, once.
  */
 function applyIpv4Prefs(): Promise<void> {
   ipv4Prefs ??= (async () => {
     try {
-      const dns = await import('node:dns');
+      const [dns, net] = await Promise.all([import('node:dns'), import('node:net')]);
       dns.setDefaultResultOrder('ipv4first');
+      const disableHe = (net as { setDefaultAutoSelectFamily?: (value: boolean) => void })
+        .setDefaultAutoSelectFamily;
+      disableHe?.(false);
     } catch {
-      // Non-Node or restricted runtime. The Agent still forces IPv4 below.
+      // Non-Node or restricted runtime.
     }
   })();
   return ipv4Prefs;
@@ -279,9 +289,7 @@ async function defaultDnsLookup(): Promise<DnsLookup | undefined> {
 }
 
 /**
- * Force A-record resolution. `family: 4` on `tls.connect` is not enough:
- * Node 20+ Happy Eyeballs still asks `lookup` for every address when
- * `autoSelectFamily` is left at its default.
+ * Force A-record resolution. Used by Node `http.Agent` / `https.Agent`.
  */
 export function wrapIpv4Lookup(lookup: DnsLookup | undefined): DnsLookup | undefined {
   if (!lookup) return undefined;
@@ -298,7 +306,155 @@ export function wrapIpv4Lookup(lookup: DnsLookup | undefined): DnsLookup | undef
   };
 }
 
-function createAgent(
+async function createNodeH1Pool(opts: {
+  rejectUnauthorized: boolean;
+  lookup?: DnsLookup;
+}): Promise<NodeH1Pool> {
+  const [httpMod, httpsMod, streamMod] = await Promise.all([
+    import('node:http'),
+    import('node:https'),
+    import('node:stream'),
+  ]);
+
+  const shared = {
+    keepAlive: true,
+    keepAliveMsecs: TCP_KEEPALIVE_DELAY_MS,
+    maxSockets: H1_CONNECTIONS,
+    maxFreeSockets: 10,
+    scheduling: 'lifo' as const,
+    family: 4,
+    autoSelectFamily: false,
+    ...(opts.lookup ? { lookup: opts.lookup as never } : {}),
+  };
+
+  const httpAgent = new httpMod.Agent(shared as ConstructorParameters<typeof httpMod.Agent>[0]);
+  const httpsAgent = new httpsMod.Agent({
+    ...shared,
+    rejectUnauthorized: opts.rejectUnauthorized,
+  } as ConstructorParameters<typeof httpsMod.Agent>[0]);
+
+  const toWeb = streamMod.Readable.toWeb.bind(streamMod.Readable);
+
+  const fetch: FetchLike = async (input, init = {}) => {
+    const url = new URL(input);
+    const isHttps = url.protocol === 'https:';
+    const lib = isHttps ? httpsMod : httpMod;
+    const agent = isHttps ? httpsAgent : httpAgent;
+    const { body, headers } = await materializeBody(init);
+    const method = (init.method ?? 'GET').toUpperCase();
+
+    return await new Promise<Response>((resolve, reject) => {
+      const reqOpts = {
+        method,
+        headers,
+        agent,
+        family: 4,
+        autoSelectFamily: false,
+        lookup: opts.lookup,
+        signal: init.signal ?? undefined,
+      } as Parameters<typeof lib.request>[1];
+      const req = lib.request(url, reqOpts, (res) => {
+        const status = res.statusCode ?? 200;
+        const empty = status === 204 || status === 205 || status === 304 || method === 'HEAD';
+        let stream: ReadableStream<Uint8Array> | null = null;
+        if (!empty) {
+          stream = toWeb(res) as ReadableStream<Uint8Array>;
+        } else {
+          res.resume();
+        }
+        resolve(
+          new Response(stream, {
+            status,
+            statusText: res.statusMessage ?? '',
+            headers: incomingToHeaders(res.headers),
+          }),
+        );
+      });
+      req.on('error', reject);
+      if (body === undefined) req.end();
+      else req.end(body);
+    });
+  };
+
+  return {
+    fetch,
+    close() {
+      (httpAgent as DestroyableAgent).destroy();
+      (httpsAgent as DestroyableAgent).destroy();
+    },
+  };
+}
+
+async function materializeBody(init: RequestInit): Promise<{
+  body: string | Buffer | undefined;
+  headers: Record<string, string | string[] | undefined>;
+}> {
+  const headers = outgoingHeaders(init.headers);
+  const body = init.body;
+  if (body == null) return { body: undefined, headers };
+  if (typeof body === 'string') return { body, headers };
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(body)) return { body, headers };
+  if (body instanceof Uint8Array) return { body: Buffer.from(body), headers };
+  if (body instanceof ArrayBuffer) return { body: Buffer.from(body), headers };
+  if (ArrayBuffer.isView(body)) {
+    return {
+      body: Buffer.from(body.buffer, body.byteOffset, body.byteLength),
+      headers,
+    };
+  }
+  if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
+    if (!headerHas(headers, 'content-type')) {
+      headers['content-type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+    }
+    return { body: body.toString(), headers };
+  }
+  if (typeof FormData !== 'undefined' && body instanceof FormData) {
+    const encoded = new Request('http://127.0.0.1/', { method: 'POST', body });
+    const contentType = encoded.headers.get('content-type');
+    if (contentType) headers['content-type'] = contentType;
+    return { body: Buffer.from(await encoded.arrayBuffer()), headers };
+  }
+  throw new GravixLayerInvalidArgumentError(
+    'This request body type is not supported by the Node HTTP client.',
+  );
+}
+
+function outgoingHeaders(init?: HeadersInit): Record<string, string | string[] | undefined> {
+  if (!init) return {};
+  if (typeof Headers !== 'undefined' && init instanceof Headers) {
+    const out: Record<string, string> = {};
+    init.forEach((value, key) => {
+      out[key] = value;
+    });
+    return out;
+  }
+  if (Array.isArray(init)) {
+    const out: Record<string, string> = {};
+    for (const [key, value] of init) out[key] = value;
+    return out;
+  }
+  return { ...(init as Record<string, string>) };
+}
+
+function headerHas(headers: Record<string, string | string[] | undefined>, name: string): boolean {
+  const needle = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === needle);
+}
+
+function incomingToHeaders(raw: NodeJS.Dict<string | string[] | undefined>): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === undefined || value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, item);
+    } else {
+      headers.set(key, value);
+    }
+  }
+  return headers;
+}
+
+function createUndiciAgent(
   loaded: UndiciModule,
   opts: { http2: boolean; rejectUnauthorized: boolean; lookup?: DnsLookup },
 ): UndiciDispatcher | undefined {
@@ -319,8 +475,6 @@ function createAgent(
     pipelining: 1,
     keepAliveTimeout: KEEP_ALIVE_MS,
     keepAliveMaxTimeout: KEEP_ALIVE_MAX_MS,
-    // SSE / exec streams can sit quiet between frames; the SDK abort timer
-    // is the real deadline. A 300s undici body timeout would kill them.
     bodyTimeout: 0,
     headersTimeout: 300_000,
     autoSelectFamily: false,
@@ -343,7 +497,6 @@ function createAgent(
         allowH2: false,
       };
 
-  // Fallbacks drop only keys older undici rejects. IPv4 lookup/family stay.
   const variants: Record<string, unknown>[] = [
     full,
     {
@@ -353,18 +506,6 @@ function createAgent(
       connections: opts.http2 ? H2_SESSIONS : H1_CONNECTIONS,
       allowH2: opts.http2,
       connect: connectObject,
-    },
-    {
-      connections: opts.http2 ? H2_SESSIONS : H1_CONNECTIONS,
-      allowH2: opts.http2,
-      autoSelectFamily: false,
-      connect: {
-        family: 4,
-        autoSelectFamily: false,
-        rejectUnauthorized: opts.rejectUnauthorized,
-        allowH2: opts.http2,
-        ...(opts.lookup ? { lookup: opts.lookup } : {}),
-      },
     },
   ];
 

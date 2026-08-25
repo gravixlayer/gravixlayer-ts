@@ -5,11 +5,10 @@
  * then exec can each open a new TCP+TLS session, and concurrent work queues
  * behind a handful of sockets.
  *
- * On Node the SDK uses undici with an HTTP/1.1 keep-alive pool (same default
- * as the Python client) and IPv4-only DNS so CloudFront AAAA records cannot
- * insert Node's 250ms Happy Eyeballs delay. HTTP/2 is opt-in. HTTP/3 stays
- * on the CloudFront viewer path. Bun, Deno, and edge runtimes keep their
- * native `fetch`. A caller-supplied `fetch` always wins.
+ * On Node the SDK uses a keep-alive `http`/`https.Agent` (IPv4, same default
+ * as the Python client). HTTP/2 is opt-in via undici. HTTP/3 stays on the
+ * CloudFront viewer path. Bun, Deno, and edge runtimes keep their native
+ * `fetch`. A caller-supplied `fetch` always wins.
  */
 
 import { createNativeNodeFetch, type DnsLookup } from './node-http.js';
