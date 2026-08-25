@@ -1,14 +1,13 @@
 /**
  * Native HTTP dispatcher for Node.
  *
- * Node's global `fetch` speaks HTTP/1.1 with a ~4-second keep-alive. Create
- * then exec can each open a new TCP+TLS session, and concurrent work queues
- * behind a handful of sockets.
+ * Node's global `fetch` speaks HTTP/1.1 with a short keep-alive. Concurrent
+ * create+exec would each pay a new TCP+TLS handshake.
  *
- * On Node the SDK uses a keep-alive `http`/`https.Agent` (IPv4, same default
- * as the Python client). HTTP/2 is opt-in via undici. HTTP/3 stays on the
- * CloudFront viewer path. Bun, Deno, and edge runtimes keep their native
- * `fetch`. A caller-supplied `fetch` always wins.
+ * On Node the SDK opens one HTTP/2 session per origin (IPv4, hostname SNI).
+ * Origins that do not speak HTTP/2 fall back to a keep-alive HTTP/1.1 pool.
+ * Bun, Deno, and edge runtimes keep their native `fetch`. A caller-supplied
+ * `fetch` always wins.
  */
 
 import { createNativeNodeFetch, type DnsLookup } from './node-http.js';
@@ -30,7 +29,10 @@ export interface PooledFetch {
 
 /** Options for {@link createPooledFetch}. */
 export interface PooledFetchOptions {
-  /** Enable HTTP/2 on Node HTTPS origins. Defaults to false (HTTP/1.1 pool). */
+  /**
+   * Enable HTTP/2 on Node HTTPS origins. Defaults to true. Set false to force
+   * an HTTP/1.1 keep-alive pool.
+   */
   http2?: boolean;
   /**
    * TLS verification. Tests against a self-signed server set this false.
@@ -62,7 +64,8 @@ export function hostRuntime(): HostRuntime {
 }
 
 /**
- * Bind a fetch that, on Node, rides a pooled HTTP/1.1 keep-alive agent.
+ * Bind a fetch that, on Node, rides a pooled HTTP/2 session (HTTP/1.1 if the
+ * origin cannot).
  *
  * Everywhere else this is `globalThis.fetch`. Construction does not touch
  * the network; sockets open on the first request (or {@link PooledFetch.preconnect}).
@@ -79,7 +82,7 @@ export function createPooledFetch(options: PooledFetchOptions = {}): PooledFetch
     lookup: options.lookup,
   });
 
-  // Load undici in the background so the first real request does not.
+  // Load `node:*` modules in the background so the first real request does not.
   void native.preconnect();
 
   return {

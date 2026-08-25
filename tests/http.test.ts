@@ -215,6 +215,37 @@ describe('pooled fetch', () => {
     }
   });
 
+  it('multiplexes HTTPS on one HTTP/2 session by default', async () => {
+    const certs = selfSignedCerts();
+
+    let sessions = 0;
+    const server = createSecureServer(certs);
+    server.on('stream', (stream, headers) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+      stream.end(JSON.stringify({ path: headers[':path'] }));
+    });
+    server.on('session', () => {
+      sessions += 1;
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const pooled = createPooledFetch({ rejectUnauthorized: false });
+
+    try {
+      const [a, b] = await Promise.all([
+        pooled.fetch(`https://127.0.0.1:${port}/one`, {}),
+        pooled.fetch(`https://127.0.0.1:${port}/two`, {}),
+      ]);
+      expect(await a.json()).toEqual({ path: '/one' });
+      expect(await b.json()).toEqual({ path: '/two' });
+      expect(sessions).toBe(1);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to HTTP/1.1 when the origin does not speak HTTP/2', async () => {
     const certs = selfSignedCerts();
     const server = createHttpsServer({ key: certs.key, cert: certs.cert }, (req, res) => {

@@ -33,8 +33,8 @@ Cloud and region default to `aws` / `us-east-1`. Override with
 ## Requirements
 
 Node 20 or newer. The SDK is built on `fetch` and web streams, so it also runs
-on Deno, Bun, and edge runtimes. On Node, HTTP uses a keep-alive
-`http`/`https` agent with IPv4 (same default shape as the Python SDK).
+on Deno, Bun, and edge runtimes. On Node, HTTPS multiplexes requests on one
+HTTP/2 session per origin (HTTP/1.1 keep-alive if the origin cannot).
 
 Browsers are refused by default — a browser build would hand your API key to
 every visitor. Call the API from your own server.
@@ -60,8 +60,8 @@ const client = new GravixLayer({
 | `fetch` | Node pooled `fetch`, else global `fetch` | For a proxy, a custom agent, or tests. |
 
 Construct the client once and reuse it. On Node, one client keeps a pooled
-HTTP/1.1 keep-alive agent to the API. Call `await client.warmup()` at
-startup if you want TCP and TLS paid before the first request that matters.
+HTTP connection to the API. Call `await client.warmup()` at startup if you
+want TCP and TLS paid before the first request that matters.
 Call `await client.close()` when a short-lived process is done so keep-alive
 sockets can drain.
 

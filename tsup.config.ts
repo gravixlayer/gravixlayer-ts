@@ -11,9 +11,8 @@ export default defineConfig({
   minify: false,
   // The SDK targets any runtime with a global fetch: Node 20+, Deno, Bun,
   // Cloudflare Workers, and Vercel Edge. No `node:*` module is imported
-  // statically. undici is loaded at runtime on Node only.
+  // statically. Node HTTP modules load at runtime on Node only.
   platform: 'neutral',
-  external: ['undici'],
   target: 'es2022',
   outExtension({ format }) {
     return { js: format === 'cjs' ? '.cjs' : '.js' };

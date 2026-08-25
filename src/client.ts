@@ -81,8 +81,8 @@ export interface ClientOptions {
    * Replacement for the global `fetch`.
    *
    * Useful for a custom agent, a proxy, or deterministic tests. When omitted
-   * on Node, the SDK uses Node `http`/`https` keep-alive agents so successive
-   * calls reuse sockets (same default as the Python client).
+   * on Node, the SDK reuses one HTTP/2 session per origin (HTTP/1.1 keep-alive
+   * if the origin does not speak HTTP/2).
    */
   fetch?: FetchLike;
   /**
@@ -226,7 +226,7 @@ export class GravixLayer implements ClientContext {
    * Loads native HTTP bindings, then sends one small authenticated request so
    * that TCP, TLS, and protocol negotiation are already done when latency
    * matters. Most useful right before issuing several requests at once, since
-   * otherwise each one races to establish its own connection.
+   * otherwise the first batch shares one handshake instead of racing.
    *
    * Throws the same errors any request would, which makes it a cheap way to
    * verify credentials at startup.

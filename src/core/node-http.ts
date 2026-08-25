@@ -1,14 +1,14 @@
 /**
  * Node HTTP client.
  *
- * Default HTTP/1.1 uses Node `http.Agent` / `https.Agent` with `family: 4`.
- * That option is passed through to `net.connect` / `tls.connect` — the same
- * path axios, got, and node-fetch v2 use. undici's `connect.family` did not
- * stop Happy Eyeballs on CloudFront AAAA (0.1.7–0.1.8 still ~250ms/create
- * while Python, same CloudFront → ALB, is ~80ms).
+ * HTTPS opens one HTTP/2 session per origin: IPv4 is resolved once, TLS is
+ * pinned to that address (SNI stays on the hostname), and concurrent calls
+ * share the session. Origins that do not speak HTTP/2 fall back to an
+ * HTTP/1.1 keep-alive pool, still IPv4-pinned, with enough sockets for
+ * parallel work.
  *
- * HTTP/2 stays opt-in on undici. Loaded only on Node. `node:*` and `undici`
- * are imported dynamically so Bun, Deno, and edge bundles never evaluate them.
+ * `node:*` modules are imported dynamically so Bun, Deno, and edge bundles
+ * never evaluate them.
  */
 
 import { GravixLayerInvalidArgumentError } from './errors.js';
@@ -22,8 +22,7 @@ export type DnsLookup = (hostname: string, options: unknown, callback?: DnsLooku
 
 export interface NativeNodeFetchOptions {
   /**
-   * Negotiate HTTP/2 on HTTPS. Defaults to false (HTTP/1.1 pool), matching
-   * the Python client.
+   * Negotiate HTTP/2 on HTTPS. Defaults to true. Set false to force HTTP/1.1.
    */
   http2?: boolean;
   /**
@@ -45,66 +44,121 @@ export interface NativeNodeFetch {
 }
 
 /**
- * HTTP/2 sessions per origin when HTTP/2 is requested and negotiated.
+ * HTTP/1.1 sockets per origin when HTTP/2 is unavailable.
  *
- * Must stay at 1. A larger count opens that many TLS sessions and skips
- * multiplexing. Only used when `http2: true`.
- */
-const H2_SESSIONS = 1;
-
-/**
- * HTTP/1.1 sockets per origin.
- *
- * Matches the Python pool (20 max / 10 keep-alive). Concurrent create+exec
- * across sandboxes needs one socket per in-flight request.
+ * Concurrent create+exec across sandboxes needs one socket per in-flight
+ * request. Sized like a small keep-alive pool, not a single connection.
  */
 const H1_CONNECTIONS = 16;
 
-/**
- * Idle bound in milliseconds.
- *
- * ALB's default idle timeout is 60s. Closing first avoids a reused connection
- * the balancer already reset. CloudFront viewer idle is longer; 50s is safe.
- */
-const KEEP_ALIVE_MS = 50_000;
-
-const KEEP_ALIVE_MAX_MS = 600_000;
+/** First TCP keep-alive probe. */
+const TCP_KEEPALIVE_DELAY_MS = 15_000;
 
 /**
- * HTTP/2 PING interval (only when HTTP/2 is on).
+ * HTTP/2 PING interval.
  *
- * ALB and CloudFront drop idle origin connections around 60s. A PING at 25s
- * keeps the session up so the next create/exec does not handshake.
+ * Keeps the session up so the next create/exec does not handshake again.
  */
 const H2_PING_MS = 25_000;
 
 /** TCP/TLS connect deadline. */
 const CONNECT_TIMEOUT_MS = 10_000;
 
-/**
- * First TCP keep-alive probe. Default 60s races ALB's idle timeout; 15s
- * probes while the socket is still accepted.
- */
-const TCP_KEEPALIVE_DELAY_MS = 15_000;
+const IPV4_LITERAL = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
-interface UndiciDispatcher {
-  close(): Promise<void>;
-  destroy?: () => void;
+/** Hostnames that must not be sent as TLS SNI (Node rejects IP servername). */
+function isIpLiteral(host: string): boolean {
+  return IPV4_LITERAL.test(host) || host.includes(':');
 }
 
-type UndiciConnector = (options: unknown, callback: unknown) => unknown;
-
-interface UndiciModule {
-  Agent: new (options: Record<string, unknown>) => UndiciDispatcher;
-  fetch: (
-    input: string,
-    init?: RequestInit & { dispatcher?: UndiciDispatcher },
-  ) => Promise<Response>;
-  buildConnector?: (options: Record<string, unknown>) => UndiciConnector;
+function tlsServername(hostname: string): string | undefined {
+  return isIpLiteral(hostname) ? undefined : hostname;
 }
+
+const H2_FORBIDDEN = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-connection',
+  'transfer-encoding',
+  'upgrade',
+  'host',
+]);
 
 interface DestroyableAgent {
   destroy(): void;
+}
+
+interface HttpIncomingMessage {
+  statusCode?: number;
+  statusMessage?: string;
+  headers: NodeJS.Dict<string | string[] | undefined>;
+  resume(): void;
+}
+
+interface HttpClientRequest {
+  on(event: 'error', listener: (error: Error) => void): void;
+  end(chunk?: string | Buffer): void;
+}
+
+interface HttpLib {
+  Agent: new (options?: Record<string, unknown>) => DestroyableAgent;
+  request(
+    options: Record<string, unknown>,
+    callback: (res: HttpIncomingMessage) => void,
+  ): HttpClientRequest;
+}
+
+interface TlsSocket {
+  alpnProtocol: string | false | null;
+  setTimeout(ms: number, callback?: () => void): TlsSocket;
+  setKeepAlive(enable: boolean, initialDelay?: number): TlsSocket;
+  destroy(): void;
+  once(event: 'error', listener: (error: Error) => void): TlsSocket;
+  once(event: 'secureConnect', listener: () => void): TlsSocket;
+}
+
+interface TlsLib {
+  connect(options: Record<string, unknown>): TlsSocket;
+}
+
+interface Http2Stream {
+  writableEnded: boolean;
+  end(chunk?: string | Buffer): void;
+  close(code?: number): void;
+  once(event: 'error', listener: (error: Error) => void): void;
+  once(event: 'response', listener: (headers: Http2Headers) => void): void;
+}
+
+interface Http2Session {
+  closed: boolean;
+  destroyed: boolean;
+  request(headers: Http2Headers, options?: { endStream?: boolean }): Http2Stream;
+  ping(callback: (error: Error | null) => void): boolean;
+  close(): void;
+  destroy(): void;
+  once(event: 'error', listener: (error: Error) => void): void;
+  once(event: 'close', listener: () => void): void;
+  once(event: 'connect', listener: () => void): void;
+}
+
+interface Http2Lib {
+  connect(authority: string, options?: { createConnection?: () => TlsSocket }): Http2Session;
+  constants: { NGHTTP2_CANCEL: number };
+}
+
+interface DnsLib {
+  lookup(hostname: string, options: unknown, callback: DnsLookupCallback): void;
+}
+
+type Http2Headers = Record<string, string | string[] | number | undefined>;
+
+interface NodeHttpMods {
+  http: HttpLib;
+  https: HttpLib;
+  http2: Http2Lib;
+  tls: TlsLib;
+  dns: DnsLib;
+  toWeb: (readable: object) => ReadableStream<Uint8Array>;
 }
 
 interface NodeH1Pool {
@@ -112,77 +166,128 @@ interface NodeH1Pool {
   close(): void;
 }
 
-let undici: UndiciModule | undefined;
-let loading: Promise<UndiciModule | null> | undefined;
+interface H2Session {
+  session: Http2Session;
+  ping: ReturnType<typeof setInterval> | undefined;
+}
 
-async function loadUndici(): Promise<UndiciModule | null> {
-  if (undici) return undici;
-  loading ??= (async () => {
+let mods: NodeHttpMods | undefined;
+let modsLoading: Promise<NodeHttpMods | null> | undefined;
+
+async function loadMods(): Promise<NodeHttpMods | null> {
+  if (mods) return mods;
+  modsLoading ??= (async () => {
     try {
-      const mod = (await import(
-        /* webpackIgnore: true */ /* @vite-ignore */ 'undici'
-      )) as unknown as {
-        Agent?: UndiciModule['Agent'];
-        fetch?: UndiciModule['fetch'];
-        buildConnector?: UndiciModule['buildConnector'];
-        default?: {
-          Agent?: UndiciModule['Agent'];
-          fetch?: UndiciModule['fetch'];
-          buildConnector?: UndiciModule['buildConnector'];
-        };
+      const [http, https, http2, tls, stream, dns] = await Promise.all([
+        import('node:http'),
+        import('node:https'),
+        import('node:http2'),
+        import('node:tls'),
+        import('node:stream'),
+        import('node:dns'),
+      ]);
+      const loaded: NodeHttpMods = {
+        http: http as unknown as HttpLib,
+        https: https as unknown as HttpLib,
+        http2: http2 as unknown as Http2Lib,
+        tls: tls as unknown as TlsLib,
+        dns: dns as unknown as DnsLib,
+        toWeb: stream.Readable.toWeb.bind(stream.Readable) as NodeHttpMods['toWeb'],
       };
-      const Agent = mod.Agent ?? mod.default?.Agent;
-      const fetchImpl = mod.fetch ?? mod.default?.fetch;
-      const buildConnector = mod.buildConnector ?? mod.default?.buildConnector;
-      if (typeof Agent !== 'function' || typeof fetchImpl !== 'function') return null;
-      undici = {
-        Agent,
-        fetch: fetchImpl,
-        ...(typeof buildConnector === 'function' ? { buildConnector } : {}),
-      };
-      return undici;
+      mods = loaded;
+      return loaded;
     } catch {
       return null;
     }
   })();
-  return loading;
+  return modsLoading;
 }
 
 export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): NativeNodeFetch {
-  const http2Wanted = options.http2 === true;
+  const http2Wanted = options.http2 !== false;
   const rejectUnauthorized = options.rejectUnauthorized !== false;
+  const lookup = options.lookup;
 
   let closed = false;
-  let h2Agent: UndiciDispatcher | undefined;
   let h1Pool: NodeH1Pool | undefined;
-  const h2FailedOrigins = new Set<string>();
-  const h2ConfirmedOrigins = new Set<string>();
   let h1Ready: Promise<NodeH1Pool | undefined> | undefined;
-  let h2Ready: Promise<UndiciModule | null> | undefined;
-  let ipv4Lookup: DnsLookup | undefined;
+  const h2FailedOrigins = new Set<string>();
+  const h2Sessions = new Map<string, Promise<H2Session>>();
+  const ipv4Cache = new Map<string, Promise<string>>();
+
+  const loaded = loadMods();
+  void loaded;
+
+  const resolveIpv4 = (hostname: string): Promise<string> => {
+    if (IPV4_LITERAL.test(hostname)) return Promise.resolve(hostname);
+    const cached = ipv4Cache.get(hostname);
+    if (cached) return cached;
+    const pending = new Promise<string>((resolve, reject) => {
+      const finish: DnsLookupCallback = (err, address) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        const ip = ipv4FromLookup(address);
+        if (!ip) {
+          reject(new Error(`Could not resolve ${hostname} to an IPv4 address.`));
+          return;
+        }
+        resolve(ip);
+      };
+      if (lookup) {
+        lookup(hostname, { family: 4, all: false }, finish);
+        return;
+      }
+      void loaded.then((node) => {
+        if (!node) {
+          reject(new Error('The GravixLayer client could not load Node HTTP modules.'));
+          return;
+        }
+        node.dns.lookup(hostname, { family: 4, all: false }, finish);
+      });
+    });
+    pending.catch(() => ipv4Cache.delete(hostname));
+    ipv4Cache.set(hostname, pending);
+    return pending;
+  };
 
   const ensureH1 = (): Promise<NodeH1Pool | undefined> => {
     h1Ready ??= (async () => {
       if (closed) return undefined;
-      await applyIpv4Prefs();
-      ipv4Lookup = wrapIpv4Lookup(options.lookup ?? (await defaultDnsLookup()));
-      if (closed) return undefined;
-      h1Pool = await createNodeH1Pool({ rejectUnauthorized, lookup: ipv4Lookup });
+      const node = await loaded;
+      if (!node || closed) return undefined;
+      h1Pool = createNodeH1Pool(node, { rejectUnauthorized, resolveIpv4 });
       return h1Pool;
     })();
     return h1Ready;
   };
 
-  const ensureH2 = (): Promise<UndiciModule | null> => {
-    h2Ready ??= (async () => {
-      if (closed) return null;
-      const [loaded] = await Promise.all([loadUndici(), applyIpv4Prefs()]);
-      if (!loaded || closed) return null;
-      ipv4Lookup = wrapIpv4Lookup(options.lookup ?? (await defaultDnsLookup()));
-      h2Agent = createUndiciAgent(loaded, { http2: true, rejectUnauthorized, lookup: ipv4Lookup });
-      return loaded;
-    })();
-    return h2Ready;
+  const sessionFor = (url: URL, node: NodeHttpMods): Promise<H2Session> => {
+    const origin = url.origin;
+    const existing = h2Sessions.get(origin);
+    if (existing) return existing;
+    const pending = connectH2(node, url, { rejectUnauthorized, resolveIpv4 }).then((session) => {
+      const ping = setInterval(() => {
+        if (session.destroyed || session.closed) return;
+        session.ping((error) => {
+          if (error) session.destroy();
+        });
+      }, H2_PING_MS);
+      ping.unref();
+      const handle: H2Session = { session, ping };
+      session.once('close', () => {
+        clearInterval(ping);
+        h2Sessions.delete(origin);
+      });
+      session.once('error', () => {
+        session.destroy();
+      });
+      return handle;
+    });
+    pending.catch(() => h2Sessions.delete(origin));
+    h2Sessions.set(origin, pending);
+    return pending;
   };
 
   const fetch: FetchLike = async (input, init = {}) => {
@@ -190,26 +295,29 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
       throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
     }
 
-    const origin = originOf(input);
-    const tryH2 = http2Wanted && !h2FailedOrigins.has(origin) && isHttpsOrigin(origin);
+    const url = new URL(input);
+    const tryH2 = http2Wanted && url.protocol === 'https:' && !h2FailedOrigins.has(url.origin);
     if (tryH2) {
-      const loaded = await ensureH2();
+      const node = await loaded;
       if (closed) {
         throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
       }
-      if (loaded && h2Agent) {
+      if (node) {
         try {
-          const response = await loaded.fetch(input, { ...init, dispatcher: h2Agent });
-          h2ConfirmedOrigins.add(origin);
-          return response;
+          const handle = await sessionFor(url, node);
+          if (closed) {
+            throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
+          }
+          return await h2Fetch(node, handle.session, url, init);
         } catch (error) {
           if (closed) throw error;
-          if (
-            !h2ConfirmedOrigins.has(origin) &&
-            isHttp2HandshakeFailure(error) &&
-            isReplayableBody(init.body)
-          ) {
-            h2FailedOrigins.add(origin);
+          if (isHttp2HandshakeFailure(error) && isReplayableBody(init.body)) {
+            h2FailedOrigins.add(url.origin);
+            const stale = h2Sessions.get(url.origin);
+            h2Sessions.delete(url.origin);
+            if (stale) {
+              void stale.then((handle) => closeH2(handle)).catch(() => undefined);
+            }
           } else {
             throw error;
           }
@@ -232,22 +340,23 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
   return {
     fetch,
     async preconnect() {
-      if (http2Wanted) await ensureH2();
-      else await ensureH1();
+      await loaded;
+      if (http2Wanted) return;
+      await ensureH1();
     },
     async close() {
       closed = true;
-      const h2 = h2Agent;
-      const h1 = h1Pool;
-      h2Agent = undefined;
-      h1Pool = undefined;
+      const sessions = [...h2Sessions.values()];
+      h2Sessions.clear();
       h2FailedOrigins.clear();
-      h2ConfirmedOrigins.clear();
-      if (h2) {
+      ipv4Cache.clear();
+      const h1 = h1Pool;
+      h1Pool = undefined;
+      for (const pending of sessions) {
         try {
-          await h2.close();
+          closeH2(await pending);
         } catch {
-          h2.destroy?.();
+          // Connect failed; nothing to close.
         }
       }
       h1?.close();
@@ -255,41 +364,9 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
   };
 }
 
-let ipv4Prefs: Promise<void> | undefined;
-let cachedDnsLookup: DnsLookup | undefined;
-
 /**
- * Match Python/glibc getaddrinfo order. Node's default `verbatim` lookup
- * returns CloudFront AAAA first. Process-wide, once.
- */
-function applyIpv4Prefs(): Promise<void> {
-  ipv4Prefs ??= (async () => {
-    try {
-      const [dns, net] = await Promise.all([import('node:dns'), import('node:net')]);
-      dns.setDefaultResultOrder('ipv4first');
-      const disableHe = (net as { setDefaultAutoSelectFamily?: (value: boolean) => void })
-        .setDefaultAutoSelectFamily;
-      disableHe?.(false);
-    } catch {
-      // Non-Node or restricted runtime.
-    }
-  })();
-  return ipv4Prefs;
-}
-
-async function defaultDnsLookup(): Promise<DnsLookup | undefined> {
-  if (cachedDnsLookup) return cachedDnsLookup;
-  try {
-    const dns = await import('node:dns');
-    cachedDnsLookup = dns.lookup as unknown as DnsLookup;
-    return cachedDnsLookup;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Force A-record resolution. Used by Node `http.Agent` / `https.Agent`.
+ * Force A-record resolution. Tests assert this helper; the live client pins
+ * IPv4 in {@link createNativeNodeFetch} instead of wrapping every lookup.
  */
 export function wrapIpv4Lookup(lookup: DnsLookup | undefined): DnsLookup | undefined {
   if (!lookup) return undefined;
@@ -306,64 +383,189 @@ export function wrapIpv4Lookup(lookup: DnsLookup | undefined): DnsLookup | undef
   };
 }
 
-async function createNodeH1Pool(opts: {
-  rejectUnauthorized: boolean;
-  lookup?: DnsLookup;
-}): Promise<NodeH1Pool> {
-  const [httpMod, httpsMod, streamMod] = await Promise.all([
-    import('node:http'),
-    import('node:https'),
-    import('node:stream'),
-  ]);
+function ipv4FromLookup(address: unknown): string | undefined {
+  if (typeof address === 'string' && address !== '') return address;
+  if (Array.isArray(address) && address.length > 0) {
+    const first = address[0] as { address?: string } | string;
+    if (typeof first === 'string') return first;
+    if (first && typeof first.address === 'string') return first.address;
+  }
+  return undefined;
+}
 
+function closeH2(handle: H2Session): void {
+  if (handle.ping) clearInterval(handle.ping);
+  if (!handle.session.closed && !handle.session.destroyed) {
+    handle.session.close();
+  }
+}
+
+async function connectH2(
+  node: NodeHttpMods,
+  url: URL,
+  opts: { rejectUnauthorized: boolean; resolveIpv4: (hostname: string) => Promise<string> },
+): Promise<Http2Session> {
+  const address = await opts.resolveIpv4(url.hostname);
+  const port = Number(url.port) || 443;
+
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const ok = (session: Http2Session) => {
+      if (settled) return;
+      settled = true;
+      resolve(session);
+    };
+
+    const servername = tlsServername(url.hostname);
+    const socket = node.tls.connect({
+      host: address,
+      port,
+      ALPNProtocols: ['h2'],
+      rejectUnauthorized: opts.rejectUnauthorized,
+      ...(servername ? { servername } : {}),
+    });
+    socket.setKeepAlive(true, TCP_KEEPALIVE_DELAY_MS);
+    socket.setTimeout(CONNECT_TIMEOUT_MS, () => {
+      socket.destroy();
+      fail(Object.assign(new Error('HTTP/2 connect timed out'), { code: 'ERR_HTTP2' }));
+    });
+    socket.once('error', fail);
+    socket.once('secureConnect', () => {
+      socket.setTimeout(0);
+      if (socket.alpnProtocol !== 'h2') {
+        socket.destroy();
+        fail(Object.assign(new Error('ALPN did not negotiate HTTP/2'), { code: 'ERR_HTTP2' }));
+        return;
+      }
+      const session = node.http2.connect(url.origin, {
+        createConnection: () => socket,
+      });
+      session.once('error', fail);
+      session.once('connect', () => ok(session));
+    });
+  });
+}
+
+function h2Fetch(
+  node: NodeHttpMods,
+  session: Http2Session,
+  url: URL,
+  init: RequestInit,
+): Promise<Response> {
+  return (async () => {
+    const { body, headers } = await materializeBody(init);
+    const method = (init.method ?? 'GET').toUpperCase();
+    const h2Headers: Http2Headers = {
+      ':method': method,
+      ':path': `${url.pathname}${url.search}`,
+      ':scheme': 'https',
+      ':authority': url.host,
+    };
+    for (const [key, value] of Object.entries(headers)) {
+      if (value === undefined || H2_FORBIDDEN.has(key.toLowerCase())) continue;
+      h2Headers[key] = value;
+    }
+
+    const toWeb = node.toWeb;
+    const signal = init.signal ?? undefined;
+
+    return await new Promise<Response>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason ?? new Error('aborted'));
+        return;
+      }
+      const req = session.request(h2Headers, { endStream: body === undefined });
+      const onAbort = () => {
+        req.close(node.http2.constants.NGHTTP2_CANCEL);
+        reject(signal?.reason ?? new Error('aborted'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      req.once('error', (error) => {
+        signal?.removeEventListener('abort', onAbort);
+        reject(error);
+      });
+      req.once('response', (incoming) => {
+        signal?.removeEventListener('abort', onAbort);
+        const status = Number(incoming[':status'] ?? 200);
+        const empty = status === 204 || status === 205 || status === 304 || method === 'HEAD';
+        resolve(
+          new Response(empty ? null : (toWeb(req) as ReadableStream<Uint8Array>), {
+            status,
+            headers: h2ToHeaders(incoming),
+          }),
+        );
+      });
+      if (body === undefined) {
+        if (!req.writableEnded) req.end();
+      } else {
+        req.end(body);
+      }
+    });
+  })();
+}
+
+function createNodeH1Pool(
+  node: NodeHttpMods,
+  opts: {
+    rejectUnauthorized: boolean;
+    resolveIpv4: (hostname: string) => Promise<string>;
+  },
+): NodeH1Pool {
   const shared = {
     keepAlive: true,
     keepAliveMsecs: TCP_KEEPALIVE_DELAY_MS,
     maxSockets: H1_CONNECTIONS,
     maxFreeSockets: 10,
     scheduling: 'lifo' as const,
-    family: 4,
-    autoSelectFamily: false,
-    ...(opts.lookup ? { lookup: opts.lookup as never } : {}),
   };
 
-  const httpAgent = new httpMod.Agent(shared as ConstructorParameters<typeof httpMod.Agent>[0]);
-  const httpsAgent = new httpsMod.Agent({
+  const httpAgent = new node.http.Agent(shared);
+  const httpsAgent = new node.https.Agent({
     ...shared,
     rejectUnauthorized: opts.rejectUnauthorized,
-  } as ConstructorParameters<typeof httpsMod.Agent>[0]);
+    maxCachedSessions: 100,
+  });
 
-  const toWeb = streamMod.Readable.toWeb.bind(streamMod.Readable);
+  const toWeb = node.toWeb;
 
   const fetch: FetchLike = async (input, init = {}) => {
     const url = new URL(input);
     const isHttps = url.protocol === 'https:';
-    const lib = isHttps ? httpsMod : httpMod;
+    const lib = isHttps ? node.https : node.http;
     const agent = isHttps ? httpsAgent : httpAgent;
     const { body, headers } = await materializeBody(init);
     const method = (init.method ?? 'GET').toUpperCase();
+    const address = await opts.resolveIpv4(url.hostname);
+    if (!headerHas(headers, 'host')) headers.host = url.host;
 
     return await new Promise<Response>((resolve, reject) => {
-      const reqOpts = {
+      const reqOpts: Record<string, unknown> = {
+        protocol: url.protocol,
+        hostname: address,
+        port: url.port || (isHttps ? 443 : 80),
+        path: `${url.pathname}${url.search}`,
         method,
         headers,
         agent,
         family: 4,
-        autoSelectFamily: false,
-        lookup: opts.lookup,
         signal: init.signal ?? undefined,
-      } as Parameters<typeof lib.request>[1];
-      const req = lib.request(url, reqOpts, (res) => {
+      };
+      if (isHttps) {
+        const servername = tlsServername(url.hostname);
+        if (servername) reqOpts['servername'] = servername;
+        reqOpts['rejectUnauthorized'] = opts.rejectUnauthorized;
+      }
+      const req = lib.request(reqOpts, (res) => {
         const status = res.statusCode ?? 200;
         const empty = status === 204 || status === 205 || status === 304 || method === 'HEAD';
-        let stream: ReadableStream<Uint8Array> | null = null;
-        if (!empty) {
-          stream = toWeb(res) as ReadableStream<Uint8Array>;
-        } else {
-          res.resume();
-        }
+        if (empty) res.resume();
         resolve(
-          new Response(stream, {
+          new Response(empty ? null : (toWeb(res) as ReadableStream<Uint8Array>), {
             status,
             statusText: res.statusMessage ?? '',
             headers: incomingToHeaders(res.headers),
@@ -454,104 +656,17 @@ function incomingToHeaders(raw: NodeJS.Dict<string | string[] | undefined>): Hea
   return headers;
 }
 
-function createUndiciAgent(
-  loaded: UndiciModule,
-  opts: { http2: boolean; rejectUnauthorized: boolean; lookup?: DnsLookup },
-): UndiciDispatcher | undefined {
-  const connectObject: Record<string, unknown> = {
-    timeout: CONNECT_TIMEOUT_MS,
-    family: 4,
-    autoSelectFamily: false,
-    rejectUnauthorized: opts.rejectUnauthorized,
-    keepAlive: true,
-    keepAliveInitialDelay: TCP_KEEPALIVE_DELAY_MS,
-    allowH2: opts.http2,
-  };
-  if (opts.lookup) connectObject.lookup = opts.lookup;
-
-  const connect = buildIpv4Connector(loaded, connectObject) ?? connectObject;
-
-  const shared = {
-    pipelining: 1,
-    keepAliveTimeout: KEEP_ALIVE_MS,
-    keepAliveMaxTimeout: KEEP_ALIVE_MAX_MS,
-    bodyTimeout: 0,
-    headersTimeout: 300_000,
-    autoSelectFamily: false,
-    connect,
-  };
-
-  const full: Record<string, unknown> = opts.http2
-    ? {
-        ...shared,
-        connections: H2_SESSIONS,
-        allowH2: true,
-        maxConcurrentStreams: 128,
-        pingInterval: H2_PING_MS,
-        initialWindowSize: 262_144,
-        connectionWindowSize: 524_288,
-      }
-    : {
-        ...shared,
-        connections: H1_CONNECTIONS,
-        allowH2: false,
-      };
-
-  const variants: Record<string, unknown>[] = [
-    full,
-    {
-      pipelining: 1,
-      keepAliveTimeout: KEEP_ALIVE_MS,
-      autoSelectFamily: false,
-      connections: opts.http2 ? H2_SESSIONS : H1_CONNECTIONS,
-      allowH2: opts.http2,
-      connect: connectObject,
-    },
-  ];
-
-  for (const options of variants) {
-    try {
-      return new loaded.Agent(options);
-    } catch {
-      // Older undici rejects unknown keys.
+function h2ToHeaders(raw: Http2Headers): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(raw)) {
+    if (key.startsWith(':') || value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, String(item));
+    } else {
+      headers.set(key, String(value));
     }
   }
-  return undefined;
-}
-
-function buildIpv4Connector(
-  loaded: UndiciModule,
-  connectObject: Record<string, unknown>,
-): UndiciConnector | undefined {
-  if (typeof loaded.buildConnector !== 'function') return undefined;
-  try {
-    return loaded.buildConnector(connectObject);
-  } catch {
-    try {
-      return loaded.buildConnector({
-        timeout: CONNECT_TIMEOUT_MS,
-        family: 4,
-        autoSelectFamily: false,
-        rejectUnauthorized: connectObject.rejectUnauthorized,
-        allowH2: connectObject.allowH2,
-        ...(connectObject.lookup ? { lookup: connectObject.lookup } : {}),
-      });
-    } catch {
-      return undefined;
-    }
-  }
-}
-
-function originOf(input: string): string {
-  try {
-    return new URL(input).origin;
-  } catch {
-    return input;
-  }
-}
-
-function isHttpsOrigin(origin: string): boolean {
-  return origin.startsWith('https:');
+  return headers;
 }
 
 /**
@@ -579,7 +694,8 @@ function isHttp2HandshakeFailure(error: unknown): boolean {
     code.includes('ERR_HTTP2') ||
     code.includes('ERR_SSL_WRONG_VERSION_NUMBER') ||
     code.includes('EPROTO') ||
-    code.includes('ERR_TLS')
+    code.includes('ERR_TLS') ||
+    code.includes('ERR_SSL')
   ) {
     return true;
   }
