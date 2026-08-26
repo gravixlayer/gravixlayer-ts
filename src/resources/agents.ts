@@ -11,6 +11,7 @@ import { readProjectDirectory } from '../core/fs.js';
 import { asRecord, str } from '../core/parse.js';
 import { iterSSEJson } from '../core/sse.js';
 import { createTarGz, type TarEntry } from '../core/tar.js';
+import { AGENT_BUILD_PHASE_LABELS, BuildProgress, stderrIsTty } from '../core/progress.js';
 import { sleep } from '../core/time.js';
 import type { RequestOptions } from '../core/transport.js';
 import { buildListEndpoint, pathSegment, SERVICES, type QueryValue } from '../core/url.js';
@@ -98,7 +99,11 @@ export interface WaitForBuildOptions extends RequestOptions {
   pollIntervalMs?: number;
   /** Milliseconds to wait before giving up. Defaults to 600000. */
   timeoutMs?: number;
-  /** Invoked when the build enters a new phase, not on every poll. */
+  /**
+   * Invoked when the build enters a new API phase, not on every poll.
+   *
+   * Supplying this disables the built-in BUILDING / VERIFYING timer on stderr.
+   */
   onPhase?: (status: AgentBuildStatusResponse) => void;
 }
 
@@ -214,6 +219,9 @@ export class Agents extends APIResource {
   /**
    * Wait for a build to finish.
    *
+   * On a TTY, prints BUILDING and VERIFYING with elapsed times (no percents).
+   * Pass {@link WaitForBuildOptions.onPhase} to handle updates yourself.
+   *
    * Resolves with the final status on success, throws {@link AgentBuildError}
    * when the build fails, and {@link AgentBuildTimeoutError} when it runs past
    * the timeout.
@@ -228,29 +236,41 @@ export class Agents extends APIResource {
     const timeoutMs = options.timeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
     const transport = requestOptions(options);
     const deadline = Date.now() + timeoutMs;
+    const progress = new BuildProgress(options.onPhase === undefined && stderrIsTty());
 
     let lastPhase = '';
     let lastStatus: AgentBuildStatusResponse | undefined;
 
-    for (;;) {
-      if (Date.now() > deadline) {
-        throw new AgentBuildTimeoutError(buildId, timeoutMs, lastStatus);
+    try {
+      for (;;) {
+        if (Date.now() > deadline) {
+          progress.stop();
+          throw new AgentBuildTimeoutError(buildId, timeoutMs, lastStatus);
+        }
+
+        const status = await this.getBuildStatus(buildId, transport);
+        lastStatus = status;
+
+        if (status.phase !== lastPhase) {
+          lastPhase = status.phase;
+          options.onPhase?.(status);
+        }
+
+        if (isTerminalAgentBuildStatus(status.status)) {
+          if (status.status === AgentBuildState.Completed) {
+            progress.succeed('Deployment successful');
+            return status;
+          }
+          const errorMsg = status.error || 'The build failed.';
+          progress.fail(errorMsg);
+          throw new AgentBuildError(buildId, errorMsg, status);
+        }
+
+        progress.noteStage(status.phase, AGENT_BUILD_PHASE_LABELS);
+        await sleep(pollIntervalMs, options.signal);
       }
-
-      const status = await this.getBuildStatus(buildId, transport);
-      lastStatus = status;
-
-      if (status.phase !== lastPhase) {
-        lastPhase = status.phase;
-        options.onPhase?.(status);
-      }
-
-      if (isTerminalAgentBuildStatus(status.status)) {
-        if (status.status === AgentBuildState.Completed) return status;
-        throw new AgentBuildError(buildId, status.error || 'The build failed.', status);
-      }
-
-      await sleep(pollIntervalMs, options.signal);
+    } finally {
+      progress.stop();
     }
   }
 

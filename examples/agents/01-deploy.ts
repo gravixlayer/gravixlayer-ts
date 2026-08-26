@@ -43,8 +43,6 @@ const agent = await client.agents.deploy({
   ports: [PORT],
   httpPort: PORT,
   isPublic: true,
-  // Called each time the build enters a new phase, not on every poll.
-  onPhase: (status) => console.log(`  ${status.phase.padEnd(12)} ${status.progressPercent}%`),
   timeoutMs: 900_000,
 });
 

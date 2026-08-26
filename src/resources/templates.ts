@@ -9,6 +9,7 @@
 
 import { GravixLayerError, GravixLayerInvalidArgumentError } from '../core/errors.js';
 import { asRecord } from '../core/parse.js';
+import { BuildProgress, TEMPLATE_BUILD_PHASE_LABELS, stderrIsTty } from '../core/progress.js';
 import { sleep } from '../core/time.js';
 import type { RequestOptions } from '../core/transport.js';
 import { buildListEndpoint, pathSegment, SERVICES, type QueryValue } from '../core/url.js';
@@ -94,9 +95,9 @@ export interface BuildAndWaitOptions extends BuildTemplateOptions {
   /** Milliseconds to wait before giving up. Defaults to 900000. */
   timeoutMs?: number;
   /**
-   * Invoked when the build enters a new phase, not on every poll.
+   * Invoked when the build enters a new API phase, not on every poll.
    *
-   * Use it to drive a progress display without polling yourself.
+   * Supplying this disables the built-in BUILDING / VERIFYING timer on stderr.
    */
   onPhase?: (status: TemplateBuildStatus) => void;
 }
@@ -120,6 +121,12 @@ function nonempty(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed === '' ? undefined : trimmed;
+}
+
+/** Template name for the built-in progress heading. */
+function templateBuildDisplayName(source: TemplateBuilder | Record<string, unknown>): string {
+  if (source instanceof TemplateBuilder) return source.name;
+  return nonempty(source['name']) ?? 'template';
 }
 
 /** Build and manage templates. */
@@ -196,16 +203,16 @@ export class Templates extends APIResource {
   /**
    * Start a build and wait for it to finish.
    *
+   * On a TTY, prints BUILDING and VERIFYING with elapsed times (no percents).
+   * Pass {@link BuildAndWaitOptions.onPhase} to handle updates yourself.
+   *
    * Resolves with the final status on success, throws
    * {@link TemplateBuildError} when the build fails, and
    * {@link TemplateBuildTimeoutError} when it runs past the timeout.
    *
    * @example
    * ```ts
-   * const status = await client.templates.buildAndWait(template, {
-   *   onPhase: (s) => console.log(s.phase, `${s.progressPercent}%`),
-   * });
-   * console.log('Built', status.templateId);
+   * const status = await client.templates.buildAndWait(template);
    * ```
    */
   async buildAndWait(
@@ -223,29 +230,47 @@ export class Templates extends APIResource {
     });
     const buildId = started.buildId;
     const deadline = Date.now() + timeoutMs;
+    const progress = new BuildProgress(
+      options.onPhase === undefined && stderrIsTty(),
+      `Building template ${templateBuildDisplayName(template)}...`,
+    );
 
     let lastPhase = '';
     let lastStatus: TemplateBuildStatus | undefined;
 
-    for (;;) {
-      if (Date.now() > deadline) {
-        throw new TemplateBuildTimeoutError(buildId, timeoutMs, lastStatus);
+    try {
+      for (;;) {
+        if (Date.now() > deadline) {
+          progress.stop();
+          throw new TemplateBuildTimeoutError(buildId, timeoutMs, lastStatus);
+        }
+
+        const status = await this.getBuildStatus(buildId, transport);
+        lastStatus = status;
+
+        if (status.phase !== lastPhase) {
+          lastPhase = status.phase;
+          options.onPhase?.(status);
+        }
+
+        if (isTerminalBuildState(status.status)) {
+          if (isSuccessfulBuildState(status.status)) {
+            progress.succeed(
+              'Template build successful',
+              status.templateId ? `  Template ID: ${status.templateId}\n` : undefined,
+            );
+            return status;
+          }
+          const errorMsg = status.error || 'The build failed.';
+          progress.fail(errorMsg);
+          throw new TemplateBuildError(buildId, errorMsg, status);
+        }
+
+        progress.noteStage(status.phase, TEMPLATE_BUILD_PHASE_LABELS);
+        await sleep(pollIntervalMs, options.signal);
       }
-
-      const status = await this.getBuildStatus(buildId, transport);
-      lastStatus = status;
-
-      if (status.phase !== lastPhase) {
-        lastPhase = status.phase;
-        options.onPhase?.(status);
-      }
-
-      if (isTerminalBuildState(status.status)) {
-        if (isSuccessfulBuildState(status.status)) return status;
-        throw new TemplateBuildError(buildId, status.error || 'The build failed.', status);
-      }
-
-      await sleep(pollIntervalMs, options.signal);
+    } finally {
+      progress.stop();
     }
   }
 

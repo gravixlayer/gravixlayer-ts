@@ -89,6 +89,6 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
-    "gravixlayer": "^0.1.14"
+    "gravixlayer": "^0.1.15"
   }
 }

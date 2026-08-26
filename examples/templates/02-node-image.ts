@@ -3,6 +3,7 @@
  *
  * Installing into a project directory with `run('npm install')` keeps
  * dependencies where `require` looks for them, which is what an app expects.
+ * `buildAndWait` prints BUILDING and VERIFYING with elapsed times.
  *
  * Run:
  *   export GRAVIXLAYER_API_KEY="your-api-key"
@@ -55,11 +56,7 @@ const template = new TemplateBuilder(
   .startCmd('node /app/server.js')
   .readyCmd(TemplateBuilder.waitForPort(8080), 300);
 
-console.log(`Building   : ${template.name}`);
-
-const status = await client.templates.buildAndWait(template, {
+await client.templates.buildAndWait(template, {
   pollIntervalMs: 10_000,
-  onPhase: (s) => console.log(`  ${s.phase.padEnd(12)} ${s.progressPercent}%`),
+  timeoutMs: 900_000,
 });
-
-console.log(`\nBuilt      : ${status.templateId}`);

@@ -57,7 +57,6 @@ const agent = await client.agents.deploy({
   protocols: ['http', 'a2a'],
   agentCard: card,
   isPublic: true,
-  onPhase: (status) => console.log(`  ${status.phase.padEnd(12)} ${status.progressPercent}%`),
   timeoutMs: 900_000,
 });
 

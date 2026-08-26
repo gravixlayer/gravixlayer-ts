@@ -60,11 +60,7 @@ const template = new TemplateBuilder(
   .startCmd('cd /app && uvicorn main:app --host 0.0.0.0 --port 8080')
   .readyCmd(TemplateBuilder.waitForPort(8080), 300);
 
-console.log(`Building   : ${template.name}`);
-
-const status = await client.templates.buildAndWait(template, {
+await client.templates.buildAndWait(template, {
   pollIntervalMs: 10_000,
-  onPhase: (s) => console.log(`  ${s.phase.padEnd(12)} ${s.progressPercent}%`),
+  timeoutMs: 900_000,
 });
-
-console.log(`\nBuilt      : ${status.templateId}`);

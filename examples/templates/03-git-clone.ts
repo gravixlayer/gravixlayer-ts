@@ -27,7 +27,8 @@ const template = new TemplateBuilder(
   `sdk-git-${Date.now()}`,
   'Template built from a git repository',
 )
-  .fromImage('node:20-slim')
+  // Node images newer than node:20 (use node:slim / current).
+  .fromImage('node:slim')
   .vcpu(2)
   .memory(1024)
   .disk(4096)
@@ -47,11 +48,7 @@ const template = new TemplateBuilder(
 
 console.log(`Repository : ${REPO} (${BRANCH})`);
 console.log(`Auth       : ${TOKEN ? 'token supplied' : 'none, so the repo must be public'}`);
-console.log(`Building   : ${template.name}`);
-
-const status = await client.templates.buildAndWait(template, {
+await client.templates.buildAndWait(template, {
   pollIntervalMs: 10_000,
-  onPhase: (s) => console.log(`  ${s.phase.padEnd(12)} ${s.progressPercent}%`),
+  timeoutMs: 900_000,
 });
-
-console.log(`\nBuilt      : ${status.templateId}`);

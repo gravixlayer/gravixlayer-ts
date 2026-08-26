@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `templates.buildAndWait` and `agents.waitForBuild` print BUILDING and
+  VERIFYING with elapsed times on a TTY (no percents). Pass `onPhase` to
+  keep driving progress yourself.
+
 ## [0.1.15] - 2026-08-25
 ### Changed
 
