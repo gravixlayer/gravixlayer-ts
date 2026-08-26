@@ -6,6 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-08-26
 ### Changed
 
 - `templates.buildAndWait` and `agents.waitForBuild` print BUILDING and
