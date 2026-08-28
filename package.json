@@ -1,6 +1,6 @@
 {
   "name": "gravixlayer",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Official TypeScript SDK for the GravixLayer API — cloud runtimes, templates, snapshots, and agents.",
   "keywords": [
     "gravixlayer",
