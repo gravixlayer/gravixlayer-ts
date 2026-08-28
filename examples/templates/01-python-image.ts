@@ -42,11 +42,7 @@ const template = new TemplateBuilder(
   .startCmd('uvicorn main:app --host 0.0.0.0 --port 8080 --app-dir /app')
   .readyCmd(TemplateBuilder.waitForPort(8080), 300);
 
-const status = await client.templates.buildAndWait(template, {
+await client.templates.buildAndWait(template, {
   pollIntervalMs: 10_000,
   timeoutMs: 900_000,
 });
-
-if (status.templateId) {
-  console.log(`Use it     : client.runtime.create({ template: '${template.name}' })`);
-}

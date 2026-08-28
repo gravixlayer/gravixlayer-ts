@@ -18,6 +18,8 @@ import { GravixLayer, TemplateBuilder } from 'gravixlayer';
 
 const client = new GravixLayer();
 
+// Classic Dockerfile syntax only. A BuildKit heredoc (`COPY <<`) is rejected
+// when the host prepares the build image.
 const DOCKERFILE = `FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1
@@ -30,19 +32,16 @@ RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
 
 WORKDIR /app
 
-COPY <<'PY' /app/main.py
-from fastapi import FastAPI
-
-app = FastAPI(title="Dockerfile template")
-
-@app.get("/")
-def root():
-    return {"message": "Built from a Dockerfile"}
-
-@app.get("/health")
-def health():
-    return {"status": "healthy"}
-PY
+RUN echo 'from fastapi import FastAPI\\n\\
+app = FastAPI(title="Dockerfile template")\\n\\
+\\n\\
+@app.get("/")\\n\\
+def root():\\n\\
+    return {"message": "Built from a Dockerfile"}\\n\\
+\\n\\
+@app.get("/health")\\n\\
+def health():\\n\\
+    return {"status": "healthy"}' > main.py
 
 EXPOSE 8080
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

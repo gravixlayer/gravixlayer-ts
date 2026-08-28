@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-08-26
+### Fixed
+
+- Fixed Template build pipeline bug
+
 ## [0.1.16] - 2026-08-26
 ### Changed
 

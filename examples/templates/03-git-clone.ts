@@ -46,8 +46,6 @@ const template = new TemplateBuilder(
   .startCmd('cd /app && node app.js')
   .readyCmd(TemplateBuilder.waitForPort(8080), 300);
 
-console.log(`Repository : ${REPO} (${BRANCH})`);
-console.log(`Auth       : ${TOKEN ? 'token supplied' : 'none, so the repo must be public'}`);
 await client.templates.buildAndWait(template, {
   pollIntervalMs: 10_000,
   timeoutMs: 900_000,

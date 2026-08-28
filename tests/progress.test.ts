@@ -7,6 +7,7 @@ import {
   TEMPLATE_BUILD_PHASE_LABELS,
   displayPhaseLabel,
   formatDuration,
+  nextDisplayStage,
 } from '../src/core/progress.js';
 
 describe('formatDuration', () => {
@@ -70,11 +71,34 @@ describe('PhaseSpinner', () => {
   });
 });
 
+describe('nextDisplayStage', () => {
+  it('advances BUILDING then VERIFYING and ignores a later building flicker', () => {
+    expect(nextDisplayStage('', 'building')).toBe('BUILDING');
+    expect(nextDisplayStage('BUILDING', 'uploading')).toBe('VERIFYING');
+    expect(nextDisplayStage('VERIFYING', 'building')).toBeUndefined();
+    expect(nextDisplayStage('VERIFYING', 'preparing')).toBeUndefined();
+    expect(nextDisplayStage('VERIFYING', 'finalizing')).toBeUndefined();
+    expect(nextDisplayStage('VERIFYING', 'distributing')).toBeUndefined();
+    expect(nextDisplayStage('VERIFYING', 'completed')).toBeUndefined();
+  });
+
+  it('does not treat READY as a spinner stage', () => {
+    expect(nextDisplayStage('BUILDING', 'completed')).toBeUndefined();
+    expect(nextDisplayStage('', 'completed')).toBeUndefined();
+  });
+
+  it('ignores unknown phases after a known stage', () => {
+    expect(nextDisplayStage('VERIFYING', 'snapshot')).toBeUndefined();
+    expect(nextDisplayStage('', 'custom')).toBe('CUSTOM');
+  });
+});
+
 describe('BuildProgress', () => {
   it('is a no-op when disabled so tests and CI stay quiet', () => {
     const progress = new BuildProgress(false, 'Building template demo...');
     progress.noteStage('building', TEMPLATE_BUILD_PHASE_LABELS);
     progress.noteStage('uploading', TEMPLATE_BUILD_PHASE_LABELS);
+    progress.noteStage('building', TEMPLATE_BUILD_PHASE_LABELS);
     progress.succeed('Template build successful');
     progress.stop();
   });

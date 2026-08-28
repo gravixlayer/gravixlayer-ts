@@ -61,6 +61,40 @@ export function displayPhaseLabel(
   return labels[phase] ?? phase.toUpperCase();
 }
 
+/** User-visible stages only move forward. READY is printed by `succeed`, not as a spinner. */
+const STAGE_RANK: Readonly<Record<string, number>> = {
+  BUILDING: 0,
+  VERIFYING: 1,
+  READY: 2,
+};
+
+/**
+ * Next spinner label, or `undefined` when the stage must not change.
+ *
+ * After VERIFYING, a later `building` (or any earlier/unknown phase) is ignored
+ * so a control-plane flicker cannot print a second BUILDING line. `completed`
+ * maps to READY and is reserved for the terminal success line.
+ */
+export function nextDisplayStage(
+  current: string,
+  rawPhase: string,
+  labels: Readonly<Record<string, string>> = TEMPLATE_BUILD_PHASE_LABELS,
+): string | undefined {
+  const label = displayPhaseLabel(rawPhase, labels);
+  if (!label || label === current || label === 'READY') {
+    return undefined;
+  }
+  const nextRank = STAGE_RANK[label];
+  const prevRank = STAGE_RANK[current] ?? -1;
+  if (nextRank === undefined) {
+    return prevRank >= 0 ? undefined : label;
+  }
+  if (nextRank < prevRank) {
+    return undefined;
+  }
+  return label;
+}
+
 /** True when the process can show an in-place spinner (interactive TTY). */
 export function stderrIsTty(): boolean {
   return stderr()?.isTTY === true;
@@ -149,10 +183,10 @@ export class BuildProgress {
     }
   }
 
-  /** Advance the spinner when the *display* stage changes (not raw API phase). */
+  /** Advance the spinner when the *display* stage moves forward. */
   noteStage(rawPhase: string, labels: Readonly<Record<string, string>>): void {
-    const label = displayPhaseLabel(rawPhase, labels);
-    if (label === this.lastDisplay) {
+    const label = nextDisplayStage(this.lastDisplay, rawPhase, labels);
+    if (label === undefined) {
       return;
     }
     const now = monotonicMs();
