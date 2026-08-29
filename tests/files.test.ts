@@ -134,6 +134,30 @@ describe('uploads', () => {
     expect(result.path).toBe('/workspace/data.bin');
   });
 
+  it('reads the dest path from the files object body', async () => {
+    const { client } = testClient([
+      jsonResponse({
+        files: [
+          {
+            path: '/workspace/project/run.sh',
+            name: 'run.sh',
+            type: 'file',
+            size: 12,
+          },
+        ],
+        partial_failure: false,
+      }),
+    ]);
+    const result = await client.runtime.file.upload(
+      RUNTIME_ID,
+      '/workspace/project/run.sh',
+      '#!/bin/sh\n',
+    );
+    expect(result.path).toBe('/workspace/project/run.sh');
+    expect(result.name).toBe('run.sh');
+    expect(result.size).toBe(10);
+  });
+
   it('synthesises a result when the API answers with an empty body', async () => {
     const { client } = testClient([jsonResponse({})]);
     const result = await client.runtime.file.upload(RUNTIME_ID, '/tmp/x.txt', 'hi');

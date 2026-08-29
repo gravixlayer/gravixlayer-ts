@@ -147,6 +147,22 @@ export interface ReplaceOptions extends RequestOptions {
   dryRun?: boolean;
 }
 
+/** First file from `POST .../files`: `{ files: [...] }`, a bare list, or one object. */
+function firstUploadedFile(body: unknown): Record<string, unknown> | undefined {
+  if (Array.isArray(body)) {
+    return body.length > 0 ? asRecord(body[0]) : undefined;
+  }
+  const rec = asRecord(body);
+  const files = rec['files'];
+  if (Array.isArray(files) && files.length > 0) {
+    return asRecord(files[0]);
+  }
+  if (typeof rec['path'] === 'string' || typeof rec['name'] === 'string') {
+    return rec;
+  }
+  return undefined;
+}
+
 /** Split request options away from operation-specific fields. */
 function requestOptions(options: RequestOptions): RequestOptions {
   const out: RequestOptions = {};
@@ -298,9 +314,8 @@ export class RuntimeFile extends APIResource {
       options: requestOptions(options),
     });
 
-    const first = Array.isArray(body) ? body[0] : body;
-    const record = asRecord(first);
-    if (Object.keys(record).length === 0) {
+    const record = firstUploadedFile(body);
+    if (!record) {
       return { path, name, type: 'file', size: blob.size };
     }
 
