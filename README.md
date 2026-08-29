@@ -230,7 +230,7 @@ Values are write-only. What comes back is masked.
 
 Every failure extends `GravixLayerError`. Connection failures and 429, 502, 503,
 and 504 are retried automatically, honouring `Retry-After` when the API sends
-one.
+one. HTTP 403 (quota or permission) is not retried.
 
 ```ts
 import { GravixLayerError, GravixLayerRateLimitError } from 'gravixlayer';

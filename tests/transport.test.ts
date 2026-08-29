@@ -39,6 +39,7 @@ const NO_TIMEOUT = { timeout: 0 } as const;
 describe('error mapping', () => {
   const cases = [
     [400, GravixLayerBadRequestError],
+    [402, GravixLayerBadRequestError],
     [403, GravixLayerBadRequestError],
     [404, GravixLayerBadRequestError],
     [409, GravixLayerBadRequestError],
@@ -173,7 +174,40 @@ describe('retries', () => {
     }
   });
 
-  it.each([400, 401, 403, 404, 409, 422, 500])('does not retry %i', async (status) => {
+  it('does not retry 403', async () => {
+    const { client, http } = testClient(
+      [errorResponse(403, 'forbidden'), jsonResponse({ runtimes: [], total: 0 })],
+      { maxRetries: 3 },
+    );
+    const error = await expectRejection(client.runtime.list(), GravixLayerBadRequestError);
+    expect(error.status).toBe(403);
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it('retries 429 regardless of body', async () => {
+    const timers = withoutBackoff();
+    try {
+      const { client, http } = testClient(
+        [
+          new Response(
+            JSON.stringify({
+              error: 'Runtime quota exceeded',
+              exceeded: ['vcpu'],
+            }),
+            { status: 429, headers: { 'content-type': 'application/json' } },
+          ),
+          jsonResponse({ runtimes: [], total: 0 }),
+        ],
+        { maxRetries: 1, ...NO_TIMEOUT },
+      );
+      await client.runtime.list();
+      expect(http.requests).toHaveLength(2);
+    } finally {
+      timers.mockRestore();
+    }
+  });
+
+  it.each([400, 401, 402, 403, 404, 409, 422, 500])('does not retry %i', async (status) => {
     const { client, http } = testClient([errorResponse(status)], { maxRetries: 3 });
     await expect(client.runtime.list()).rejects.toBeInstanceOf(GravixLayerError);
     expect(http.requests).toHaveLength(1);

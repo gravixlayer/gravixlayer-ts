@@ -5,6 +5,12 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.1.19] - 2026-08-29
+### Changed
+- Occupancy quota is HTTP 403 and is not retried. 429 is only the create-rate
+  window and still retries with backoff.
+
 ## [0.1.18] - 2026-08-29
 ### Fixed
 - Fixed run code context bug

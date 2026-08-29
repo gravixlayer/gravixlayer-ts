@@ -72,7 +72,8 @@ export interface ClientOptions {
    * How many times to retry a transient failure.
    *
    * Applies to connection errors and to 429, 502, 503, and 504 responses, with
-   * exponential backoff and jitter. Defaults to 3.
+   * exponential backoff and jitter. HTTP 403 (quota or permission) is not
+   * retried. Defaults to 3.
    */
   maxRetries?: number;
   /** Extra headers sent with every request. */

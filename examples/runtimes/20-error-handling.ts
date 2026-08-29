@@ -21,7 +21,7 @@ import {
 } from 'gravixlayer';
 
 // Retries apply to connection failures and to 429, 502, 503, and 504, with
-// exponential backoff and jitter. Everything else fails immediately.
+// exponential backoff and jitter. HTTP 403 (quota) is not retried.
 const client = new GravixLayer({
   timeout: 30_000,
   maxRetries: 3,
