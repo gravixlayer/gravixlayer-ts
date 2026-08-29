@@ -188,7 +188,8 @@ First release. Full coverage of the GravixLayer API.
   `trace`, `traced`, and `runtimeSpan` helpers, active only when
   `@opentelemetry/api` is installed and telemetry is enabled.
 
-[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.18...HEAD
+[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.19...HEAD
+[0.1.19]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.19
 [0.1.18]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.18
 [0.1.17]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.17
 [0.1.16]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.16
