@@ -139,7 +139,6 @@ function headersToObject(headers: Headers): Record<string, string> {
   return out;
 }
 
-
 /** Wrap a stream so `onDone` runs exactly once when it completes or is cancelled. */
 function withStreamCleanup(
   stream: ReadableStream<Uint8Array>,

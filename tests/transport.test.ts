@@ -134,9 +134,7 @@ describe('error mapping', () => {
       ),
     ]);
     const error = await expectRejection(client.runtime.list(), GravixLayerBadRequestError);
-    expect(error.message).toBe(
-      'CPU quota exceeded. Reduce running runtimes or upgrade your tier.',
-    );
+    expect(error.message).toBe('CPU quota exceeded. Reduce running runtimes or upgrade your tier.');
     expect(error.status).toBe(403);
     expect(error.code).toBe('quota_exceeded');
     expect((error.body as { exceeded: string[] }).exceeded).toEqual(['vcpu']);
