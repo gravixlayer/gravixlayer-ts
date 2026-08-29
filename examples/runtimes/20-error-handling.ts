@@ -87,6 +87,7 @@ try {
   } else if (error instanceof GravixLayerError) {
     console.error(`Request failed: ${error.message}`);
     console.error(`  status     : ${error.status ?? 'n/a'}`);
+    console.error(`  code       : ${error.code ?? 'n/a'}`);
     console.error(`  request id : ${error.requestId ?? 'n/a'}`);
   } else {
     throw error;

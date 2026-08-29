@@ -8,6 +8,7 @@
 
 import {
   errorFromStatus,
+  formatErrorMessage,
   GravixLayerAbortError,
   GravixLayerConnectionError,
   GravixLayerError,
@@ -260,9 +261,17 @@ export class ServiceHandle {
 
     const text = await response.text();
     if (!response.ok) {
-      throw errorFromStatus(response.status, text.trim() || 'The service returned an error.', {
-        body: text,
-      });
+      let parsed: unknown;
+      try {
+        parsed = text ? JSON.parse(text) : undefined;
+      } catch {
+        parsed = undefined;
+      }
+      throw errorFromStatus(
+        response.status,
+        formatErrorMessage(text, parsed) || 'The service returned an error.',
+        { body: parsed ?? text },
+      );
     }
 
     try {

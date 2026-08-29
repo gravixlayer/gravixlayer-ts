@@ -12,6 +12,7 @@ import {
   GravixLayerInvalidArgumentError,
   GravixLayerTimeoutError,
   errorFromStatus,
+  formatErrorMessage,
 } from './errors.js';
 import { sleep } from './time.js';
 import { buildUrl, withQuery, type QueryValue } from './url.js';
@@ -138,28 +139,6 @@ function headersToObject(headers: Headers): Record<string, string> {
   return out;
 }
 
-/**
- * Derive a human-readable message from an error response body.
- *
- * The API returns JSON envelopes such as `{"error": "..."}`; surfacing that
- * string reads far better than the raw payload, which is still available on
- * `error.body`.
- */
-function messageFromBody(text: string, parsed: unknown): string {
-  if (parsed && typeof parsed === 'object') {
-    const record = parsed as Record<string, unknown>;
-    for (const key of ['error', 'message', 'detail', 'msg'] as const) {
-      const value = record[key];
-      if (typeof value === 'string' && value.trim() !== '') return value;
-      // Some handlers nest the description one level deeper.
-      if (value && typeof value === 'object') {
-        const nested = (value as Record<string, unknown>)['message'];
-        if (typeof nested === 'string' && nested.trim() !== '') return nested;
-      }
-    }
-  }
-  return text.trim() === '' ? 'Request failed.' : text;
-}
 
 /** Wrap a stream so `onDone` runs exactly once when it completes or is cancelled. */
 function withStreamCleanup(
@@ -488,7 +467,7 @@ export class Transport {
       parsed = undefined;
     }
 
-    return errorFromStatus(response.status, messageFromBody(text, parsed), {
+    return errorFromStatus(response.status, formatErrorMessage(text, parsed), {
       headers: headersToObject(response.headers),
       body: parsed ?? text,
     });

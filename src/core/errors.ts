@@ -16,8 +16,49 @@ export interface GravixLayerErrorContext {
   headers?: Record<string, string>;
   /** Parsed JSON body, or the raw text when the body was not JSON. */
   body?: unknown;
+  /** Machine-readable API `code`, when the body supplied one. */
+  code?: string;
   /** The underlying error, for connection and abort failures. */
   cause?: unknown;
+}
+
+const MESSAGE_KEYS = ['message', 'error', 'detail', 'msg'] as const;
+
+/** Pick the shortest useful product line from an API error body. */
+export function formatErrorMessage(text: string, parsed: unknown): string {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const record = parsed as Record<string, unknown>;
+    for (const key of MESSAGE_KEYS) {
+      const found = stringField(record[key]);
+      if (found !== undefined) return found;
+    }
+  }
+  const trimmed = text.trim();
+  return trimmed === '' ? 'Request failed.' : trimmed;
+}
+
+/** Read `code` from an API error body. Non-string values are ignored. */
+export function codeFromBody(parsed: unknown): string | undefined {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const code = (parsed as Record<string, unknown>).code;
+  if (typeof code !== 'string') return undefined;
+  const trimmed = code.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
+
+function stringField(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const nested = (value as Record<string, unknown>).message;
+    if (typeof nested === 'string') {
+      const trimmed = nested.trim();
+      return trimmed === '' ? undefined : trimmed;
+    }
+  }
+  return undefined;
 }
 
 /** Base class for every error the SDK raises. */
@@ -28,6 +69,8 @@ export class GravixLayerError extends Error {
   readonly headers: Record<string, string> | undefined;
   /** Parsed JSON body, or raw text when the response was not JSON. */
   readonly body: unknown;
+  /** API `code` (for example `quota_exceeded`), when the body supplied one. */
+  readonly code: string | undefined;
   /**
    * Server-side request identifier, when the API supplies one. Include this
    * when reporting a problem. May be `undefined`.
@@ -40,12 +83,18 @@ export class GravixLayerError extends Error {
     this.status = context.status;
     this.headers = context.headers;
     this.body = context.body;
+    this.code = context.code ?? codeFromBody(context.body);
     this.requestId = context.headers
       ? (context.headers['x-request-id'] ?? context.headers['x-correlation-id'])
       : undefined;
 
     // Keeps `instanceof` working when the package is downleveled by a bundler.
     Object.setPrototypeOf(this, new.target.prototype);
+  }
+
+  /** Same as Python `str(exc)`: the product line only, no class prefix. */
+  override toString(): string {
+    return this.message;
   }
 }
 

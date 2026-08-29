@@ -241,7 +241,7 @@ try {
   if (error instanceof GravixLayerRateLimitError) {
     console.error(`Retry after ${error.retryAfterSeconds ?? 'a while'}s.`);
   } else if (error instanceof GravixLayerError) {
-    console.error(error.status, error.message, error.requestId);
+    console.error(error.message, error.status, error.code, error.requestId);
   } else {
     throw error;
   }

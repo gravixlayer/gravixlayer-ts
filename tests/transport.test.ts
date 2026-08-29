@@ -103,6 +103,7 @@ describe('error mapping', () => {
 
     const error = await expectRejection(client.runtime.list(), GravixLayerBadRequestError);
     expect(error.message).toBe('template not found');
+    expect(error.code).toBe('E_TEMPLATE');
     expect(error.body).toEqual({ error: 'template not found', code: 'E_TEMPLATE' });
   });
 
@@ -118,6 +119,27 @@ describe('error mapping', () => {
     ]);
     const error = await expectRejection(client.runtime.list(), GravixLayerBadRequestError);
     expect(error.message).toBe('quota exceeded');
+  });
+
+  it('prefers the product message over the error label', async () => {
+    const { client } = testClient([
+      jsonResponse(
+        {
+          error: 'Runtime quota exceeded',
+          code: 'quota_exceeded',
+          message: 'CPU quota exceeded. Reduce running runtimes or upgrade your tier.',
+          exceeded: ['vcpu'],
+        },
+        403,
+      ),
+    ]);
+    const error = await expectRejection(client.runtime.list(), GravixLayerBadRequestError);
+    expect(error.message).toBe(
+      'CPU quota exceeded. Reduce running runtimes or upgrade your tier.',
+    );
+    expect(error.status).toBe(403);
+    expect(error.code).toBe('quota_exceeded');
+    expect((error.body as { exceeded: string[] }).exceeded).toEqual(['vcpu']);
   });
 
   it('exposes response headers and a request id when present', async () => {
@@ -181,6 +203,7 @@ describe('retries', () => {
     );
     const error = await expectRejection(client.runtime.list(), GravixLayerBadRequestError);
     expect(error.status).toBe(403);
+    expect(error.message).toBe('forbidden');
     expect(http.requests).toHaveLength(1);
   });
 
