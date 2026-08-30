@@ -12,7 +12,7 @@
 import { asRecord, num } from '../core/parse.js';
 import type { RequestOptions } from '../core/transport.js';
 import { buildListEndpoint, encodePathSegment, SERVICES, type QueryValue } from '../core/url.js';
-import { assertNonEmpty, assertRuntimeId } from '../core/validate.js';
+import { assertNonEmpty, assertOneOf, assertRuntimeId } from '../core/validate.js';
 import {
   parseSnapshot,
   SnapshotKind,
@@ -94,10 +94,11 @@ export class Snapshots extends APIResource {
     assertRuntimeId(runtimeId);
     assertNonEmpty(name, 'name');
 
+    const kind = assertOneOf(options.kind ?? SnapshotKind.Cold, ['cold', 'hot'] as const, 'kind');
     const body: Record<string, unknown> = {
       runtime_id: runtimeId,
       name,
-      kind: options.kind ?? SnapshotKind.Cold,
+      kind,
     };
     if (options.description !== undefined) body['description'] = options.description;
 

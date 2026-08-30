@@ -441,6 +441,10 @@ describe('snapshots', () => {
       GravixLayerInvalidArgumentError,
     );
     await expectRejection(client.snapshots.create(RUNTIME_ID, ''), GravixLayerInvalidArgumentError);
+    await expectRejection(
+      client.snapshots.create(RUNTIME_ID, 'name', { kind: 'warm' }),
+      GravixLayerInvalidArgumentError,
+    );
     expect(http.requests).toHaveLength(0);
   });
 
