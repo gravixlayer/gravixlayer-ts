@@ -5,6 +5,12 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.1.21] - 2026-08-29
+
+## Fixed
+- Fixed template build pipeline bug
+
 ## [0.1.20] - 2026-08-29
 ### Changed
 - API errors prefer the product `message` over the short `error` label, and
