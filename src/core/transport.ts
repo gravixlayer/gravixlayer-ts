@@ -30,6 +30,12 @@ export const SUCCESS_STATUS: ReadonlySet<number> = new Set([200, 201, 202, 204, 
  */
 export const RETRYABLE_STATUS: ReadonlySet<number> = new Set([429, 502, 503, 504]);
 
+/**
+ * Methods safe to send again after a lost response. POST and PATCH are not:
+ * the server may already have created the resource.
+ */
+const REPLAYABLE_METHOD: ReadonlySet<string> = new Set(['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS']);
+
 /** Longest delay honoured from a `Retry-After` header, in milliseconds. */
 const MAX_RETRY_AFTER_MS = 60_000;
 
@@ -356,7 +362,7 @@ export class Transport {
         if (error instanceof GravixLayerAbortError) throw error;
         if (error instanceof GravixLayerInvalidArgumentError) throw error;
         lastError = error;
-        if (attempt < maxRetries) {
+        if (REPLAYABLE_METHOD.has(method) && attempt < maxRetries) {
           await backoffSleep(backoffMs(attempt), userSignal);
           continue;
         }
@@ -365,7 +371,11 @@ export class Transport {
 
       if (SUCCESS_STATUS.has(response.status)) return response;
 
-      if (RETRYABLE_STATUS.has(response.status) && attempt < maxRetries) {
+      if (
+        RETRYABLE_STATUS.has(response.status) &&
+        (response.status === 429 || REPLAYABLE_METHOD.has(method)) &&
+        attempt < maxRetries
+      ) {
         const retryAfter = parseRetryAfter(response.headers);
         // Release the connection without blocking the backoff on it.
         void response.body?.cancel().catch(() => undefined);

@@ -490,6 +490,8 @@ export interface CommandRunResponse {
   /** Wall-clock duration in milliseconds. */
   durationMs: number;
   success: boolean;
+  /** True when the command was killed because it reached its deadline. */
+  timedOut: boolean;
   /** Transport-level error, distinct from a non-zero exit code. */
   error?: string;
 }
@@ -501,10 +503,42 @@ export function parseCommandRunResponse(data: Record<string, unknown>): CommandR
     exitCode: num(data, 'exit_code'),
     durationMs: num(data, 'duration_ms'),
     success: bool(data, 'success', num(data, 'exit_code') === 0),
+    timedOut: bool(data, 'timed_out', false),
   };
   const error = optStr(data, 'error');
   if (error !== undefined) response.error = error;
   return response;
+}
+
+/** A command that was started in the background, or retained after it exited. */
+export interface CommandInfo {
+  pid: number;
+  command: string;
+  args: string[];
+  workingDir: string;
+  background: boolean;
+  status: string;
+  exitCode: number | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationMs: number | null;
+  timedOut: boolean;
+}
+
+export function parseCommandInfo(data: Record<string, unknown>): CommandInfo {
+  return {
+    pid: num(data, 'pid'),
+    command: str(data, 'command'),
+    args: strArray(data, 'args'),
+    workingDir: str(data, 'working_dir'),
+    background: bool(data, 'background', false),
+    status: str(data, 'status'),
+    exitCode: optNum(data, 'exit_code') ?? null,
+    startedAt: optStr(data, 'started_at') ?? null,
+    endedAt: optStr(data, 'ended_at') ?? null,
+    durationMs: optNum(data, 'duration_ms') ?? null,
+    timedOut: bool(data, 'timed_out', false),
+  };
 }
 
 /**
@@ -700,6 +734,11 @@ export class Execution {
   /** Wall-clock duration in milliseconds. `0` when the API did not report one. */
   get durationMs(): number {
     return this.isCommand ? (this.raw as CommandRunResponse).durationMs : 0;
+  }
+
+  /** True when a command was killed because it reached its deadline. */
+  get timedOut(): boolean {
+    return this.isCommand ? (this.raw as CommandRunResponse).timedOut : false;
   }
 
   /** Captured streams, one line per entry. */

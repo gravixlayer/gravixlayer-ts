@@ -194,6 +194,31 @@ describe('retries', () => {
     }
   });
 
+  it('does not replay a POST after a 503, because the server may have done the work', async () => {
+    const { client, http } = testClient([errorResponse(503), jsonResponse(runtimePayload())], {
+      maxRetries: 3,
+    });
+    await expect(
+      client.runtime.create({ cloud: 'aws', region: 'us-east-1' }),
+    ).rejects.toBeInstanceOf(GravixLayerServerError);
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it('still retries a rate-limited POST, because the server refused it', async () => {
+    const timers = withoutBackoff();
+    try {
+      const { client, http } = testClient(
+        [errorResponse(429, 'slow down'), jsonResponse(runtimePayload())],
+        { maxRetries: 1, ...NO_TIMEOUT },
+      );
+      const runtime = await client.runtime.create({ cloud: 'aws', region: 'us-east-1' });
+      expect(runtime.runtimeId).toBe(RUNTIME_ID);
+      expect(http.requests).toHaveLength(2);
+    } finally {
+      timers.mockRestore();
+    }
+  });
+
   it('does not retry 403', async () => {
     const { client, http } = testClient(
       [errorResponse(403, 'forbidden'), jsonResponse({ runtimes: [], total: 0 })],

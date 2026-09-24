@@ -5,6 +5,19 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.22] - 2026-08-29
+### Fixed
+- POST and PATCH are no longer retried after a connection failure or a 502, 503, or 504. A retry could repeat work the server had already done. A 429 is still retried, because the server refused the call. GET, PUT, and DELETE keep their retries.
+
+### Added
+- `runCmd(..., { background: true })` returns a `CommandHandle` (`wait`, `kill`,
+  `refresh`, `disconnect`). `client.runtime.command` and `sandbox.command` list,
+  inspect, attach to, and stop those commands. Command results include
+  `timedOut`, and a live stream uses the server's `duration_ms`.
+- `wait()` and `command.connect()` throw `GravixLayerConnectionError` when the
+  stream breaks before the command ends, because a background command may
+  still be running. A broken `runCmd` stream still returns a failed result
+  with the message on stderr, and one that closes without an `end` throws.
 
 ## [0.1.21] - 2026-08-29
 

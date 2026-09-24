@@ -22,4 +22,5 @@ scripts/release.sh
 *.tgz
 tti.ts
 tti-isorun.mjs
+examples/runtimes/internal/
 .cursor/

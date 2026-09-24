@@ -7,8 +7,8 @@
  * git, and published ports live on the nested resources.
  */
 
-import { GravixLayerInvalidArgumentError } from '../../core/errors.js';
-import { asRecord, num, optStr, parseList, str } from '../../core/parse.js';
+import { GravixLayerConnectionError, GravixLayerInvalidArgumentError } from '../../core/errors.js';
+import { asRecord, bool, num, optNum, optStr, parseList, str } from '../../core/parse.js';
 import { iterSSEJson } from '../../core/sse.js';
 import { timeoutForGuestDeadline } from '../../core/time.js';
 import type { RequestOptions } from '../../core/transport.js';
@@ -16,6 +16,7 @@ import { buildListEndpoint, pathSegment, SERVICES } from '../../core/url.js';
 import { assertNonEmpty, assertPositiveInt, assertRuntimeId } from '../../core/validate.js';
 import {
   parseCodeRunResponse,
+  parseCommandInfo,
   parseCommandRunResponse,
   parseExecutionError,
   parseExecutionResult,
@@ -27,6 +28,7 @@ import {
   type CodeContext,
   type CodeContextDeleteResponse,
   type CodeRunResponse,
+  type CommandInfo,
   type CommandRunResponse,
   type ExecutionError,
   type ExecutionLogs,
@@ -119,6 +121,8 @@ export interface RunCommandOptions extends RequestOptions, CommandCallbacks {
   environment?: Record<string, string>;
   /** Seconds before the command is killed. */
   timeoutSeconds?: number;
+  /** Start the command and return as soon as it is running. */
+  background?: boolean;
 }
 
 /** Callbacks that stream a code execution's output as it runs. */
@@ -149,7 +153,7 @@ export interface RunCodeOptions extends RequestOptions, CodeCallbacks {
 export type CommandStreamEvent =
   | { type: 'stdout'; data: string }
   | { type: 'stderr'; data: string }
-  | { type: 'end'; exitCode: number }
+  | { type: 'end'; exitCode: number; durationMs?: number; timedOut?: boolean }
   | { type: 'error'; message: string };
 
 /** An event from a streaming code execution. */
@@ -192,6 +196,85 @@ function executionOptions(options: RequestOptions & { timeoutSeconds?: number })
   return out;
 }
 
+/** Normalize command SSE frames. Ends after the terminal `end` or `error`. */
+async function* commandFrames(
+  stream: ReadableStream<Uint8Array>,
+): AsyncGenerator<CommandStreamEvent, void, undefined> {
+  for await (const payload of iterSSEJson<Record<string, unknown>>(stream)) {
+    const record = asRecord(payload);
+    switch (str(record, 'type')) {
+      case 'stdout':
+        yield { type: 'stdout', data: str(record, 'data') };
+        break;
+      case 'stderr':
+        yield { type: 'stderr', data: str(record, 'data') };
+        break;
+      case 'end': {
+        const end: CommandStreamEvent = { type: 'end', exitCode: num(record, 'exit_code') };
+        const durationMs = optNum(record, 'duration_ms');
+        if (durationMs !== undefined) end.durationMs = durationMs;
+        if (record['timed_out'] !== undefined) end.timedOut = bool(record, 'timed_out');
+        yield end;
+        return;
+      }
+      case 'error':
+        yield { type: 'error', message: str(record, 'message') };
+        return;
+      default:
+        break;
+    }
+  }
+}
+
+/**
+ * Collect a command stream into one result, calling back as output arrives.
+ *
+ * `detached` commands outlive the stream, so a broken stream says nothing
+ * about how they ended and is thrown. Otherwise the command stops with its
+ * stream, and the failure is reported the way the command's own failure
+ * would be, so callers have one path to handle.
+ */
+async function collectCommand(
+  events: AsyncIterable<CommandStreamEvent>,
+  callbacks: CommandCallbacks,
+  detached: boolean,
+): Promise<CommandRunResponse> {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const startedAt = Date.now();
+  const result = (exitCode: number, durationMs?: number, timedOut = false): CommandRunResponse => ({
+    stdout: stdout.join(''),
+    stderr: stderr.join(''),
+    exitCode,
+    durationMs: durationMs ?? Date.now() - startedAt,
+    success: exitCode === 0,
+    timedOut,
+  });
+
+  for await (const event of events) {
+    switch (event.type) {
+      case 'stdout':
+        stdout.push(event.data);
+        callbacks.onStdout?.(event.data);
+        break;
+      case 'stderr':
+        stderr.push(event.data);
+        callbacks.onStderr?.(event.data);
+        break;
+      case 'end':
+        callbacks.onExit?.(event.exitCode);
+        return result(event.exitCode, event.durationMs, event.timedOut);
+      case 'error':
+        if (detached) throw new GravixLayerConnectionError(event.message);
+        stderr.push(event.message);
+        callbacks.onStderr?.(event.message);
+        callbacks.onExit?.(1);
+        return result(1);
+    }
+  }
+  throw new GravixLayerConnectionError('command stream ended before the command finished');
+}
+
 /** Listing of the templates a runtime can boot from. */
 export class RuntimeTemplates extends APIResource {
   /** List available runtime templates. */
@@ -232,6 +315,8 @@ export class Runtimes extends APIResource {
   readonly service: RuntimeService;
   /** Templates a runtime can boot from. */
   readonly templates: RuntimeTemplates;
+  /** Background commands started with `runCmd(..., { background: true })`. */
+  readonly command: RuntimeCommands;
 
   constructor(context: ClientContext) {
     super(context);
@@ -240,6 +325,7 @@ export class Runtimes extends APIResource {
     this.git = new RuntimeGit(context);
     this.service = new RuntimeService(context);
     this.templates = new RuntimeTemplates(context);
+    this.command = new RuntimeCommands(this);
   }
 
   // -------------------------------------------------------------------------
@@ -535,12 +621,38 @@ export class Runtimes extends APIResource {
   async runCmd(
     runtimeId: string,
     command: string,
+    options: RunCommandOptions & { background: true },
+  ): Promise<CommandHandle>;
+  async runCmd(
+    runtimeId: string,
+    command: string,
+    options?: RunCommandOptions,
+  ): Promise<CommandRunResponse>;
+  async runCmd(
+    runtimeId: string,
+    command: string,
     options: RunCommandOptions = {},
-  ): Promise<CommandRunResponse> {
+  ): Promise<CommandRunResponse | CommandHandle> {
     assertRuntimeId(runtimeId);
     assertNonEmpty(command, 'command');
 
     const body = this.commandBody(command, options);
+    if (options.background) {
+      const started = asRecord(
+        await this.http.request({
+          method: 'POST',
+          path: `runtime/${runtimeId}/commands/run`,
+          service: SERVICES.agents,
+          body,
+          options: requestOptions(options),
+        }),
+      );
+      const handle = new CommandHandle(this, runtimeId, num(started, 'pid'));
+      if (options.onStdout || options.onStderr || options.onExit) {
+        void handle.wait(options).catch(() => undefined);
+      }
+      return handle;
+    }
     const streaming = Boolean(options.onStdout ?? options.onStderr ?? options.onExit);
 
     if (!streaming) {
@@ -557,40 +669,11 @@ export class Runtimes extends APIResource {
       );
     }
 
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    let exitCode = 0;
-    const startedAt = Date.now();
-
-    for await (const event of this.commandEvents(runtimeId, body, executionOptions(options))) {
-      if (event.type === 'stdout') {
-        stdout.push(event.data);
-        options.onStdout?.(event.data);
-      } else if (event.type === 'stderr') {
-        stderr.push(event.data);
-        options.onStderr?.(event.data);
-      } else if (event.type === 'end') {
-        exitCode = event.exitCode;
-        options.onExit?.(exitCode);
-        break;
-      } else {
-        // A stream-level failure is surfaced the same way the command's own
-        // failure would be, so callers have one path to handle.
-        stderr.push(event.message);
-        options.onStderr?.(event.message);
-        exitCode = 1;
-        options.onExit?.(exitCode);
-        break;
-      }
-    }
-
-    return {
-      stdout: stdout.join(''),
-      stderr: stderr.join(''),
-      exitCode,
-      durationMs: Date.now() - startedAt,
-      success: exitCode === 0,
-    };
+    return collectCommand(
+      this.commandEvents(runtimeId, body, executionOptions(options)),
+      options,
+      false,
+    );
   }
 
   /**
@@ -634,6 +717,7 @@ export class Runtimes extends APIResource {
       // The command endpoint takes milliseconds.
       body['timeout'] = assertPositiveInt(options.timeoutSeconds, 'timeoutSeconds') * 1000;
     }
+    if (options.background) body['background'] = true;
     return body;
   }
 
@@ -651,26 +735,73 @@ export class Runtimes extends APIResource {
       body,
       options,
     });
+    yield* commandFrames(stream);
+  }
 
-    for await (const payload of iterSSEJson<Record<string, unknown>>(stream)) {
-      const record = asRecord(payload);
-      switch (str(record, 'type')) {
-        case 'stdout':
-          yield { type: 'stdout', data: str(record, 'data') };
-          break;
-        case 'stderr':
-          yield { type: 'stderr', data: str(record, 'data') };
-          break;
-        case 'end':
-          yield { type: 'end', exitCode: num(record, 'exit_code') };
-          return;
-        case 'error':
-          yield { type: 'error', message: str(record, 'message') };
-          return;
-        default:
-          break;
-      }
-    }
+  async listCommands(runtimeId: string, options: RequestOptions = {}): Promise<CommandInfo[]> {
+    assertRuntimeId(runtimeId);
+    const data = asRecord(
+      await this.http.request({
+        method: 'GET',
+        path: `runtime/${runtimeId}/commands`,
+        service: SERVICES.agents,
+        options: requestOptions(options),
+      }),
+    );
+    return parseList(data, 'commands', parseCommandInfo);
+  }
+
+  async getCommand(
+    runtimeId: string,
+    pid: number,
+    options: RequestOptions = {},
+  ): Promise<CommandInfo> {
+    assertRuntimeId(runtimeId);
+    return parseCommandInfo(
+      asRecord(
+        await this.http.request({
+          method: 'GET',
+          path: `runtime/${runtimeId}/commands/${pid}`,
+          service: SERVICES.agents,
+          options: requestOptions(options),
+        }),
+      ),
+    );
+  }
+
+  async killCommand(
+    runtimeId: string,
+    pid: number,
+    signal?: 'KILL' | 'TERM' | 'INT' | 'HUP',
+    options: RequestOptions = {},
+  ): Promise<CommandInfo> {
+    assertRuntimeId(runtimeId);
+    return parseCommandInfo(
+      asRecord(
+        await this.http.request({
+          method: 'DELETE',
+          path: `runtime/${runtimeId}/commands/${pid}`,
+          service: SERVICES.agents,
+          query: signal ? { signal } : undefined,
+          options: requestOptions(options),
+        }),
+      ),
+    );
+  }
+
+  async waitCommand(
+    runtimeId: string,
+    pid: number,
+    options: CommandCallbacks & RequestOptions = {},
+  ): Promise<CommandRunResponse> {
+    assertRuntimeId(runtimeId);
+    const stream = await this.http.requestStream({
+      method: 'GET',
+      path: `runtime/${runtimeId}/commands/${pid}/stream`,
+      service: SERVICES.agents,
+      options: requestOptions(options),
+    });
+    return collectCommand(commandFrames(stream), options, true);
   }
 
   // -------------------------------------------------------------------------
@@ -908,5 +1039,65 @@ export class Runtimes extends APIResource {
     const returned = optStr(data, 'context_id') ?? contextId;
     response.contextId = returned;
     return response;
+  }
+}
+
+/** A background command. `wait` attaches to its output until it exits. */
+export class CommandHandle {
+  private abort: AbortController | undefined;
+
+  constructor(
+    private readonly commands: Runtimes,
+    readonly runtimeId: string,
+    readonly pid: number,
+  ) {}
+
+  wait(options: CommandCallbacks & RequestOptions = {}): Promise<CommandRunResponse> {
+    const controller = options.signal ? undefined : new AbortController();
+    this.abort = controller;
+    return this.commands.waitCommand(this.runtimeId, this.pid, {
+      ...options,
+      signal: options.signal ?? controller?.signal,
+    });
+  }
+
+  kill(signal?: 'KILL' | 'TERM' | 'INT' | 'HUP'): Promise<CommandInfo> {
+    return this.commands.killCommand(this.runtimeId, this.pid, signal);
+  }
+
+  refresh(): Promise<CommandInfo> {
+    return this.commands.getCommand(this.runtimeId, this.pid);
+  }
+
+  /** Stop reading this command's output. The command itself keeps running. */
+  disconnect(): void {
+    this.abort?.abort();
+    this.abort = undefined;
+  }
+}
+
+/** List, inspect, attach to, and stop background commands. */
+export class RuntimeCommands {
+  constructor(private readonly commands: Runtimes) {}
+
+  list(runtimeId: string, options?: RequestOptions): Promise<CommandInfo[]> {
+    return this.commands.listCommands(runtimeId, options);
+  }
+
+  get(runtimeId: string, pid: number, options?: RequestOptions): Promise<CommandInfo> {
+    return this.commands.getCommand(runtimeId, pid, options);
+  }
+
+  connect(runtimeId: string, pid: number, options?: CommandCallbacks): Promise<CommandRunResponse> {
+    return this.commands.waitCommand(runtimeId, pid, options);
+  }
+
+  kill(
+    runtimeId: string,
+    pid: number,
+    signal?: 'KILL' | 'TERM' | 'INT' | 'HUP',
+    options?: RequestOptions,
+  ): Promise<CommandInfo> {
+    return this.commands.killCommand(runtimeId, pid, signal, options);
   }
 }

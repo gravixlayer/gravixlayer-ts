@@ -71,11 +71,11 @@ try {
   });
   if (install.exitCode !== 0) throw new Error(install.stderr || install.stdout);
 
-  // Start the server detached so the command returns while it keeps running.
-  await sandbox.runCmd(
-    `nohup python -m uvicorn main:app --host 0.0.0.0 --port ${PORT} > /tmp/server.log 2>&1 &`,
-    { workingDir: APP_DIR },
-  );
+  // Start the server in the background so this call returns while it keeps running.
+  await sandbox.runCmd(`python -m uvicorn main:app --host 0.0.0.0 --port ${PORT}`, {
+    workingDir: APP_DIR,
+    background: true,
+  });
   await waitForPort(sandbox, PORT);
   console.log('Server     : listening inside the guest');
 

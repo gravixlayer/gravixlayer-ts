@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { Execution, GravixLayerError, GravixLayerInvalidArgumentError } from '../src/index.js';
+import {
+  CommandHandle,
+  Execution,
+  GravixLayerConnectionError,
+  GravixLayerError,
+  GravixLayerInvalidArgumentError,
+} from '../src/index.js';
 import {
   collect,
   emptyResponse,
@@ -308,12 +314,23 @@ describe('commands', () => {
   });
 
   it('turns a stream-level error into a failed result', async () => {
-    const { client } = testClient([sseJson([{ type: 'error', message: 'the guest went away' }])]);
-    const result = await client.runtime.runCmd(RUNTIME_ID, 'build', { onStdout: vi.fn() });
+    const { client } = testClient([
+      sseJson([
+        { type: 'stdout', data: 'partial' },
+        { type: 'error', message: 'the guest went away' },
+      ]),
+    ]);
+    const onStderr = vi.fn();
+    const onExit = vi.fn();
+    const result = await client.runtime.runCmd(RUNTIME_ID, 'build', { onStderr, onExit });
 
     expect(result.exitCode).toBe(1);
     expect(result.success).toBe(false);
+    expect(result.timedOut).toBe(false);
+    expect(result.stdout).toBe('partial');
     expect(result.stderr).toBe('the guest went away');
+    expect(onStderr).toHaveBeenCalledWith('the guest went away');
+    expect(onExit).toHaveBeenCalledWith(1);
   });
 
   it('iterates command events', async () => {
@@ -343,6 +360,108 @@ describe('commands', () => {
     ]);
     const events = await collect(client.runtime.streamCmd(RUNTIME_ID, 'build'));
     expect(events.map((event) => event.type)).toEqual(['stdout', 'end']);
+  });
+
+  it('starts a background command and follows it', async () => {
+    const started = {
+      pid: 42,
+      command: 'sleep',
+      args: ['30'],
+      background: true,
+      status: 'running',
+    };
+    const { client, http } = testClient([
+      jsonResponse(started, 201),
+      jsonResponse({ commands: [started] }),
+      jsonResponse(started),
+      jsonResponse({ ...started, status: 'killed', exit_code: 137 }),
+    ]);
+
+    const handle = await client.runtime.runCmd(RUNTIME_ID, 'sleep', {
+      args: ['30'],
+      background: true,
+    });
+    expect(handle.pid).toBe(42);
+    expect(http.jsonBody()).toEqual({ command: 'sleep', args: ['30'], background: true });
+    expect(http.last().url).not.toContain('stream=true');
+
+    const listed = await client.runtime.command.list(RUNTIME_ID);
+    expect(listed[0]?.pid).toBe(42);
+    expect(listed[0]?.status).toBe('running');
+
+    const current = await handle.refresh();
+    expect(current.pid).toBe(42);
+
+    const killed = await handle.kill('TERM');
+    expect(killed.exitCode).toBe(137);
+    expect(killed.status).toBe('killed');
+    expect(http.last().method).toBe('DELETE');
+    expect(http.query().get('signal')).toBe('TERM');
+  });
+
+  it('uses the server duration and deadline flag on a live stream', async () => {
+    const { client } = testClient([
+      sseJson([
+        { type: 'start', pid: 1 },
+        { type: 'ping' },
+        { type: 'end', exit_code: 124, duration_ms: 15, timed_out: true },
+      ]),
+    ]);
+    const result = await client.runtime.runCmd(RUNTIME_ID, 'sleep', { onStdout: vi.fn() });
+    expect(result.exitCode).toBe(124);
+    expect(result.durationMs).toBe(15);
+    expect(result.timedOut).toBe(true);
+    expect(result.success).toBe(false);
+  });
+
+  it('fails when a live stream closes before the command ends', async () => {
+    const { client } = testClient([sseJson([{ type: 'stdout', data: 'x' }])]);
+    await expectRejection(
+      client.runtime.runCmd(RUNTIME_ID, 'sleep', { onStdout: vi.fn() }),
+      GravixLayerConnectionError,
+    );
+  });
+
+  it('waits on a background command through its output stream', async () => {
+    const { client, http } = testClient([
+      sseJson([
+        { type: 'start', pid: 42 },
+        { type: 'stdout', data: 'retained\n' },
+        { type: 'ping' },
+        { type: 'stderr', data: 'warn\n' },
+        { type: 'end', exit_code: 0, timed_out: false },
+      ]),
+    ]);
+    const onStdout = vi.fn();
+    const onExit = vi.fn();
+    const result = await client.runtime.command.connect(RUNTIME_ID, 42, { onStdout, onExit });
+
+    expect(http.last().method).toBe('GET');
+    expect(http.last().url).toContain(`/runtime/${RUNTIME_ID}/commands/42/stream`);
+    expect(onStdout).toHaveBeenCalledWith('retained\n');
+    expect(onExit).toHaveBeenCalledWith(0);
+    expect(result.stdout).toBe('retained\n');
+    expect(result.stderr).toBe('warn\n');
+    expect(result.success).toBe(true);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('throws when a wait stream breaks, since the command may still run', async () => {
+    for (const frames of [
+      [
+        { type: 'stdout', data: 'x' },
+        { type: 'error', message: 'stream interrupted' },
+      ],
+      [{ type: 'stdout', data: 'x' }],
+    ]) {
+      const { client } = testClient([sseJson(frames)]);
+      const onExit = vi.fn();
+      await expectRejection(
+        new CommandHandle(client.runtime, RUNTIME_ID, 42).wait({ onExit }),
+        GravixLayerConnectionError,
+      );
+      expect(onExit).not.toHaveBeenCalled();
+    }
   });
 });
 

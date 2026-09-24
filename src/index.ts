@@ -72,6 +72,8 @@ export {
   type ListRuntimesOptions,
   type RunCodeOptions,
   type RunCommandOptions,
+  CommandHandle,
+  RuntimeCommands,
 } from './resources/runtimes/runtimes.js';
 
 export { BoundFile, BoundGit, BoundPty, Runtime } from './resources/runtimes/runtime.js';
@@ -122,6 +124,7 @@ export {
   type CodeContext,
   type CodeContextDeleteResponse,
   type CodeRunResponse,
+  type CommandInfo,
   type CommandRunResponse,
   type DirectoryCreateResponse,
   type ExecutionError,

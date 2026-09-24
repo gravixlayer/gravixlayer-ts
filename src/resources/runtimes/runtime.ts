@@ -13,6 +13,7 @@ import type { RequestOptions } from '../../core/transport.js';
 import type { FileMode } from '../../core/uploads.js';
 import {
   Execution,
+  type CommandInfo,
   type ChangeOwnerResponse,
   type CodeContext,
   type CodeContextDeleteResponse,
@@ -64,6 +65,7 @@ import type {
   CodeCallbacks,
   CodeStreamEvent,
   CommandCallbacks,
+  CommandHandle,
   CommandStreamEvent,
   CreateContextOptions,
   RunCodeOptions,
@@ -110,6 +112,8 @@ export class Runtime {
   readonly pty: BoundPty;
   /** Nested git API, already bound to this runtime. */
   readonly git: BoundGit;
+  /** Background commands on this runtime. */
+  readonly command: BoundCommands;
 
   private state: RuntimeInfo;
   private killed = false;
@@ -125,6 +129,7 @@ export class Runtime {
     this.file = new BoundFile(runtimes, resolve);
     this.pty = new BoundPty(runtimes, resolve);
     this.git = new BoundGit(runtimes, resolve);
+    this.command = new BoundCommands(runtimes, resolve);
   }
 
   // -------------------------------------------------------------------------
@@ -304,7 +309,18 @@ export class Runtime {
    * console.log(result.stdout.trim());
    * ```
    */
-  async runCmd(command: string, options: RunCommandOptions = {}): Promise<Execution> {
+  async runCmd(
+    command: string,
+    options: RunCommandOptions & { background: true },
+  ): Promise<CommandHandle>;
+  async runCmd(command: string, options?: RunCommandOptions): Promise<Execution>;
+  async runCmd(
+    command: string,
+    options: RunCommandOptions = {},
+  ): Promise<Execution | CommandHandle> {
+    if (options.background) {
+      return this.runtimes.runCmd(this.requireAlive(), command, { ...options, background: true });
+    }
     return new Execution(await this.runtimes.runCmd(this.requireAlive(), command, options));
   }
 
@@ -678,6 +694,36 @@ export class BoundGit {
     options?: RequestOptions,
   ): Promise<GitOperationResult> {
     return this.runtimes.git.deleteBranch(this.id(), repositoryPath, branchName, force, options);
+  }
+}
+
+/** Background commands, already bound to one runtime. */
+class BoundCommands {
+  constructor(
+    private readonly runtimes: Runtimes,
+    private readonly id: ResolveId,
+  ) {}
+
+  list(options?: RequestOptions): Promise<CommandInfo[]> {
+    return this.runtimes.command.list(this.id(), options);
+  }
+
+  get(pid: number, options?: RequestOptions): Promise<CommandInfo> {
+    return this.runtimes.command.get(this.id(), pid, options);
+  }
+
+  connect(pid: number, options?: CommandCallbacks): Promise<Execution> {
+    return this.runtimes.command
+      .connect(this.id(), pid, options)
+      .then((result) => new Execution(result));
+  }
+
+  kill(
+    pid: number,
+    signal?: 'KILL' | 'TERM' | 'INT' | 'HUP',
+    options?: RequestOptions,
+  ): Promise<CommandInfo> {
+    return this.runtimes.command.kill(this.id(), pid, signal, options);
   }
 }
 
