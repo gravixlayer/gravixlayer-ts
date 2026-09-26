@@ -16,6 +16,7 @@ import {
   GravixLayerInvalidArgumentError,
   errorFromStatus,
 } from '../src/core/errors.js';
+import { shellQuote } from '../src/core/shell.js';
 import { iterSSE, iterSSEJson } from '../src/core/sse.js';
 import { GUEST_DEADLINE_MARGIN_MS, timeoutForGuestDeadline } from '../src/core/time.js';
 import { createTar, createTarGz } from '../src/core/tar.js';
@@ -305,6 +306,24 @@ describe('archives', () => {
     );
   });
 
+  it('keeps a path that starts with a backslash inside the archive', async () => {
+    const header = readHeader(await createTar([{ path: '\\etc\\app.conf', content: '' }]));
+    expect(header.name).toBe('etc/app.conf');
+  });
+
+  it('rejects a path that climbs out of the archive', async () => {
+    for (const path of ['../escape.py', 'app/../../escape.py', 'app\\..\\escape.py', 'a/..']) {
+      await expect(createTar([{ path, content: '' }])).rejects.toBeInstanceOf(
+        GravixLayerInvalidArgumentError,
+      );
+    }
+  });
+
+  it('allows names that only contain dots', async () => {
+    const header = readHeader(await createTar([{ path: 'app/..hidden/...', content: '' }]));
+    expect(header.name).toBe('app/..hidden/...');
+  });
+
   it('produces a gzip stream a standard decoder can read', async () => {
     const original = await createTar([{ path: 'hello.txt', content: 'hello world' }]);
     const compressed = await createTarGz([{ path: 'hello.txt', content: 'hello world' }]);
@@ -325,6 +344,27 @@ describe('archives', () => {
     ]);
     expect(readHeader(tar, 0).name).toBe('a.txt');
     expect(readHeader(tar, 1024).name).toBe('b.txt');
+  });
+});
+
+describe('shell quoting', () => {
+  it('leaves words without special characters as they are', () => {
+    for (const word of [
+      'python3',
+      '/opt/app/main.py',
+      'http://localhost:8080/health',
+      'a=b,c@d%e+f',
+    ]) {
+      expect(shellQuote(word)).toBe(word);
+    }
+  });
+
+  it('single-quotes anything the shell would interpret', () => {
+    expect(shellQuote('')).toBe("''");
+    expect(shellQuote('two words')).toBe("'two words'");
+    expect(shellQuote('$(rm -rf /)')).toBe("'$(rm -rf /)'");
+    expect(shellQuote('a;b&c|d')).toBe("'a;b&c|d'");
+    expect(shellQuote("it's")).toBe(`'it'\\''s'`);
   });
 });
 

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   CommandHandle,
   Execution,
+  GravixLayerAbortError,
   GravixLayerConnectionError,
   GravixLayerError,
   GravixLayerInvalidArgumentError,
@@ -422,6 +423,58 @@ describe('commands', () => {
     );
   });
 
+  it('fails an iterated command stream that closes before the command ends', async () => {
+    const { client } = testClient([sseJson([{ type: 'stdout', data: 'partial' }])]);
+    const events: unknown[] = [];
+    const error = await expectRejection(
+      (async () => {
+        for await (const event of client.runtime.streamCmd(RUNTIME_ID, 'build')) events.push(event);
+      })(),
+      GravixLayerConnectionError,
+    );
+    expect(error.message).toBe('command stream ended before the command finished');
+    expect(events).toEqual([{ type: 'stdout', data: 'partial' }]);
+  });
+
+  it('ends an iterated command stream at its error frame', async () => {
+    const { client } = testClient([sseJson([{ type: 'error', message: 'host unavailable' }])]);
+    const events = await collect(client.runtime.streamCmd(RUNTIME_ID, 'build'));
+    expect(events).toEqual([{ type: 'error', message: 'host unavailable' }]);
+  });
+
+  it('measures a live command on a monotonic clock', async () => {
+    let wall = 10_000;
+    // A wall clock that steps backwards between reads, as NTP can.
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => (wall -= 5_000));
+    try {
+      const { client } = testClient([sseJson([{ type: 'end', exit_code: 0 }])]);
+      const result = await client.runtime.runCmd(RUNTIME_ID, 'true', { onExit: vi.fn() });
+      expect(Number.isInteger(result.durationMs)).toBe(true);
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('rejects a pid that is not a positive integer before sending anything', async () => {
+    const { client, http } = testClient([jsonResponse({})]);
+    for (const pid of [0, -1, 1.5, Number.NaN]) {
+      await expectRejection(
+        client.runtime.command.get(RUNTIME_ID, pid),
+        GravixLayerInvalidArgumentError,
+      );
+      await expectRejection(
+        client.runtime.command.kill(RUNTIME_ID, pid),
+        GravixLayerInvalidArgumentError,
+      );
+      await expectRejection(
+        client.runtime.command.connect(RUNTIME_ID, pid),
+        GravixLayerInvalidArgumentError,
+      );
+    }
+    expect(http.requests).toHaveLength(0);
+  });
+
   it('waits on a background command through its output stream', async () => {
     const { client, http } = testClient([
       sseJson([
@@ -462,6 +515,158 @@ describe('commands', () => {
       );
       expect(onExit).not.toHaveBeenCalled();
     }
+  });
+
+  it('disconnects every open wait, and a caller signal stops only its own', async () => {
+    const signals: AbortSignal[] = [];
+    const { client } = testClient([], {
+      fetch: async (_url, init) => {
+        const signal = init.signal as AbortSignal;
+        signals.push(signal);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              signal.addEventListener('abort', () => {
+                controller.error(new DOMException('aborted', 'AbortError'));
+              });
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        );
+      },
+    });
+    const handle = new CommandHandle(client.runtime, RUNTIME_ID, 42);
+    const caller = new AbortController();
+    const own = handle.wait({ signal: caller.signal });
+    const plain = handle.wait();
+    const other = handle.wait();
+    await vi.waitFor(() => expect(signals).toHaveLength(3));
+
+    caller.abort(new Error('caller stop'));
+    await expect(own).rejects.toBeDefined();
+    expect(signals.map((s) => s.aborted)).toEqual([true, false, false]);
+
+    handle.disconnect();
+    await expect(plain).rejects.toBeDefined();
+    await expect(other).rejects.toBeDefined();
+    expect(signals.every((s) => s.aborted)).toBe(true);
+  });
+
+  it('stops a wait whose caller signal is already aborted', async () => {
+    const { client } = testClient([], {
+      fetch: async (_url, init) => {
+        if (init.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+        return sseJson([{ type: 'end', exit_code: 0 }]);
+      },
+    });
+    const caller = new AbortController();
+    const reason = new Error('already stopped');
+    caller.abort(reason);
+    const handle = new CommandHandle(client.runtime, RUNTIME_ID, 42);
+    const error = await expectRejection(
+      handle.wait({ signal: caller.signal }),
+      GravixLayerAbortError,
+    );
+    expect(error.cause).toBe(reason);
+    expect((await handle.wait()).exitCode).toBe(0);
+  });
+
+  it('reports a broken background follow to onError and handle.error', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ pid: 42, command: 'sleep', status: 'running' }, 201),
+      sseJson([{ type: 'stdout', data: 'x' }]),
+    ]);
+    const onStdout = vi.fn();
+    const onError = vi.fn();
+    const handle = await client.runtime.runCmd(RUNTIME_ID, 'sleep', {
+      background: true,
+      onStdout,
+      onError,
+    });
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(http.last().url).toContain(`/runtime/${RUNTIME_ID}/commands/42/stream`);
+    expect(onStdout).toHaveBeenCalledWith('x');
+    expect(handle.error).toBeInstanceOf(GravixLayerConnectionError);
+    expect(onError).toHaveBeenCalledWith(handle.error);
+  });
+
+  it('leaves no error when a background follow sees the exit', async () => {
+    const { client } = testClient([
+      jsonResponse({ pid: 42, command: 'true', status: 'running' }, 201),
+      sseJson([{ type: 'end', exit_code: 0 }]),
+    ]);
+    const onExit = vi.fn();
+    const onError = vi.fn();
+    const handle = await client.runtime.runCmd(RUNTIME_ID, 'true', {
+      background: true,
+      onExit,
+      onError,
+    });
+
+    await vi.waitFor(() => expect(onExit).toHaveBeenCalledWith(0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(handle.error).toBeUndefined();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('reports a callback that throws while following', async () => {
+    const { client } = testClient([
+      sseJson([{ type: 'stdout', data: 'x' }]),
+      sseJson([{ type: 'stdout', data: 'y' }]),
+    ]);
+    const handle = new CommandHandle(client.runtime, RUNTIME_ID, 42);
+    const boom = new Error('callback failed');
+    const onError = vi.fn();
+    handle.follow({
+      onStdout: () => {
+        throw boom;
+      },
+      onError,
+    });
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(boom));
+    expect(handle.error).toBe(boom);
+
+    handle.follow({
+      onStdout: () => {
+        throw 'not an error';
+      },
+    });
+    await vi.waitFor(() => expect(handle.error?.message).toBe('not an error'));
+    expect(handle.error).toBeInstanceOf(Error);
+  });
+
+  it('does not treat disconnect or a caller abort as a follow failure', async () => {
+    const signals: AbortSignal[] = [];
+    const { client } = testClient([], {
+      fetch: async (_url, init) => {
+        const signal = init.signal as AbortSignal;
+        signals.push(signal);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              signal.addEventListener('abort', () => {
+                controller.error(new DOMException('aborted', 'AbortError'));
+              });
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        );
+      },
+    });
+    const handle = new CommandHandle(client.runtime, RUNTIME_ID, 42);
+    const caller = new AbortController();
+    const onError = vi.fn();
+    handle.follow({ signal: caller.signal, onError });
+    handle.follow({ onError });
+    await vi.waitFor(() => expect(signals).toHaveLength(2));
+
+    caller.abort(new Error('caller stop'));
+    handle.disconnect();
+    expect(signals.every((s) => s.aborted)).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onError).not.toHaveBeenCalled();
+    expect(handle.error).toBeUndefined();
   });
 });
 
@@ -554,6 +759,31 @@ describe('code', () => {
       error: { name: 'RuntimeError', value: 'boom', traceback: '' },
     });
     expect(events[2]).toEqual({ type: 'end' });
+  });
+
+  it('fails a code run whose stream closes before it ends, keeping partial output out', async () => {
+    const { client } = testClient([sseJson([{ type: 'stdout', text: 'half' }])]);
+    const onStdout = vi.fn();
+    const error = await expectRejection(
+      client.runtime.runCode(RUNTIME_ID, 'work()', { onStdout }),
+      GravixLayerConnectionError,
+    );
+    expect(error.message).toBe('code stream ended before the execution finished');
+    expect(onStdout).toHaveBeenCalledWith('half');
+  });
+
+  it('fails an iterated code stream that closes before it ends', async () => {
+    const { client } = testClient([sseJson([{ type: 'stdout', text: 'half' }])]);
+    const events: unknown[] = [];
+    await expectRejection(
+      (async () => {
+        for await (const event of client.runtime.streamCode(RUNTIME_ID, 'work()')) {
+          events.push(event);
+        }
+      })(),
+      GravixLayerConnectionError,
+    );
+    expect(events).toEqual([{ type: 'stdout', text: 'half' }]);
   });
 });
 

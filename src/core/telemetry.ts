@@ -132,9 +132,14 @@ export function isTracing(): boolean {
 export function startClientSpan(method: string, url: string): SpanLike | null {
   if (!isTracing() || !api || !tracer) return null;
 
+  // A query can carry file paths, search patterns, and similar user data, so
+  // spans record only the origin and path.
   let path = url;
+  let full = url;
   try {
-    path = new URL(url).pathname || url;
+    const parsed = new URL(url);
+    path = parsed.pathname || url;
+    full = `${parsed.origin}${parsed.pathname}`;
   } catch {
     // A non-absolute URL should not break span naming.
   }
@@ -143,7 +148,7 @@ export function startClientSpan(method: string, url: string): SpanLike | null {
     kind: api.SpanKind.CLIENT,
     attributes: {
       'http.request.method': method,
-      'url.full': url,
+      'url.full': full,
       'url.path': path,
     },
   });

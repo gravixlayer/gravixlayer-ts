@@ -605,7 +605,7 @@ export class RuntimeFile extends APIResource {
     for await (const payload of iterSSEJson<Record<string, unknown>>(stream)) {
       const event = parseWatchEvent(asRecord(payload));
       if (event.type === 'error') {
-        throw new GravixLayerInvalidArgumentError(
+        throw new GravixLayerError(
           str(asRecord(payload), 'message', 'The file watcher reported an error.'),
         );
       }

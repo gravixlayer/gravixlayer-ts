@@ -23,4 +23,6 @@ scripts/release.sh
 tti.ts
 tti-isorun.mjs
 examples/runtimes/internal/
+examples/internal/
 .cursor/
+docs/

@@ -32,6 +32,9 @@ export const DEFAULT_EXCLUDES: ReadonlySet<string> = new Set([
 /** Suffixes left out of an agent source archive. */
 const EXCLUDED_SUFFIXES: readonly string[] = ['.egg-info', '.pyc', '.pyo'];
 
+/** Filesystem calls a project read keeps in flight at once. */
+const READ_CONCURRENCY = 16;
+
 /** The subset of `node:fs/promises` this module needs. */
 interface FsModule {
   readdir(
@@ -67,6 +70,32 @@ function isExcluded(name: string, excludes: ReadonlySet<string>): boolean {
   return EXCLUDED_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 
+/** Run `task` over `items`, {@link READ_CONCURRENCY} at a time, stopping at the first failure. */
+async function forEachBounded<T>(
+  items: readonly T[],
+  task: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    try {
+      while (next < items.length) {
+        const index = next++;
+        await task(items[index] as T, index);
+      }
+    } catch (error) {
+      next = items.length;
+      throw error;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, items.length) }, worker));
+}
+
+/** A file or directory found while walking a project. */
+interface ProjectPath {
+  absolute: string;
+  relative: string;
+}
+
 /**
  * Read a directory tree into archive entries.
  *
@@ -95,32 +124,33 @@ export async function readProjectDirectory(
     throw new GravixLayerInvalidArgumentError(`Source must be a directory: ${directory}`);
   }
 
-  const entries: TarEntry[] = [];
-
-  const walk = async (absolute: string, relative: string): Promise<void> => {
-    const listing = await fs.readdir(absolute, { withFileTypes: true });
-
-    for (const item of listing) {
-      if (isExcluded(item.name, excludes)) continue;
-
-      const childAbsolute = `${absolute}/${item.name}`;
-      const childRelative = relative ? `${relative}/${item.name}` : item.name;
-
-      if (item.isDirectory()) {
-        await walk(childAbsolute, childRelative);
-      } else if (item.isFile()) {
-        const [content, stats] = await Promise.all([
-          fs.readFile(childAbsolute),
-          fs.stat(childAbsolute),
-        ]);
-        // Only the permission bits are meaningful in a tar header; the rest of
-        // the mode describes the file type, which tar records separately.
-        entries.push({ path: childRelative, content, mode: stats.mode & 0o777 });
+  // Directories are listed one level at a time, each level in parallel.
+  const files: ProjectPath[] = [];
+  let level: ProjectPath[] = [{ absolute: directory.replace(/\/+$/, ''), relative: '' }];
+  while (level.length > 0) {
+    const children: ProjectPath[] = [];
+    await forEachBounded(level, async ({ absolute, relative }) => {
+      for (const item of await fs.readdir(absolute, { withFileTypes: true })) {
+        if (isExcluded(item.name, excludes)) continue;
+        const child = {
+          absolute: `${absolute}/${item.name}`,
+          relative: relative ? `${relative}/${item.name}` : item.name,
+        };
+        if (item.isDirectory()) children.push(child);
+        else if (item.isFile()) files.push(child);
       }
-    }
-  };
+    });
+    level = children;
+  }
 
-  await walk(directory.replace(/\/+$/, ''), '');
+  const entries = new Array<TarEntry>(files.length);
+  await forEachBounded(files, async ({ absolute, relative }, index) => {
+    const [content, stats] = await Promise.all([fs.readFile(absolute), fs.stat(absolute)]);
+    // Only the permission bits are meaningful in a tar header; the rest of
+    // the mode describes the file type, which tar records separately.
+    entries[index] = { path: relative, content, mode: stats.mode & 0o777 };
+  });
+
   entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return entries;
 }

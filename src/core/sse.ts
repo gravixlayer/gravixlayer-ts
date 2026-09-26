@@ -178,17 +178,22 @@ export async function* iterSSE(
   }
 }
 
+/** A streamed event whose data was not valid JSON, passed through as text. */
+export interface RawStreamEvent {
+  raw: string;
+}
+
 /**
  * Decode a byte stream into the JSON payloads carried by its events.
  *
  * Events whose data is `[DONE]` terminate the stream, matching the sentinel
  * used by the agent invocation endpoints. Payloads that are not valid JSON are
- * yielded as `{ raw: <text> }` rather than throwing, so one malformed frame
- * cannot abort an otherwise healthy stream.
+ * yielded as a {@link RawStreamEvent} rather than throwing, so one malformed
+ * frame cannot abort an otherwise healthy stream.
  */
 export async function* iterSSEJson<T = unknown>(
   stream: ReadableStream<Uint8Array>,
-): AsyncGenerator<T, void, undefined> {
+): AsyncGenerator<T | RawStreamEvent, void, undefined> {
   for await (const event of iterSSE(stream)) {
     const data = event.data;
     if (data === '' || data === '[DONE]') {
@@ -198,7 +203,7 @@ export async function* iterSSEJson<T = unknown>(
     try {
       yield JSON.parse(data) as T;
     } catch {
-      yield { raw: data } as T;
+      yield { raw: data };
     }
   }
 }

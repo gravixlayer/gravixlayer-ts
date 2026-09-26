@@ -1,2 +1,4 @@
-/** SDK version. Kept in sync with `package.json`. */
-export const VERSION = '0.1.13';
+import { version } from '../package.json';
+
+/** SDK version, read from `package.json` so a release can never drift from it. */
+export const VERSION: string = version;

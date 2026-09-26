@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { GravixLayerBadRequestError, GravixLayerInvalidArgumentError } from '../src/index.js';
+import {
+  GravixLayerBadRequestError,
+  GravixLayerError,
+  GravixLayerInvalidArgumentError,
+} from '../src/index.js';
 import {
   bytesResponse,
   collect,
@@ -463,11 +467,13 @@ describe('watch', () => {
     expect(events[1]?.path).toBe('/workspace/a.txt');
   });
 
-  it('raises when the watcher itself fails', async () => {
+  it('raises a server-side error, not an argument error, when the watcher fails', async () => {
     const { client } = testClient([sseJson([{ type: 'error', message: 'path vanished' }])]);
-    await expectRejection(
+    const error = await expectRejection(
       collect(client.runtime.file.watch(RUNTIME_ID, '/gone')),
-      GravixLayerInvalidArgumentError,
+      GravixLayerError,
     );
+    expect(error).not.toBeInstanceOf(GravixLayerInvalidArgumentError);
+    expect(error.message).toBe('path vanished');
   });
 });

@@ -9,7 +9,7 @@
 import { GravixLayerError, GravixLayerInvalidArgumentError } from '../core/errors.js';
 import { readProjectDirectory } from '../core/fs.js';
 import { asRecord, str } from '../core/parse.js';
-import { iterSSEJson } from '../core/sse.js';
+import { iterSSEJson, type RawStreamEvent } from '../core/sse.js';
 import { createTarGz, type TarEntry } from '../core/tar.js';
 import { AGENT_BUILD_PHASE_LABELS, BuildProgress, stderrIsTty } from '../core/progress.js';
 import { sleep } from '../core/time.js';
@@ -152,8 +152,14 @@ function requestOptions(options: RequestOptions): RequestOptions {
   return out;
 }
 
+/** Most deployed-agent URLs one client remembers. */
+const MAX_CACHED_ENDPOINTS = 1024;
+
 /** Build, deploy, and invoke agents. */
 export class Agents extends APIResource {
+  /** Deployed agents' base URLs, so an invocation skips the endpoint lookup. */
+  private readonly endpoints = new Map<string, string>();
+
   /**
    * Build an agent image from source, returning as soon as the build starts.
    *
@@ -378,7 +384,7 @@ export class Agents extends APIResource {
   async get(agentId: string, options: RequestOptions = {}): Promise<AgentEndpoint> {
     const agent = pathSegment(agentId, 'agentId');
 
-    return parseAgentEndpoint(
+    const endpoint = parseAgentEndpoint(
       asRecord(
         await this.http.request({
           method: 'GET',
@@ -388,11 +394,14 @@ export class Agents extends APIResource {
         }),
       ),
     );
+    if (endpoint.endpoint) this.remember(agentId, trimTrailingSlash(endpoint.endpoint));
+    return endpoint;
   }
 
   /** Tear down a deployed agent, releasing its hostname and runtime. */
   async destroy(agentId: string, options: RequestOptions = {}): Promise<AgentDestroyResponse> {
     const agent = pathSegment(agentId, 'agentId');
+    this.endpoints.delete(agentId);
 
     const data = asRecord(
       await this.http.request({
@@ -413,31 +422,40 @@ export class Agents extends APIResource {
    * Call a deployed agent and wait for its full response.
    *
    * The request goes straight to the agent's own URL rather than through the
-   * control plane, so there is no extra hop.
+   * control plane, so there is no extra hop. The URL is looked up once per
+   * agent and reused until a call to it fails.
    */
   async invoke<T = unknown>(
     agentId: string,
     params: AgentInvokeParams = {},
     options: RequestOptions = {},
   ): Promise<T> {
-    const endpoint = await this.get(agentId, options);
+    const base = await this.endpointFor(agentId, options);
 
-    return (await this.http.request<T>({
-      method: 'POST',
-      path: `${trimTrailingSlash(endpoint.endpoint)}/invoke`,
-      service: '',
-      body: serializeAgentInvoke(params),
-      options,
-    })) as T;
+    try {
+      return (await this.http.request<T>({
+        method: 'POST',
+        path: `${base}/invoke`,
+        service: '',
+        body: serializeAgentInvoke(params),
+        options,
+      })) as T;
+    } catch (error) {
+      this.endpoints.delete(agentId);
+      throw error;
+    }
   }
 
   /**
    * Call a deployed agent and iterate its response as it is produced.
    *
+   * Each JSON event arrives as `T`. An event whose data is not JSON arrives as
+   * a {@link RawStreamEvent} holding the text.
+   *
    * @example
    * ```ts
-   * for await (const event of client.agents.stream(agentId, { input: { prompt: 'hi' } })) {
-   *   console.log(event);
+   * for await (const event of client.agents.stream<{ text: string }>(agentId, { input: { prompt: 'hi' } })) {
+   *   console.log('raw' in event ? event.raw : event.text);
    * }
    * ```
    */
@@ -445,18 +463,41 @@ export class Agents extends APIResource {
     agentId: string,
     params: AgentInvokeParams = {},
     options: RequestOptions = {},
-  ): AsyncGenerator<T, void, undefined> {
-    const endpoint = await this.get(agentId, options);
+  ): AsyncGenerator<T | RawStreamEvent, void, undefined> {
+    const base = await this.endpointFor(agentId, options);
 
-    const stream = await this.http.requestStream({
-      method: 'POST',
-      path: `${trimTrailingSlash(endpoint.endpoint)}/stream`,
-      service: '',
-      body: serializeAgentInvoke(params),
-      options,
-    });
+    let stream: ReadableStream<Uint8Array>;
+    try {
+      stream = await this.http.requestStream({
+        method: 'POST',
+        path: `${base}/stream`,
+        service: '',
+        body: serializeAgentInvoke(params),
+        options,
+      });
+    } catch (error) {
+      this.endpoints.delete(agentId);
+      throw error;
+    }
 
     yield* iterSSEJson<T>(stream);
+  }
+
+  /** The agent's base URL, looked up only when it is not already known. */
+  private async endpointFor(agentId: string, options: RequestOptions): Promise<string> {
+    const cached = this.endpoints.get(agentId);
+    if (cached !== undefined) return cached;
+    return trimTrailingSlash((await this.get(agentId, options)).endpoint);
+  }
+
+  /** Remember an agent's URL, dropping the oldest entry once the cache is full. */
+  private remember(agentId: string, endpoint: string): void {
+    this.endpoints.delete(agentId);
+    if (this.endpoints.size >= MAX_CACHED_ENDPOINTS) {
+      const oldest = this.endpoints.keys().next();
+      if (!oldest.done) this.endpoints.delete(oldest.value);
+    }
+    this.endpoints.set(agentId, endpoint);
   }
 
   /**

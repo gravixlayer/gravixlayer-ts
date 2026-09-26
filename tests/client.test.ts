@@ -117,6 +117,14 @@ describe('request headers', () => {
     expect(headers['user-agent']).toBe(`gravixlayer-ts/${VERSION}`);
   });
 
+  it('reports the version the package is published as', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const manifest = JSON.parse(
+      await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    );
+    expect(VERSION).toBe(manifest.version);
+  });
+
   it('merges client default headers, letting the caller win', async () => {
     const { client, http } = testClient([jsonResponse({ runtimes: [], total: 0 })], {
       defaultHeaders: { 'X-Tenant': 'acme', accept: 'application/json' },

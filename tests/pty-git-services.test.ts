@@ -566,4 +566,40 @@ describe('published services', () => {
 
     await expectRejection(pending, GravixLayerAbortError);
   });
+
+  it('refuses a path that would carry the token to another origin', async () => {
+    const http = mockFetch([jsonResponse(SERVICE), jsonResponse({})]);
+    const { client } = testClient([], { fetch: http.fetch });
+
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
+    for (const path of [
+      'https://attacker.example/collect',
+      'http:attacker.example/collect',
+      'https://svc.example.test:8443/other-port',
+    ]) {
+      await expectRejection(handle.get(path), GravixLayerInvalidArgumentError);
+    }
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it('keeps leading-slash and same-origin paths on the service', async () => {
+    const http = mockFetch([jsonResponse(SERVICE), jsonResponse({})]);
+    const { client } = testClient([], { fetch: http.fetch });
+
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
+    await handle.get('//attacker.example/collect');
+    expect(http.last().url).toBe('https://svc.example.test/attacker.example/collect');
+    await handle.get('https://svc.example.test/health');
+    expect(http.last().url).toBe('https://svc.example.test/health');
+    expect(http.last().headers['x-gravix-web-service-token']).toBe('tok-1');
+  });
+
+  it('reports a service without a usable URL as a connection error', async () => {
+    const http = mockFetch([jsonResponse({ ...SERVICE, web_url: '' }), jsonResponse({})]);
+    const { client } = testClient([], { fetch: http.fetch });
+
+    const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
+    await expectRejection(handle.get('/health'), GravixLayerConnectionError);
+    expect(http.requests).toHaveLength(1);
+  });
 });

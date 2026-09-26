@@ -1,15 +1,17 @@
 import { gunzipSync } from 'node:zlib';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
   AgentBuildError,
   AgentBuildTimeoutError,
   GravixLayerInvalidArgumentError,
+  GravixLayerServerError,
   normalizeFramework,
+  type RawStreamEvent,
 } from '../src/index.js';
 import { serializeAgentCard } from '../src/types/agents.js';
 import { utf8Decode } from '../src/core/binary.js';
@@ -21,7 +23,15 @@ import {
   parseDotEnv,
   resolveHttpPort,
 } from '../src/resources/agent-source.js';
-import { collect, expectRejection, jsonResponse, sseJson, testClient } from './helpers.js';
+import {
+  collect,
+  errorResponse,
+  expectRejection,
+  jsonResponse,
+  sseJson,
+  sseResponse,
+  testClient,
+} from './helpers.js';
 
 const AGENT_ID = 'agent-1';
 
@@ -193,6 +203,14 @@ describe('.env parsing', () => {
     expect(parseDotEnv('URL=https://x.test/?a=1')).toEqual({ URL: 'https://x.test/?a=1' });
   });
 
+  it('accepts shell-style export prefixes', () => {
+    expect(
+      parseDotEnv(
+        ['export A=1', 'export\tB="two"', '  export C = 3', 'export=4', 'exportD=5'].join('\n'),
+      ),
+    ).toEqual({ A: '1', B: 'two', C: '3', export: '4', exportD: '5' });
+  });
+
   it('does not write to the current process environment', () => {
     parseDotEnv('GRAVIXLAYER_TEST_SHOULD_NOT_LEAK=1');
     expect(process.env['GRAVIXLAYER_TEST_SHOULD_NOT_LEAK']).toBeUndefined();
@@ -252,6 +270,34 @@ describe('reading a project from disk', () => {
       readProjectDirectory(join(tmpdir(), 'gravixlayer-does-not-exist')),
       GravixLayerInvalidArgumentError,
     );
+  });
+
+  it('reads a wide and deep tree completely, with contents and modes', async () => {
+    const files: Record<string, string> = {
+      'a/b/c/d/e/deep.py': 'deep',
+      'a/b/sibling.py': 'sibling',
+      'a/top.py': 'top',
+    };
+    for (let i = 0; i < 40; i += 1) files[`wide/f${String(i).padStart(2, '0')}.py`] = `x = ${i}`;
+    const root = await project(files);
+    await chmod(join(root, 'a/top.py'), 0o755);
+
+    const entries = await readProjectDirectory(`${root}/`);
+    expect(entries.map((entry) => entry.path)).toEqual(Object.keys(files).sort());
+    for (const entry of entries) {
+      expect(utf8Decode(entry.content as Uint8Array)).toBe(files[entry.path]);
+    }
+    expect(entries.find((entry) => entry.path === 'a/top.py')?.mode).toBe(0o755);
+  });
+
+  it.skipIf(process.getuid?.() === 0)('fails when a file cannot be read', async () => {
+    const root = await project({ 'main.py': 'print(1)', 'locked/secret.py': 'x' });
+    await chmod(join(root, 'locked/secret.py'), 0o000);
+    try {
+      await expect(readProjectDirectory(root)).rejects.toMatchObject({ code: 'EACCES' });
+    } finally {
+      await chmod(join(root, 'locked/secret.py'), 0o644);
+    }
   });
 
   it('infers LangGraph from a graph configuration', async () => {
@@ -568,9 +614,172 @@ describe('deployed agents', () => {
     expect(events).toEqual([{ delta: 'he' }, { delta: 'llo' }]);
   });
 
+  it('streams an event that is not JSON as a typed raw event', async () => {
+    const { client } = testClient([
+      jsonResponse(ENDPOINT),
+      sseResponse(['data: {"delta":"he"}\n\n', 'data: plain text\n\n']),
+    ]);
+
+    const stream = client.agents.stream<{ delta: string }>(AGENT_ID);
+    expectTypeOf(stream).toEqualTypeOf<
+      AsyncGenerator<{ delta: string } | RawStreamEvent, void, undefined>
+    >();
+    const text: string[] = [];
+    for await (const event of stream) text.push('raw' in event ? event.raw : event.delta);
+    expect(text).toEqual(['he', 'plain text']);
+  });
+
   it('validates the agent id', async () => {
     const { client, http } = testClient([jsonResponse(ENDPOINT)]);
     await expectRejection(client.agents.get(''), GravixLayerInvalidArgumentError);
     expect(http.requests).toHaveLength(0);
+  });
+
+  const LOOKUP = `GET https://api.test.invalid/v1/agents/${AGENT_ID}/endpoint`;
+
+  it('looks the endpoint up once and reuses it for later calls', async () => {
+    const { client, http } = testClient([
+      jsonResponse(ENDPOINT),
+      jsonResponse({ output: 'one' }),
+      jsonResponse({ output: 'two' }),
+      sseJson([{ delta: 'three' }]),
+    ]);
+
+    await client.agents.invoke(AGENT_ID, { input: 'a' });
+    await client.agents.invoke(AGENT_ID, { input: 'b' });
+    await collect(client.agents.stream(AGENT_ID, { input: 'c' }));
+
+    expect(http.requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      LOOKUP,
+      'POST https://agent-1.example.test/invoke',
+      'POST https://agent-1.example.test/invoke',
+      'POST https://agent-1.example.test/stream',
+    ]);
+  });
+
+  it('reuses the endpoint an earlier get() returned', async () => {
+    const { client, http } = testClient([jsonResponse(ENDPOINT), jsonResponse({ output: 'ok' })]);
+    await client.agents.get(AGENT_ID);
+    await client.agents.invoke(AGENT_ID);
+    expect(http.requests).toHaveLength(2);
+    expect(http.last().url).toBe('https://agent-1.example.test/invoke');
+  });
+
+  it('looks the endpoint up again after an invocation fails', async () => {
+    const { client, http } = testClient([
+      jsonResponse(ENDPOINT),
+      errorResponse(502),
+      jsonResponse(ENDPOINT),
+      jsonResponse({ output: 'ok' }),
+    ]);
+
+    await expectRejection(client.agents.invoke(AGENT_ID), GravixLayerServerError);
+    await expect(client.agents.invoke(AGENT_ID)).resolves.toEqual({ output: 'ok' });
+    expect(http.requests.map((request) => request.method)).toEqual(['GET', 'POST', 'GET', 'POST']);
+  });
+
+  it('looks the endpoint up again after a stream fails to open', async () => {
+    const { client, http } = testClient([
+      jsonResponse(ENDPOINT),
+      errorResponse(502),
+      jsonResponse(ENDPOINT),
+      sseJson([{ delta: 'ok' }]),
+    ]);
+
+    await expectRejection(collect(client.agents.stream(AGENT_ID)), GravixLayerServerError);
+    expect(await collect(client.agents.stream(AGENT_ID))).toEqual([{ delta: 'ok' }]);
+    expect(http.requests.map((request) => request.method)).toEqual(['GET', 'POST', 'GET', 'POST']);
+  });
+
+  it('forgets the endpoint of a destroyed agent', async () => {
+    const { client, http } = testClient([
+      jsonResponse(ENDPOINT),
+      jsonResponse({ output: 'ok' }),
+      jsonResponse({ agent_id: AGENT_ID, status: 'deleting' }),
+      jsonResponse(ENDPOINT),
+      jsonResponse({ output: 'ok' }),
+    ]);
+
+    await client.agents.invoke(AGENT_ID);
+    await client.agents.destroy(AGENT_ID);
+    await client.agents.invoke(AGENT_ID);
+    expect(http.requests.map((request) => request.method)).toEqual([
+      'GET',
+      'POST',
+      'DELETE',
+      'GET',
+      'POST',
+    ]);
+  });
+
+  it('keeps the API key off the agent URL', async () => {
+    const { client, http } = testClient([
+      jsonResponse(ENDPOINT),
+      jsonResponse({ output: 'ok' }),
+      sseJson([{ delta: 'ok' }]),
+    ]);
+
+    await client.agents.invoke(AGENT_ID);
+    await collect(client.agents.stream(AGENT_ID));
+    expect(http.requests[0]?.headers['authorization']).toBe('Bearer test-key');
+    expect(http.requests[1]?.headers['authorization']).toBeUndefined();
+    expect(http.requests[2]?.headers['authorization']).toBeUndefined();
+  });
+
+  it('sends an authorization header the caller passes for the agent', async () => {
+    const { client, http } = testClient([jsonResponse(ENDPOINT), jsonResponse({ output: 'ok' })]);
+    await client.agents.get(AGENT_ID);
+    await client.agents.invoke(AGENT_ID, {}, { headers: { Authorization: 'Bearer agent-token' } });
+    expect(http.last().headers['authorization']).toBe('Bearer agent-token');
+  });
+
+  it('keeps the API key for an agent served from the API origin', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ ...ENDPOINT, endpoint: 'https://api.test.invalid/hosted/agent-1' }),
+      jsonResponse({ output: 'ok' }),
+    ]);
+    await client.agents.invoke(AGENT_ID);
+    expect(http.last().url).toBe('https://api.test.invalid/hosted/agent-1/invoke');
+    expect(http.last().headers['authorization']).toBe('Bearer test-key');
+  });
+
+  it('keeps the API key off an endpoint it cannot parse', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ ...ENDPOINT, endpoint: 'https://[not-a-host' }),
+      jsonResponse({ output: 'ok' }),
+    ]);
+    await client.agents.invoke(AGENT_ID);
+    expect(http.last().url).toBe('https://[not-a-host/invoke');
+    expect(http.last().headers['authorization']).toBeUndefined();
+  });
+
+  it('remembers a bounded number of endpoints, dropping the oldest', async () => {
+    const { client, http } = testClient([
+      (_attempt, request) => {
+        const agent = /\/v1\/agents\/([^/]+)\/endpoint$/.exec(request.url)?.[1];
+        return agent
+          ? jsonResponse({
+              ...ENDPOINT,
+              agent_id: agent,
+              endpoint: `https://${agent}.example.test`,
+            })
+          : jsonResponse({ output: 'ok' });
+      },
+    ]);
+
+    for (let i = 0; i <= 1024; i += 1) await client.agents.get(`agent-${i}`);
+    // A repeat lookup refreshes the entry rather than adding a second one.
+    await client.agents.get('agent-1024');
+    const before = http.requests.length;
+
+    await client.agents.invoke('agent-1024');
+    await client.agents.invoke('agent-1');
+    await client.agents.invoke('agent-0');
+    expect(http.requests.slice(before).map((request) => request.url)).toEqual([
+      'https://agent-1024.example.test/invoke',
+      'https://agent-1.example.test/invoke',
+      `https://api.test.invalid/v1/agents/agent-0/endpoint`,
+      'https://agent-0.example.test/invoke',
+    ]);
   });
 });

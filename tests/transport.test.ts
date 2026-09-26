@@ -432,6 +432,154 @@ describe('timeout and abort', () => {
   });
 });
 
+/** A response whose body never arrives, failing only when the request is aborted. */
+function stalledBody(signal: AbortSignal | null | undefined, status = 200): Response {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        signal?.addEventListener('abort', () => {
+          controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+        });
+      },
+    }),
+    { status, headers: { 'content-type': 'application/json' } },
+  );
+}
+
+/** A response whose body sends `frames`, then fails like a dropped connection. */
+function brokenBody(frames: string[], status = 200): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const frame of frames) controller.enqueue(encoder.encode(frame));
+      },
+      pull(controller) {
+        controller.error(new TypeError('terminated'));
+      },
+    }),
+    { status, headers: { 'content-type': 'text/event-stream' } },
+  );
+}
+
+describe('response bodies', () => {
+  it('times out a body that stalls after the headers arrive', async () => {
+    const { client } = testClient([], {
+      timeout: 20,
+      maxRetries: 0,
+      fetch: async (_url, init) => stalledBody(init.signal),
+    });
+    await expectRejection(client.runtime.list(), GravixLayerTimeoutError);
+  });
+
+  it('times out a download whose body stalls', async () => {
+    const { client } = testClient([], {
+      timeout: 20,
+      maxRetries: 0,
+      fetch: async (_url, init) => stalledBody(init.signal),
+    });
+    await expectRejection(
+      client.runtime.file.download(RUNTIME_ID, '/tmp/big.bin'),
+      GravixLayerTimeoutError,
+    );
+  });
+
+  it('reports a caller abort while the body is being read', async () => {
+    const controller = new AbortController();
+    const { client } = testClient([], {
+      timeout: 0,
+      fetch: async (_url, init) => {
+        queueMicrotask(() => controller.abort());
+        return stalledBody(init.signal);
+      },
+    });
+    await expectRejection(
+      client.runtime.list({ signal: controller.signal }),
+      GravixLayerAbortError,
+    );
+  });
+
+  it('reports a body that breaks mid-read as a connection error', async () => {
+    const { client } = testClient([], { maxRetries: 0, fetch: async () => brokenBody(['{"ru']) });
+    const error = await expectRejection(client.runtime.list(), GravixLayerConnectionError);
+    expect(error.message).toBe('terminated');
+  });
+
+  it('still reports the status when an error body cannot be read', async () => {
+    const { client } = testClient([], { maxRetries: 0, fetch: async () => brokenBody([], 500) });
+    const error = await expectRejection(client.runtime.list(), GravixLayerServerError);
+    expect(error.status).toBe(500);
+  });
+
+  it('ignores an unreadable body on a call that returns nothing', async () => {
+    const { client } = testClient([], { maxRetries: 0, fetch: async () => brokenBody(['x']) });
+    await expect(client.runtime.pause(RUNTIME_ID)).resolves.toBeUndefined();
+  });
+
+  it('releases the timeout once the body has been read', async () => {
+    const signals: AbortSignal[] = [];
+    const { client } = testClient([], {
+      timeout: 30,
+      fetch: async (_url, init) => {
+        signals.push(init.signal as AbortSignal);
+        return jsonResponse({ runtimes: [], total: 0 });
+      },
+    });
+    await client.runtime.list();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(signals[0]?.aborted).toBe(false);
+  });
+});
+
+describe('stream failures', () => {
+  it('reports a stream that breaks mid-way as a connection error', async () => {
+    const { client } = testClient([], {
+      fetch: async () => brokenBody([`data: ${JSON.stringify({ type: 'stdout', data: 'a' })}\n\n`]),
+    });
+    const events: unknown[] = [];
+    const error = await expectRejection(
+      (async () => {
+        for await (const event of client.runtime.streamCmd(RUNTIME_ID, 'build')) events.push(event);
+      })(),
+      GravixLayerConnectionError,
+    );
+    expect(error.message).toBe('terminated');
+    expect(events).toEqual([{ type: 'stdout', data: 'a' }]);
+  });
+
+  it('reports a caller abort mid-stream as an abort', async () => {
+    const controller = new AbortController();
+    const encoder = new TextEncoder();
+    const { client } = testClient([], {
+      fetch: async (_url, init) =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ type: 'stdout', data: 'a' })}\n\n`),
+              );
+              init.signal?.addEventListener('abort', () => {
+                stream.error(new DOMException('The operation was aborted.', 'AbortError'));
+              });
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+    });
+
+    await expectRejection(
+      (async () => {
+        for await (const _event of client.runtime.streamCmd(RUNTIME_ID, 'build', {
+          signal: controller.signal,
+        })) {
+          controller.abort();
+        }
+      })(),
+      GravixLayerAbortError,
+    );
+  });
+});
+
 describe('URL construction', () => {
   it('places the service prefix between the base URL and the path', async () => {
     const { client, http } = testClient([jsonResponse(runtimePayload())]);

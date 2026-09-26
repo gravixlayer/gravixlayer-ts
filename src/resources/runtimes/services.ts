@@ -12,6 +12,7 @@ import {
   GravixLayerAbortError,
   GravixLayerConnectionError,
   GravixLayerError,
+  GravixLayerInvalidArgumentError,
   GravixLayerTimeoutError,
 } from '../../core/errors.js';
 import { asRecord, parseList } from '../../core/parse.js';
@@ -147,6 +148,9 @@ export interface ServiceRequestInit extends Omit<RequestInit, 'signal'> {
  * ```
  */
 export class ServiceHandle {
+  /** Origin of the service URL, resolved on first use. */
+  private origin: string | undefined;
+
   constructor(
     readonly service: RuntimeWebService,
     /** The client's `fetch`, so a custom one still applies to these calls. */
@@ -190,13 +194,22 @@ export class ServiceHandle {
     const base = this.url.endsWith('/') ? this.url : `${this.url}/`;
 
     try {
-      return await this.fetchImpl(new URL(path.replace(/^\/+/, ''), base).toString(), {
+      const target = new URL(path.replace(/^\/+/, ''), base);
+      // The access token is scoped to this service and must not follow a path
+      // that resolves to another origin.
+      if (target.origin !== (this.origin ??= new URL(base).origin)) {
+        throw new GravixLayerInvalidArgumentError(
+          `path must stay on the service's origin; received ${JSON.stringify(path)}.`,
+        );
+      }
+      return await this.fetchImpl(target.toString(), {
         ...rest,
         method,
         headers: merged,
         signal: controller.signal,
       });
     } catch (error) {
+      if (error instanceof GravixLayerError) throw error;
       if (signal?.aborted) {
         throw new GravixLayerAbortError('Request aborted.', { cause: signal.reason });
       }

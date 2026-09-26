@@ -130,6 +130,18 @@ describe('tracing', () => {
     expect(request?.ended).toBe(true);
   });
 
+  it('keeps the query string, which can carry user data, off the span', async () => {
+    const { client, http } = testClient([new Response('x')]);
+    await client.runtime.file.download(RUNTIME_ID, '/secret/plan.txt');
+
+    expect(http.last().url).toContain('secret');
+    const request = spans.find((span) => span.name.startsWith('GET '));
+    expect(request?.attributes['url.full']).toBe(
+      `https://api.test.invalid/v1/agents/runtime/${RUNTIME_ID}/download`,
+    );
+    expect(String(request?.attributes['url.full'])).not.toContain('secret');
+  });
+
   it('marks a failed request on its span', async () => {
     const { client } = testClient([jsonResponse({ error: 'nope' }, 500)]);
     await expect(client.runtime.retrieve(RUNTIME_ID)).rejects.toThrow();

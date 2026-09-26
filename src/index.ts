@@ -66,6 +66,7 @@ export {
   type CodeCallbacks,
   type CodeStreamEvent,
   type CommandCallbacks,
+  type CommandFollowOptions,
   type CommandStreamEvent,
   type CreateContextOptions,
   type CreateRuntimeOptions,
@@ -226,6 +227,8 @@ export {
   type ListAgentTemplatesOptions,
   type WaitForBuildOptions,
 } from './resources/agents.js';
+
+export type { RawStreamEvent } from './core/sse.js';
 
 export {
   AgentBuildPhase,

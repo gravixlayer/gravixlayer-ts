@@ -9,6 +9,7 @@
 import { toBase64, utf8Encode, type BinaryLike } from '../core/binary.js';
 import { GravixLayerInvalidArgumentError } from '../core/errors.js';
 import { bool, num, optNum, optStr, parseList, str } from '../core/parse.js';
+import { shellQuote } from '../core/shell.js';
 import { formatMode, type FileMode } from '../core/uploads.js';
 
 // ---------------------------------------------------------------------------
@@ -541,17 +542,17 @@ export class TemplateBuilder {
 
   /** A readiness check that waits for a URL to return an expected status. */
   static waitForUrl(url: string, expectedStatus = 200): string {
-    return `curl -s -o /dev/null -w '%{http_code}' ${url} | grep -q ${expectedStatus}`;
+    return `curl -s -o /dev/null -w '%{http_code}' ${shellQuote(url)} | grep -q ${shellQuote(String(expectedStatus))}`;
   }
 
   /** A readiness check that waits for a file to appear. */
   static waitForFile(path: string): string {
-    return `test -f ${path}`;
+    return `test -f ${shellQuote(path)}`;
   }
 
   /** A readiness check that waits for a named process to start. */
   static waitForProcess(name: string): string {
-    return `pgrep ${name} > /dev/null`;
+    return `pgrep ${shellQuote(name)} > /dev/null`;
   }
 
   /** Serialize to the API request body. */

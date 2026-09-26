@@ -42,6 +42,8 @@ for await (const event of client.agents.stream<{ type: string; text?: string }>(
   input: { prompt: 'Stream this answer back to me' },
   sessionId: 'demo-session',
 })) {
-  if (event.type === 'token') process.stdout.write(event.text ?? '');
+  // An event that is not JSON arrives as `{ raw }` with its text.
+  if ('raw' in event) process.stdout.write(event.raw);
+  else if (event.type === 'token') process.stdout.write(event.text ?? '');
   else if (event.type === 'done') console.log('\n[done]');
 }

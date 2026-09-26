@@ -14,6 +14,7 @@
  * never evaluate them.
  */
 
+import { utf8Encode } from './binary.js';
 import { GravixLayerInvalidArgumentError } from './errors.js';
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -67,6 +68,23 @@ const H2_PING_MS = 25_000;
 /** TCP/TLS/HTTP/2 connect deadline. */
 const CONNECT_TIMEOUT_MS = 10_000;
 
+/**
+ * How long a hostname's addresses are reused before being looked up again.
+ *
+ * Load balancer addresses rotate, so an address pinned forever eventually
+ * points at a node that no longer serves the host.
+ */
+const DNS_TTL_MS = 30_000;
+
+/** Socket errors that mean the address itself is unreachable. */
+const CONNECT_FAILURES: ReadonlySet<string> = new Set([
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ETIMEDOUT',
+  'EADDRNOTAVAIL',
+]);
+
 const IPV4_LITERAL = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
 /** Hostnames that must not be sent as TLS SNI (Node rejects IP servername). */
@@ -111,10 +129,27 @@ interface NetSocket {
   unref(): void;
 }
 
+/** The writable side of an outgoing request, shared by HTTP/1.1 and HTTP/2. */
+interface BodySink {
+  writableEnded: boolean;
+  destroyed: boolean;
+  write(chunk: Uint8Array): boolean;
+  end(chunk?: string | Buffer): void;
+  destroy(error?: Error): void;
+  once(event: 'drain' | 'close', listener: () => void): void;
+  off(event: 'drain' | 'close', listener: () => void): void;
+}
+
 interface HttpClientRequest {
+  writableEnded: boolean;
+  destroyed: boolean;
   on(event: 'error', listener: (error: Error) => void): void;
   on(event: 'socket', listener: (socket: NetSocket) => void): void;
+  once(event: 'drain' | 'close', listener: () => void): void;
+  off(event: 'drain' | 'close', listener: () => void): void;
+  write(chunk: Uint8Array): boolean;
   end(chunk?: string | Buffer): void;
+  destroy(error?: Error): void;
 }
 
 interface HttpLib {
@@ -143,12 +178,17 @@ interface TlsLib {
 
 interface Http2Stream {
   writableEnded: boolean;
+  destroyed: boolean;
+  write(chunk: Uint8Array): boolean;
   end(chunk?: string | Buffer): void;
+  destroy(error?: Error): void;
   close(code?: number): void;
   on(event: 'data', listener: (chunk: Buffer | string) => void): void;
   once(event: 'error', listener: (error: Error) => void): void;
   once(event: 'end', listener: () => void): void;
   once(event: 'response', listener: (headers: Http2Headers) => void): void;
+  once(event: 'drain' | 'close', listener: () => void): void;
+  off(event: 'drain' | 'close', listener: () => void): void;
 }
 
 interface Http2Session {
@@ -202,6 +242,29 @@ interface H2Session {
   ping: ReturnType<typeof setInterval> | undefined;
 }
 
+/** A hostname's IPv4 addresses, the one in use first. */
+interface ResolvedHost {
+  addresses: string[];
+  expiresAt: number;
+}
+
+/** Address resolution shared by the HTTP/1.1 pool and HTTP/2 sessions. */
+export interface AddressBook {
+  resolveIpv4(hostname: string): Promise<string>;
+  /** Move an address that failed to connect to the back of its host's list. */
+  demote(hostname: string, address: string): void;
+  clear(): void;
+}
+
+/** A `FormData` body laid out for streaming, with its exact length known up front. */
+interface MultipartBody {
+  contentType: string;
+  length: number;
+  parts: ReadonlyArray<Uint8Array | Blob>;
+}
+
+type OutgoingBody = string | Buffer | MultipartBody | undefined;
+
 let mods: NodeHttpMods | undefined;
 let modsLoading: Promise<NodeHttpMods | null> | undefined;
 
@@ -246,51 +309,30 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
   const h2Sessions = new Map<string, Promise<H2Session>>();
   const h2Live = new Map<string, H2Session>();
   const connectingSockets = new Set<TlsSocket>();
-  const ipv4Cache = new Map<string, Promise<string>>();
 
   const loaded = loadMods();
   void loaded;
 
-  const resolveIpv4 = (hostname: string): Promise<string> => {
-    if (IPV4_LITERAL.test(hostname)) return Promise.resolve(hostname);
-    const cached = ipv4Cache.get(hostname);
-    if (cached) return cached;
-    const pending = new Promise<string>((resolve, reject) => {
-      const finish: DnsLookupCallback = (err, address) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        const ip = ipv4FromLookup(address);
-        if (!ip) {
-          reject(new Error(`Could not resolve ${hostname} to an IPv4 address.`));
-          return;
-        }
-        resolve(ip);
-      };
-      if (lookup) {
-        lookup(hostname, { family: 4, all: false }, finish);
+  const addresses = createAddressBook((hostname, callback) => {
+    if (lookup) {
+      lookup(hostname, { family: 4, all: true }, callback);
+      return;
+    }
+    void loaded.then((node) => {
+      if (!node) {
+        callback(new Error('The GravixLayer client could not load Node HTTP modules.'), undefined);
         return;
       }
-      void loaded.then((node) => {
-        if (!node) {
-          reject(new Error('The GravixLayer client could not load Node HTTP modules.'));
-          return;
-        }
-        node.dns.lookup(hostname, { family: 4, all: false }, finish);
-      });
+      node.dns.lookup(hostname, { family: 4, all: true }, callback);
     });
-    pending.catch(() => ipv4Cache.delete(hostname));
-    ipv4Cache.set(hostname, pending);
-    return pending;
-  };
+  });
 
   const ensureH1 = (): Promise<NodeH1Pool | undefined> => {
     h1Ready ??= (async () => {
       if (closed) return undefined;
       const node = await loaded;
       if (!node || closed) return undefined;
-      h1Pool = createNodeH1Pool(node, { rejectUnauthorized, resolveIpv4 });
+      h1Pool = createNodeH1Pool(node, { rejectUnauthorized, addresses });
       return h1Pool;
     })();
     return h1Ready;
@@ -302,7 +344,7 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     if (existing) return existing;
     const pending = connectH2(node, url, {
       rejectUnauthorized,
-      resolveIpv4,
+      addresses,
       connectingSockets,
     }).then(({ session, socket }) => {
       if (closed) {
@@ -334,7 +376,9 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     void pending.catch((error: unknown) => {
       h2Sessions.delete(origin);
       h2Live.delete(origin);
-      if (isHttp2HandshakeFailure(error)) h2FailedOrigins.add(origin);
+      // Only a server that does not offer HTTP/2 moves the origin to HTTP/1.1
+      // for good. A network failure tries HTTP/2 again on the next request.
+      if (isHttp2Unsupported(error)) h2FailedOrigins.add(origin);
     });
     h2Sessions.set(origin, pending);
     return pending;
@@ -371,10 +415,7 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
           }
           return await h2Fetch(node, handle.session, url, init);
         } catch (error) {
-          if (closed) throw error;
-          if (isHttp2HandshakeFailure(error) && isReplayableBody(init.body)) {
-            h2FailedOrigins.add(url.origin);
-          } else {
+          if (closed || !isHttp2HandshakeFailure(error) || !isReplayableBody(init.body)) {
             throw error;
           }
         }
@@ -403,7 +444,7 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     async close() {
       closed = true;
       h2FailedOrigins.clear();
-      ipv4Cache.clear();
+      addresses.clear();
       for (const socket of connectingSockets) {
         dropSocket(socket);
       }
@@ -428,6 +469,86 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
 }
 
 /**
+ * IPv4 resolution with a short cache.
+ *
+ * Each hostname is looked up at most once at a time. An answer is reused for
+ * {@link DNS_TTL_MS}; after that, requests keep using it while a refresh runs
+ * in the background, so a lookup never sits in front of a request that
+ * already has a working address.
+ *
+ * @param lookup resolves every IPv4 address for a hostname
+ */
+export function createAddressBook(
+  lookup: (hostname: string, callback: DnsLookupCallback) => void,
+): AddressBook {
+  const hosts = new Map<string, ResolvedHost>();
+  const lookups = new Map<string, Promise<string[]>>();
+
+  const lookupHost = (hostname: string): Promise<string[]> => {
+    const inflight = lookups.get(hostname);
+    if (inflight) return inflight;
+    const pending = new Promise<string[]>((resolve, reject) => {
+      lookup(hostname, (err, answer) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        const addresses = ipv4List(answer);
+        if (addresses.length === 0) {
+          reject(new Error(`Could not resolve ${hostname} to an IPv4 address.`));
+          return;
+        }
+        resolve(addresses);
+      });
+    }).then(
+      (addresses) => {
+        lookups.delete(hostname);
+        // Keep the address in use first while DNS still publishes it, so a
+        // refresh does not move traffic off warm pooled connections.
+        const current = hosts.get(hostname)?.addresses[0];
+        const ordered =
+          current !== undefined && addresses.includes(current)
+            ? [current, ...addresses.filter((address) => address !== current)]
+            : addresses;
+        hosts.set(hostname, { addresses: ordered, expiresAt: Date.now() + DNS_TTL_MS });
+        return ordered;
+      },
+      (error: unknown) => {
+        lookups.delete(hostname);
+        throw error;
+      },
+    );
+    lookups.set(hostname, pending);
+    return pending;
+  };
+
+  return {
+    async resolveIpv4(hostname) {
+      if (IPV4_LITERAL.test(hostname)) return hostname;
+      const known = hosts.get(hostname);
+      if (!known) return (await lookupHost(hostname))[0] as string;
+      if (known.expiresAt <= Date.now() && !lookups.has(hostname)) {
+        // A failed refresh keeps the last good answer for another TTL.
+        void lookupHost(hostname).catch(() => {
+          known.expiresAt = Date.now() + DNS_TTL_MS;
+        });
+      }
+      return known.addresses[0] as string;
+    },
+    demote(hostname, address) {
+      const known = hosts.get(hostname);
+      if (known?.addresses[0] !== address) return;
+      known.addresses.push(known.addresses.shift() as string);
+      known.expiresAt = 0;
+    },
+    clear() {
+      hosts.clear();
+      lookups.clear();
+    },
+  };
+}
+
+/**
  * Force A-record resolution. Tests assert this helper; the live client pins
  * IPv4 in {@link createNativeNodeFetch} instead of wrapping every lookup.
  */
@@ -446,14 +567,21 @@ export function wrapIpv4Lookup(lookup: DnsLookup | undefined): DnsLookup | undef
   };
 }
 
-function ipv4FromLookup(address: unknown): string | undefined {
-  if (typeof address === 'string' && address !== '') return address;
-  if (Array.isArray(address) && address.length > 0) {
-    const first = address[0] as { address?: string } | string;
-    if (typeof first === 'string') return first;
-    if (first && typeof first.address === 'string') return first.address;
+/** Addresses from a lookup answer, which is one address or a list of them. */
+function ipv4List(answer: unknown): string[] {
+  if (typeof answer === 'string') return answer === '' ? [] : [answer];
+  if (!Array.isArray(answer)) return [];
+  const addresses: string[] = [];
+  for (const entry of answer as unknown[]) {
+    const address = typeof entry === 'string' ? entry : (entry as { address?: unknown })?.address;
+    if (typeof address === 'string' && address !== '') addresses.push(address);
   }
-  return undefined;
+  return addresses;
+}
+
+function isConnectFailure(error: unknown): boolean {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return typeof code === 'string' && CONNECT_FAILURES.has(code);
 }
 
 function closeH2(handle: H2Session): void {
@@ -519,11 +647,11 @@ async function connectH2(
   url: URL,
   opts: {
     rejectUnauthorized: boolean;
-    resolveIpv4: (hostname: string) => Promise<string>;
+    addresses: AddressBook;
     connectingSockets: Set<TlsSocket>;
   },
 ): Promise<{ session: Http2Session; socket: TlsSocket }> {
-  const address = await opts.resolveIpv4(url.hostname);
+  const address = await opts.addresses.resolveIpv4(url.hostname);
   const port = Number(url.port) || 443;
 
   return await new Promise((resolve, reject) => {
@@ -556,14 +684,18 @@ async function connectH2(
     socket.setKeepAlive(true, TCP_KEEPALIVE_DELAY_MS);
     socket.setTimeout(CONNECT_TIMEOUT_MS, () => {
       socket.destroy();
+      opts.addresses.demote(url.hostname, address);
       fail(handshakeError('HTTP/2 connect timed out'));
     });
-    socket.once('error', (error) => fail(markHandshake(error)));
+    socket.once('error', (error) => {
+      if (isConnectFailure(error)) opts.addresses.demote(url.hostname, address);
+      fail(markHandshake(error));
+    });
     socket.once('secureConnect', () => {
       socket.setTimeout(0);
       if (socket.alpnProtocol !== 'h2') {
         socket.destroy();
-        fail(handshakeError('ALPN did not negotiate HTTP/2'));
+        fail(handshakeError('ALPN did not negotiate HTTP/2', H2_NOT_NEGOTIATED));
         return;
       }
       const session = node.http2.connect(url.origin, {
@@ -623,8 +755,10 @@ function h2Fetch(
       }
       const req = session.request(h2Headers, { endStream: body === undefined });
       const onAbort = () => {
+        const reason = signal?.reason ?? new Error('aborted');
         req.close(node.http2.constants.NGHTTP2_CANCEL);
-        reject(signal?.reason ?? new Error('aborted'));
+        req.destroy(reason);
+        reject(reason);
       };
       signal?.addEventListener('abort', onAbort, { once: true });
       req.once('error', (error) => {
@@ -641,7 +775,9 @@ function h2Fetch(
           return;
         }
         if (streamBody) {
-          signal?.removeEventListener('abort', onAbort);
+          // The signal stays wired until the stream closes, so an abort after
+          // the headers still cancels the stream and fails the body.
+          req.once('close', () => signal?.removeEventListener('abort', onAbort));
           resolve(
             new Response(toWeb(req) as ReadableStream<Uint8Array>, {
               status,
@@ -661,11 +797,7 @@ function h2Fetch(
           },
         );
       });
-      if (body === undefined) {
-        if (!req.writableEnded) req.end();
-      } else {
-        req.end(body);
-      }
+      sendBody(req, body);
     });
   })();
 }
@@ -674,7 +806,7 @@ function createNodeH1Pool(
   node: NodeHttpMods,
   opts: {
     rejectUnauthorized: boolean;
-    resolveIpv4: (hostname: string) => Promise<string>;
+    addresses: AddressBook;
   },
 ): NodeH1Pool {
   const shared = {
@@ -704,7 +836,7 @@ function createNodeH1Pool(
     const agent = isHttps ? httpsAgent : httpAgent;
     const { body, headers } = await materializeBody(init);
     const method = (init.method ?? 'GET').toUpperCase();
-    const address = await opts.resolveIpv4(url.hostname);
+    const address = await opts.addresses.resolveIpv4(url.hostname);
     if (!headerHas(headers, 'host')) headers.host = url.host;
     const streamBody = wantsStreamingBody(init);
 
@@ -754,13 +886,15 @@ function createNodeH1Pool(
           reject,
         );
       });
-      req.on('error', reject);
+      req.on('error', (error) => {
+        if (isConnectFailure(error)) opts.addresses.demote(url.hostname, address);
+        reject(error);
+      });
       req.on('socket', (socket) => {
         socket.setNoDelay(true);
         socket.ref();
       });
-      if (body === undefined) req.end();
-      else req.end(body);
+      sendBody(req, body);
     });
   };
 
@@ -774,7 +908,7 @@ function createNodeH1Pool(
 }
 
 async function materializeBody(init: RequestInit): Promise<{
-  body: string | Buffer | undefined;
+  body: OutgoingBody;
   headers: Record<string, string | string[] | undefined>;
 }> {
   const headers = outgoingHeaders(init.headers);
@@ -797,14 +931,125 @@ async function materializeBody(init: RequestInit): Promise<{
     return { body: body.toString(), headers };
   }
   if (typeof FormData !== 'undefined' && body instanceof FormData) {
-    const encoded = new Request('http://127.0.0.1/', { method: 'POST', body });
-    const contentType = encoded.headers.get('content-type');
-    if (contentType) headers['content-type'] = contentType;
-    return { body: Buffer.from(await encoded.arrayBuffer()), headers };
+    const multipart = encodeMultipart(body);
+    headers['content-type'] = multipart.contentType;
+    headers['content-length'] = String(multipart.length);
+    return { body: multipart, headers };
   }
   throw new GravixLayerInvalidArgumentError(
     'This request body type is not supported by the Node HTTP client.',
   );
+}
+
+/** Write the request body, if any, and end the request. */
+function sendBody(req: BodySink, body: OutgoingBody): void {
+  if (body === undefined) {
+    if (!req.writableEnded) req.end();
+  } else if (typeof body === 'string' || body instanceof Uint8Array) {
+    req.end(body);
+  } else {
+    writeParts(req, body.parts).then(
+      (complete) => {
+        if (complete) req.end();
+      },
+      (error: unknown) => req.destroy(error instanceof Error ? error : new Error(String(error))),
+    );
+  }
+}
+
+const CRLF = utf8Encode('\r\n');
+
+/**
+ * Lay out a `FormData` body without reading any file into memory.
+ *
+ * The encoding matches what `fetch` produces for the same form, so the server
+ * sees identical bytes. Files are streamed from their `Blob` as the request is
+ * written.
+ */
+function encodeMultipart(form: FormData): MultipartBody {
+  const random = crypto.getRandomValues(new Uint8Array(16));
+  let boundary = '----formdata-';
+  for (const byte of random) boundary += byte.toString(16).padStart(2, '0');
+
+  const parts: Array<Uint8Array | Blob> = [];
+  let length = 0;
+  const push = (part: Uint8Array | Blob): void => {
+    parts.push(part);
+    length += part instanceof Uint8Array ? part.byteLength : part.size;
+  };
+
+  const prefix = `--${boundary}\r\nContent-Disposition: form-data; name="`;
+  for (const [name, value] of form) {
+    const field = escapeMultipart(normalizeLinefeeds(name));
+    if (typeof value === 'string') {
+      push(utf8Encode(`${prefix}${field}"\r\n\r\n${normalizeLinefeeds(value)}\r\n`));
+    } else {
+      const type = value.type || 'application/octet-stream';
+      push(
+        utf8Encode(
+          `${prefix}${field}"; filename="${escapeMultipart(value.name)}"\r\nContent-Type: ${type}\r\n\r\n`,
+        ),
+      );
+      push(value);
+      push(CRLF);
+    }
+  }
+  push(utf8Encode(`--${boundary}--\r\n`));
+
+  return { contentType: `multipart/form-data; boundary=${boundary}`, length, parts };
+}
+
+function escapeMultipart(value: string): string {
+  return value.replace(/\n/g, '%0A').replace(/\r/g, '%0D').replace(/"/g, '%22');
+}
+
+function normalizeLinefeeds(value: string): string {
+  return value.replace(/\r?\n|\r/g, '\r\n');
+}
+
+/**
+ * Write each part in order, pausing whenever the request's buffer is full.
+ *
+ * Resolves false, having stopped early, once the request is torn down.
+ */
+async function writeParts(
+  req: BodySink,
+  parts: ReadonlyArray<Uint8Array | Blob>,
+): Promise<boolean> {
+  for (const part of parts) {
+    if (part instanceof Uint8Array) {
+      if (!(await write(req, part))) return false;
+      continue;
+    }
+    const reader = part.stream().getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(await write(req, value))) {
+        void reader.cancel().catch(() => undefined);
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** Write one chunk. Resolves false once the request has been torn down. */
+async function write(req: BodySink, chunk: Uint8Array): Promise<boolean> {
+  if (req.destroyed) return false;
+  if (req.write(chunk)) return true;
+  if (req.destroyed) return false;
+  return new Promise((resolve) => {
+    const settle = (drained: boolean) => () => {
+      req.off('drain', onDrain);
+      req.off('close', onClose);
+      resolve(drained);
+    };
+    const onDrain = settle(true);
+    const onClose = settle(false);
+    req.once('drain', onDrain);
+    req.once('close', onClose);
+  });
 }
 
 function outgoingHeaders(init?: HeadersInit): Record<string, string | string[] | undefined> {
@@ -894,8 +1139,11 @@ function isReplayableBody(body: BodyInit | null | undefined): boolean {
 
 const H2_HANDSHAKE = 'h2handshake';
 
-function handshakeError(message: string): Error {
-  return markHandshake(Object.assign(new Error(message), { code: 'ERR_HTTP2' }));
+/** Code on the handshake error raised when the server does not offer HTTP/2. */
+const H2_NOT_NEGOTIATED = 'ERR_HTTP2_NOT_NEGOTIATED';
+
+function handshakeError(message: string, code = 'ERR_HTTP2'): Error {
+  return markHandshake(Object.assign(new Error(message), { code }));
 }
 
 function markHandshake(error: Error): Error {
@@ -911,4 +1159,9 @@ function markHandshake(error: Error): Error {
  */
 function isHttp2HandshakeFailure(error: unknown): boolean {
   return Boolean((error as { [H2_HANDSHAKE]?: boolean } | undefined)?.[H2_HANDSHAKE]);
+}
+
+/** True when the server negotiated a protocol other than HTTP/2. */
+function isHttp2Unsupported(error: unknown): boolean {
+  return (error as { code?: unknown } | undefined)?.code === H2_NOT_NEGOTIATED;
 }

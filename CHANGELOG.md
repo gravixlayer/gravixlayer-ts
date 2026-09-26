@@ -5,6 +5,38 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.23] - 2026-08-29
+### Fixed
+- `CommandHandle.disconnect()` stops every open `wait()` on the handle. Before, it stopped only the most recent one, and never a wait that was given its own `signal`. A caller's `signal` still stops only its own wait.
+- The package no longer depends on an older published copy of itself, so an install pulls in one copy of the SDK.
+- `VERSION` and the `user-agent` header report the installed version. They were stuck at 0.1.13.
+- A response body is read under the call's `timeout` and `signal`. Before, a server that sent headers and then stalled could hang the call forever. A stalled, aborted, or broken body now throws `GravixLayerTimeoutError`, `GravixLayerAbortError`, or `GravixLayerConnectionError`.
+- A stream that breaks partway through throws `GravixLayerConnectionError`, `GravixLayerAbortError`, or `GravixLayerTimeoutError` instead of a raw `TypeError`.
+- `streamCmd`, `runCode`, and `streamCode` throw `GravixLayerConnectionError` when the stream closes before its final event. Before, they returned as if the run had finished.
+- The Node HTTP client resolves a hostname again every 30 seconds and moves off an address that refuses or times out on connect. Before, it kept the first answer for the life of the client.
+- A connect failure no longer turns HTTP/2 off for an origin for the life of the client. Only a server that does not offer HTTP/2 moves the origin to HTTP/1.1.
+- `ServiceHandle.request` rejects a path that resolves to another origin, so the service's access token is never sent there.
+- `TemplateBuilder.waitForUrl`, `waitForFile`, and `waitForProcess` quote their arguments, so a value with spaces or shell characters reaches the command unchanged.
+- Building an agent from a project directory reads `.env` lines written as `export KEY=value`.
+- An archive entry path with a `..` segment is rejected, and a path that starts with a backslash stays relative.
+- An error event from `file.watch` throws `GravixLayerError`. It was `GravixLayerInvalidArgumentError`, which reads as a caller mistake.
+- A command result's `durationMs` falls back to a monotonic clock, so a system clock change can't make it negative.
+- `command.get`, `command.kill`, and `command.connect` reject a `pid` that isn't a positive integer before sending a request.
+- Aborting an HTTP/2 call after its headers arrive cancels the stream on the server and fails the body read with an abort error. Before, the stream stayed open and the body ended as if complete.
+
+### Changed
+- A background `runCmd` with output callbacks no longer drops a failure while following the output. A broken stream or a callback that throws goes to the new `onError` option and stays on `handle.error`. Stopping the follow with `disconnect()` or `signal` is not a failure.
+- The API key is sent only to the API's origin. A request to another origin, such as `agents.invoke` and `agents.stream` calling an agent's endpoint, does not carry it. Pass an `authorization` header on the request if that endpoint needs one.
+- `agents.invoke` and `agents.stream` remember each agent's endpoint instead of looking it up on every call. A failed call or `agents.destroy` forgets it.
+- `FormData` bodies sent by the Node HTTP client stream with an exact `content-length` instead of being buffered in memory first.
+- Telemetry spans leave the query string out of `url.full`.
+- Reading a project directory for an agent build lists and reads files in parallel.
+- `agents.stream<T>()` yields `T | RawStreamEvent`. An event whose data is not JSON already arrived as `{ raw }`; the type now says so. Check `'raw' in event` before reading your own fields.
+
+### Added
+- `onError` on `runCmd` options, `CommandHandle.error`, and `CommandHandle.follow()`, which follows output in the background with the same callbacks. New `CommandFollowOptions` type.
+- `RawStreamEvent` type for a streamed event whose data is not JSON.
+
 ## [0.1.22] - 2026-09-24
 ### Fixed
 - POST and PATCH are no longer retried after a connection failure or a 502, 503, or 504. A retry could repeat work the server had already done. A 429 is still retried, because the server refused the call. GET, PUT, and DELETE keep their retries.

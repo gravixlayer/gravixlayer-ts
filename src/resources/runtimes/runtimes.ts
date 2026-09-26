@@ -9,6 +9,7 @@
 
 import { GravixLayerConnectionError, GravixLayerInvalidArgumentError } from '../../core/errors.js';
 import { asRecord, bool, num, optNum, optStr, parseList, str } from '../../core/parse.js';
+import { monotonicMs } from '../../core/progress.js';
 import { iterSSEJson } from '../../core/sse.js';
 import { timeoutForGuestDeadline } from '../../core/time.js';
 import type { RequestOptions } from '../../core/transport.js';
@@ -111,8 +112,14 @@ export interface CommandCallbacks {
   onExit?: (exitCode: number) => void;
 }
 
-/** Options for {@link Runtimes.runCmd}. */
-export interface RunCommandOptions extends RequestOptions, CommandCallbacks {
+/** Options for {@link CommandHandle.follow}. */
+export interface CommandFollowOptions extends RequestOptions, CommandCallbacks {
+  /** Invoked if following the output fails. The command itself keeps running. */
+  onError?: (error: Error) => void;
+}
+
+/** Options for {@link Runtimes.runCmd}. `onError` applies with `background`. */
+export interface RunCommandOptions extends CommandFollowOptions {
   /** Arguments appended to the command. */
   args?: string[];
   /** Directory to run in. Defaults to the guest's working directory. */
@@ -196,7 +203,12 @@ function executionOptions(options: RequestOptions & { timeoutSeconds?: number })
   return out;
 }
 
-/** Normalize command SSE frames. Ends after the terminal `end` or `error`. */
+/**
+ * Normalize command SSE frames. Ends after the terminal `end` or `error`.
+ *
+ * The server always sends one of them, so a stream that closes first was cut
+ * off and is thrown rather than passed off as a finished command.
+ */
 async function* commandFrames(
   stream: ReadableStream<Uint8Array>,
 ): AsyncGenerator<CommandStreamEvent, void, undefined> {
@@ -224,6 +236,7 @@ async function* commandFrames(
         break;
     }
   }
+  throw new GravixLayerConnectionError('command stream ended before the command finished');
 }
 
 /**
@@ -241,12 +254,12 @@ async function collectCommand(
 ): Promise<CommandRunResponse> {
   const stdout: string[] = [];
   const stderr: string[] = [];
-  const startedAt = Date.now();
+  const startedAt = monotonicMs();
   const result = (exitCode: number, durationMs?: number, timedOut = false): CommandRunResponse => ({
     stdout: stdout.join(''),
     stderr: stderr.join(''),
     exitCode,
-    durationMs: durationMs ?? Date.now() - startedAt,
+    durationMs: durationMs ?? Math.round(monotonicMs() - startedAt),
     success: exitCode === 0,
     timedOut,
   });
@@ -648,9 +661,7 @@ export class Runtimes extends APIResource {
         }),
       );
       const handle = new CommandHandle(this, runtimeId, num(started, 'pid'));
-      if (options.onStdout || options.onStderr || options.onExit) {
-        void handle.wait(options).catch(() => undefined);
-      }
+      if (options.onStdout || options.onStderr || options.onExit) handle.follow(options);
       return handle;
     }
     const streaming = Boolean(options.onStdout ?? options.onStderr ?? options.onExit);
@@ -757,6 +768,7 @@ export class Runtimes extends APIResource {
     options: RequestOptions = {},
   ): Promise<CommandInfo> {
     assertRuntimeId(runtimeId);
+    assertPositiveInt(pid, 'pid');
     return parseCommandInfo(
       asRecord(
         await this.http.request({
@@ -776,6 +788,7 @@ export class Runtimes extends APIResource {
     options: RequestOptions = {},
   ): Promise<CommandInfo> {
     assertRuntimeId(runtimeId);
+    assertPositiveInt(pid, 'pid');
     return parseCommandInfo(
       asRecord(
         await this.http.request({
@@ -795,6 +808,7 @@ export class Runtimes extends APIResource {
     options: CommandCallbacks & RequestOptions = {},
   ): Promise<CommandRunResponse> {
     assertRuntimeId(runtimeId);
+    assertPositiveInt(pid, 'pid');
     const stream = await this.http.requestStream({
       method: 'GET',
       path: `runtime/${runtimeId}/commands/${pid}/stream`,
@@ -912,7 +926,12 @@ export class Runtimes extends APIResource {
     return body;
   }
 
-  /** Consume the code SSE stream and normalize each frame. */
+  /**
+   * Consume the code SSE stream and normalize each frame.
+   *
+   * The server always closes the stream with `end`, so a stream that closes
+   * first was cut off and is thrown rather than returned as partial output.
+   */
   private async *codeEvents(
     runtimeId: string,
     body: Record<string, unknown>,
@@ -956,6 +975,7 @@ export class Runtimes extends APIResource {
           break;
       }
     }
+    throw new GravixLayerConnectionError('code stream ended before the execution finished');
   }
 
   // -------------------------------------------------------------------------
@@ -1044,7 +1064,8 @@ export class Runtimes extends APIResource {
 
 /** A background command. `wait` attaches to its output until it exits. */
 export class CommandHandle {
-  private abort: AbortController | undefined;
+  private readonly waits = new Set<AbortController>();
+  private failure: Error | undefined;
 
   constructor(
     private readonly commands: Runtimes,
@@ -1052,12 +1073,25 @@ export class CommandHandle {
     readonly pid: number,
   ) {}
 
+  /** What stopped the last {@link follow}, if it failed. */
+  get error(): Error | undefined {
+    return this.failure;
+  }
+
   wait(options: CommandCallbacks & RequestOptions = {}): Promise<CommandRunResponse> {
-    const controller = options.signal ? undefined : new AbortController();
-    this.abort = controller;
-    return this.commands.waitCommand(this.runtimeId, this.pid, {
-      ...options,
-      signal: options.signal ?? controller?.signal,
+    return this.read(options, new AbortController());
+  }
+
+  /**
+   * Follow the output in the background. A failure goes to `onError` and
+   * {@link error}; stopping through {@link disconnect} or `signal` is not one.
+   */
+  follow(options: CommandFollowOptions = {}): void {
+    const controller = new AbortController();
+    void this.read(options, controller).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      this.failure = error instanceof Error ? error : new Error(String(error));
+      options.onError?.(this.failure);
     });
   }
 
@@ -1069,10 +1103,27 @@ export class CommandHandle {
     return this.commands.getCommand(this.runtimeId, this.pid);
   }
 
-  /** Stop reading this command's output. The command itself keeps running. */
+  /** Stop every open `wait()` and `follow()` on this command. The command itself keeps running. */
   disconnect(): void {
-    this.abort?.abort();
-    this.abort = undefined;
+    for (const controller of this.waits) controller.abort();
+    this.waits.clear();
+  }
+
+  private read(
+    options: CommandCallbacks & RequestOptions,
+    controller: AbortController,
+  ): Promise<CommandRunResponse> {
+    const caller = options.signal;
+    const stop = (): void => controller.abort(caller?.reason);
+    if (caller?.aborted) stop();
+    else caller?.addEventListener('abort', stop, { once: true });
+    this.waits.add(controller);
+    return this.commands
+      .waitCommand(this.runtimeId, this.pid, { ...options, signal: controller.signal })
+      .finally(() => {
+        this.waits.delete(controller);
+        caller?.removeEventListener('abort', stop);
+      });
   }
 }
 

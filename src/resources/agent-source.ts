@@ -8,6 +8,7 @@
  */
 
 import { readTextFileIfPresent } from '../core/fs.js';
+import { shellQuote } from '../core/shell.js';
 import { AgentFramework, DEFAULT_AGENT_PORT, normalizeFramework } from '../types/agents.js';
 
 /** What could be learned about a project by reading its files. */
@@ -176,17 +177,21 @@ export async function inferAgentSource(directory: string): Promise<InferredAgent
   return inferred;
 }
 
+/** Shell `export` keyword a `.env` line may start with. */
+const EXPORT_PREFIX = /^export\s+/;
+
 /**
  * Parse a `.env` file's contents.
  *
- * Accepts `KEY=VALUE` lines with optional quotes, and skips blanks and
- * comments. Nothing is written to the current process's environment.
+ * Accepts `KEY=VALUE` lines with optional quotes and an optional `export `
+ * prefix, and skips blanks and comments. Nothing is written to the current
+ * process's environment.
  */
 export function parseDotEnv(contents: string): Record<string, string> {
   const values: Record<string, string> = {};
 
   for (const line of contents.split('\n')) {
-    const trimmed = line.trim();
+    const trimmed = line.trim().replace(EXPORT_PREFIX, '');
     if (!trimmed || trimmed.startsWith('#')) continue;
 
     const separator = trimmed.indexOf('=');
@@ -230,12 +235,6 @@ export function resolveHttpPort(httpPort: number | undefined, ports: readonly nu
     if (port > 0) return port;
   }
   return DEFAULT_AGENT_PORT;
-}
-
-/** Quote one shell argument, using single quotes so nothing is interpreted. */
-function shellQuote(value: string): string {
-  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /**

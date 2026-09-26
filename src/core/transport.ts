@@ -5,6 +5,7 @@
  * Cloudflare Workers, and Vercel Edge without a platform adapter.
  */
 
+import { utf8Decode } from './binary.js';
 import {
   GravixLayerAbortError,
   GravixLayerConnectionError,
@@ -15,7 +16,7 @@ import {
   formatErrorMessage,
 } from './errors.js';
 import { sleep } from './time.js';
-import { buildUrl, withQuery, type QueryValue } from './url.js';
+import { buildUrl, isAbsoluteUrl, withQuery, type QueryValue } from './url.js';
 import { endSpan, failSpan, injectContext, startClientSpan } from './telemetry.js';
 
 /** Status codes treated as success. Mirrors the API's documented responses. */
@@ -87,6 +88,18 @@ export interface TransportConfig {
 
 const DEFAULT_SERVICE = 'v1/inference';
 
+/**
+ * One attempt's response. The body stays under the attempt's timeout and abort
+ * signal until it is read or discarded, so a stalled body cannot outlive them.
+ */
+interface Reply {
+  response: Response;
+  /** Read the body in full, then release the attempt. */
+  read(): Promise<Uint8Array>;
+  /** Drop the body unread and release the attempt. */
+  discard(): void;
+}
+
 /** Wait out a backoff, reporting an abort the way a request would. */
 async function backoffSleep(ms: number, signal?: AbortSignal): Promise<void> {
   try {
@@ -145,10 +158,14 @@ function headersToObject(headers: Headers): Record<string, string> {
   return out;
 }
 
-/** Wrap a stream so `onDone` runs exactly once when it completes or is cancelled. */
+/**
+ * Wrap a stream so `onDone` runs exactly once when it completes or is cancelled,
+ * and a failure mid-stream surfaces as an SDK error.
+ */
 function withStreamCleanup(
   stream: ReadableStream<Uint8Array>,
   onDone: () => void,
+  failure: (error: unknown) => GravixLayerError,
 ): ReadableStream<Uint8Array> {
   const reader = stream.getReader();
   let finished = false;
@@ -173,7 +190,7 @@ function withStreamCleanup(
           controller.enqueue(value);
         } catch (error) {
           finish();
-          controller.error(error);
+          controller.error(failure(error));
         }
       },
       async cancel(reason) {
@@ -187,6 +204,9 @@ function withStreamCleanup(
 
 /** Issues authenticated requests with retries, timeouts, and tracing. */
 export class Transport {
+  /** Origin of the API base URL, resolved on first use. */
+  private baseOrigin: string | undefined;
+
   constructor(private readonly config: TransportConfig) {}
 
   /** The API base URL, without a trailing slash. */
@@ -220,20 +240,20 @@ export class Transport {
 
   /** Send a request and parse the JSON response. */
   async request<T>(spec: RequestSpec): Promise<T> {
-    const response = await this.send(spec, false);
-    return (await this.readJson<T>(response)) as T;
+    const reply = await this.send(spec, false);
+    return parseJson<T>(reply.response, await reply.read()) as T;
   }
 
   /** Send a request and discard the response body. */
   async requestVoid(spec: RequestSpec): Promise<void> {
-    const response = await this.send(spec, false);
-    await response.text().catch(() => undefined);
+    const reply = await this.send(spec, false);
+    await reply.read().catch(() => undefined);
   }
 
   /** Send a request and return the response body as bytes. */
   async requestBytes(spec: RequestSpec): Promise<Uint8Array> {
-    const response = await this.send(spec, false);
-    return new Uint8Array(await response.arrayBuffer());
+    const reply = await this.send(spec, false);
+    return reply.read();
   }
 
   /**
@@ -244,8 +264,10 @@ export class Transport {
    * point.
    */
   async requestStream(spec: RequestSpec): Promise<ReadableStream<Uint8Array>> {
-    const response = await this.send(spec, true);
+    const reply = await this.send(spec, true);
+    const { response } = reply;
     if (!response.body) {
+      reply.discard();
       throw new GravixLayerError('The server returned an empty streaming response.', {
         status: response.status,
         headers: headersToObject(response.headers),
@@ -254,24 +276,18 @@ export class Transport {
     return response.body;
   }
 
-  /** Parse a JSON body, tolerating `204` and other empty responses. */
-  private async readJson<T>(response: Response): Promise<T | undefined> {
-    if (response.status === 204) return undefined;
-    const text = await response.text();
-    if (text.trim() === '') return undefined;
+  /** True when an absolute URL points anywhere other than the API's origin. */
+  private isForeign(url: string): boolean {
     try {
-      return JSON.parse(text) as T;
+      this.baseOrigin ??= new URL(this.config.baseUrl).origin;
+      return new URL(url).origin !== this.baseOrigin;
     } catch {
-      throw new GravixLayerError('The server returned a malformed JSON response.', {
-        status: response.status,
-        headers: headersToObject(response.headers),
-        body: text,
-      });
+      return true;
     }
   }
 
-  /** Run the retry loop and return the successful response. */
-  private async send(spec: RequestSpec, stream: boolean): Promise<Response> {
+  /** Run the retry loop and return the successful attempt. */
+  private async send(spec: RequestSpec, stream: boolean): Promise<Reply> {
     const { method, options = {} } = spec;
     const service = spec.service ?? DEFAULT_SERVICE;
     const path = spec.query ? withQuery(spec.path, spec.query) : spec.path;
@@ -282,6 +298,9 @@ export class Transport {
     const userSignal = options.signal;
 
     const headers: Record<string, string> = { ...this.config.defaultHeaders };
+    // The API key belongs to the API. A call to another origin that needs a
+    // credential passes its own `authorization` header on the request.
+    if (isAbsoluteUrl(path) && this.isForeign(url)) delete headers['authorization'];
     if (spec.body !== undefined && !spec.form) headers['content-type'] = 'application/json';
     if (stream) {
       // Gzip (the default Accept-Encoding on Node fetch) can hold SSE frames
@@ -307,7 +326,7 @@ export class Transport {
     if (span) injectContext(headers);
 
     try {
-      const response = await this.attemptLoop({
+      const reply = await this.attemptLoop({
         url,
         method,
         headers,
@@ -317,8 +336,8 @@ export class Transport {
         maxRetries,
         userSignal,
       });
-      span?.setAttribute('http.response.status_code', response.status);
-      return response;
+      span?.setAttribute('http.response.status_code', reply.response.status);
+      return reply;
     } catch (error) {
       failSpan(span, error);
       throw error;
@@ -336,7 +355,7 @@ export class Transport {
     timeout: number;
     maxRetries: number;
     userSignal: AbortSignal | undefined;
-  }): Promise<Response> {
+  }): Promise<Reply> {
     const { url, method, headers, body, stream, timeout, maxRetries, userSignal } = args;
     let lastError: unknown;
 
@@ -345,9 +364,9 @@ export class Transport {
         throw new GravixLayerAbortError('Request aborted.', { cause: userSignal.reason });
       }
 
-      let response: Response;
+      let reply: Reply;
       try {
-        response = await this.fetchOnce({
+        reply = await this.fetchOnce({
           url,
           method,
           headers,
@@ -369,21 +388,22 @@ export class Transport {
         throw error;
       }
 
-      if (SUCCESS_STATUS.has(response.status)) return response;
+      const { status } = reply.response;
+      if (SUCCESS_STATUS.has(status)) return reply;
 
       if (
-        RETRYABLE_STATUS.has(response.status) &&
-        (response.status === 429 || REPLAYABLE_METHOD.has(method)) &&
+        RETRYABLE_STATUS.has(status) &&
+        (status === 429 || REPLAYABLE_METHOD.has(method)) &&
         attempt < maxRetries
       ) {
-        const retryAfter = parseRetryAfter(response.headers);
+        const retryAfter = parseRetryAfter(reply.response.headers);
         // Release the connection without blocking the backoff on it.
-        void response.body?.cancel().catch(() => undefined);
+        reply.discard();
         await backoffSleep(retryAfter ?? backoffMs(attempt), userSignal);
         continue;
       }
 
-      throw await this.errorFromResponse(response);
+      throw await errorFromReply(reply);
     }
 
     throw new GravixLayerError('Failed to complete request.', { cause: lastError });
@@ -398,7 +418,7 @@ export class Transport {
     stream: boolean;
     timeout: number;
     userSignal: AbortSignal | undefined;
-  }): Promise<Response> {
+  }): Promise<Reply> {
     const { url, method, headers, body, stream, timeout, userSignal } = args;
 
     const controller = new AbortController();
@@ -423,8 +443,27 @@ export class Transport {
       userSignal?.removeEventListener('abort', onUserAbort);
     };
 
+    const failure = (error: unknown): GravixLayerError => {
+      if (error instanceof GravixLayerError) return error;
+      if (userSignal?.aborted) {
+        return new GravixLayerAbortError('Request aborted.', { cause: userSignal.reason });
+      }
+      if (timedOut) {
+        return new GravixLayerTimeoutError(`Request timed out after ${timeout}ms.`, {
+          cause: error,
+        });
+      }
+      return new GravixLayerConnectionError(
+        error instanceof Error ? error.message : String(error),
+        {
+          cause: error,
+        },
+      );
+    };
+
+    let response: Response;
     try {
-      const response = await this.config.fetch(url, {
+      response = await this.config.fetch(url, {
         method,
         headers,
         body: body ?? null,
@@ -432,53 +471,72 @@ export class Transport {
         // Streaming responses must not be buffered by an intermediate cache.
         ...(stream ? { cache: 'no-store' as RequestCache } : {}),
       });
-
-      if (stream && SUCCESS_STATUS.has(response.status) && response.body) {
-        // Headers arrived, so the timeout has done its job. Teardown is
-        // deferred until the body is drained or cancelled, which keeps the
-        // caller's abort signal wired to the live stream.
-        if (timer !== undefined) clearTimeout(timer);
-        const wrapped = withStreamCleanup(response.body, release);
-        return new Response(wrapped, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        });
-      }
-
-      release();
-      return response;
     } catch (error) {
       release();
+      throw failure(error);
+    }
 
-      if (error instanceof GravixLayerInvalidArgumentError) throw error;
-      if (userSignal?.aborted) {
-        throw new GravixLayerAbortError('Request aborted.', { cause: userSignal.reason });
-      }
-      if (timedOut) {
-        throw new GravixLayerTimeoutError(`Request timed out after ${timeout}ms.`, {
-          cause: error,
-        });
-      }
-      throw new GravixLayerConnectionError(error instanceof Error ? error.message : String(error), {
-        cause: error,
+    if (stream && SUCCESS_STATUS.has(response.status) && response.body) {
+      // Headers arrived, so the timeout has done its job. Teardown is
+      // deferred until the body is drained or cancelled, which keeps the
+      // caller's abort signal wired to the live stream.
+      if (timer !== undefined) clearTimeout(timer);
+      response = new Response(withStreamCleanup(response.body, release, failure), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
       });
     }
+
+    return {
+      response,
+      read: async () => {
+        try {
+          return new Uint8Array(await response.arrayBuffer());
+        } catch (error) {
+          throw failure(error);
+        } finally {
+          release();
+        }
+      },
+      discard: () => {
+        release();
+        void response.body?.cancel().catch(() => undefined);
+      },
+    };
   }
+}
 
-  /** Build the error for a non-success response, consuming its body. */
-  private async errorFromResponse(response: Response) {
-    const text = await response.text().catch(() => '');
-    let parsed: unknown;
-    try {
-      parsed = text ? JSON.parse(text) : undefined;
-    } catch {
-      parsed = undefined;
-    }
-
-    return errorFromStatus(response.status, formatErrorMessage(text, parsed), {
+/** Parse a JSON body, tolerating `204` and other empty responses. */
+function parseJson<T>(response: Response, bytes: Uint8Array): T | undefined {
+  if (response.status === 204) return undefined;
+  const text = utf8Decode(bytes);
+  if (text.trim() === '') return undefined;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new GravixLayerError('The server returned a malformed JSON response.', {
+      status: response.status,
       headers: headersToObject(response.headers),
-      body: parsed ?? text,
+      body: text,
     });
   }
+}
+
+/** Build the error for a non-success response, consuming its body. */
+async function errorFromReply(reply: Reply): Promise<GravixLayerError> {
+  const { response } = reply;
+  const bytes = await reply.read().catch(() => undefined);
+  const text = bytes ? utf8Decode(bytes) : '';
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : undefined;
+  } catch {
+    parsed = undefined;
+  }
+
+  return errorFromStatus(response.status, formatErrorMessage(text, parsed), {
+    headers: headersToObject(response.headers),
+    body: parsed ?? text,
+  });
 }

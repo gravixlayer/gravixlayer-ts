@@ -20,6 +20,11 @@ export type ServiceName = (typeof SERVICES)[keyof typeof SERVICES];
 
 const ABSOLUTE = /^https?:\/\//i;
 
+/** True when `endpoint` is an absolute `http(s)` URL rather than a path. */
+export function isAbsoluteUrl(endpoint: string): boolean {
+  return ABSOLUTE.test(endpoint);
+}
+
 /**
  * Resolve an endpoint against a service base.
  *
@@ -30,7 +35,7 @@ const ABSOLUTE = /^https?:\/\//i;
  * - Anything else is joined with a single `/`.
  */
 export function buildUrl(endpoint: string, service: string, baseUrl: string): string {
-  if (endpoint && ABSOLUTE.test(endpoint)) return endpoint;
+  if (isAbsoluteUrl(endpoint)) return endpoint;
 
   const serviceBase = service ? `${baseUrl}/${service}` : baseUrl;
   if (!endpoint) return serviceBase;

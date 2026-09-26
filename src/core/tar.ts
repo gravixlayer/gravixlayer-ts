@@ -118,9 +118,14 @@ export async function createTar(entries: readonly TarEntry[]): Promise<Uint8Arra
   const blocks: Uint8Array[] = [];
 
   for (const entry of entries) {
-    const normalized = entry.path.replace(/^\.?\/+/, '').replace(/\\/g, '/');
+    const normalized = entry.path.replace(/\\/g, '/').replace(/^\.?\/+/, '');
     if (normalized === '') {
       throw new GravixLayerInvalidArgumentError('Archive entry path must not be empty.');
+    }
+    if (normalized.split('/').includes('..')) {
+      throw new GravixLayerInvalidArgumentError(
+        `Archive entry path must not climb outside the archive with "..": ${JSON.stringify(entry.path)}.`,
+      );
     }
 
     const content = await toBytes(entry.content);

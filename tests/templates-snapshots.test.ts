@@ -154,6 +154,19 @@ describe('describing a template', () => {
     expect(TemplateBuilder.waitForProcess('nginx')).toContain('nginx');
   });
 
+  it('quotes readiness check arguments so the shell reads them literally', () => {
+    expect(TemplateBuilder.waitForUrl('http://localhost:8080/health')).toBe(
+      "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health | grep -q 200",
+    );
+    expect(TemplateBuilder.waitForUrl('http://localhost:8080/ready?a=1&b=2', 204)).toBe(
+      "curl -s -o /dev/null -w '%{http_code}' 'http://localhost:8080/ready?a=1&b=2' | grep -q 204",
+    );
+    expect(TemplateBuilder.waitForFile('/opt/my app/ready')).toBe("test -f '/opt/my app/ready'");
+    expect(TemplateBuilder.waitForProcess('worker; rm -rf /')).toBe(
+      "pgrep 'worker; rm -rf /' > /dev/null",
+    );
+  });
+
   it('floors ready timeout at 300 seconds', () => {
     expect(new TemplateBuilder('t').readyCmd('true', 30).toJSON()['ready_timeout_secs']).toBe(300);
     expect(new TemplateBuilder('t').readyCmd('true').toJSON()['ready_timeout_secs']).toBe(300);

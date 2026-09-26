@@ -4,13 +4,7 @@ import tsparser from '@typescript-eslint/parser';
 
 export default [
   {
-    ignores: [
-      'dist/**',
-      'coverage/**',
-      'node_modules/**',
-      'examples/runtimes/tti-isorun.mjs',
-      'ts.ts',
-    ],
+    ignores: ['dist/**', 'coverage/**', 'node_modules/**', 'examples/runtimes/tti-isorun.mjs'],
   },
   js.configs.recommended,
   {
@@ -69,6 +63,12 @@ export default [
       'no-redeclare': 'off',
       eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-console': 'off',
+    },
+  },
+  {
+    files: ['src/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'error',
     },
   },
   {
