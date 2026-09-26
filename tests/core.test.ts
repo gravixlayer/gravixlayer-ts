@@ -603,6 +603,7 @@ describe('errors', () => {
 describe('guest deadlines', () => {
   it('leaves the client default when neither timeout is set', () => {
     expect(timeoutForGuestDeadline(undefined, undefined)).toBeUndefined();
+    expect(timeoutForGuestDeadline(0, undefined)).toBeUndefined();
   });
 
   it('keeps an explicit HTTP timeout', () => {

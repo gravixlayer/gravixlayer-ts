@@ -351,6 +351,40 @@ describe('commands', () => {
     ]);
   });
 
+  it('keeps the error on a streamed command end', async () => {
+    const { client } = testClient([
+      sseJson([
+        { type: 'stderr', data: '/tmp/gl-not-exec: permission denied\n' },
+        {
+          type: 'end',
+          exit_code: 126,
+          duration_ms: 2,
+          timed_out: false,
+          error: 'permission denied',
+        },
+      ]),
+      sseJson([
+        {
+          type: 'end',
+          exit_code: 126,
+          error: 'permission denied',
+        },
+      ]),
+    ]);
+
+    const result = await client.runtime.runCmd(RUNTIME_ID, '/tmp/gl-not-exec', {
+      onStderr: () => undefined,
+    });
+    expect(result.exitCode).toBe(126);
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('permission denied');
+    expect(result.stderr).toBe('/tmp/gl-not-exec: permission denied\n');
+    expect(result.durationMs).toBe(2);
+
+    const events = await collect(client.runtime.streamCmd(RUNTIME_ID, '/tmp/gl-not-exec'));
+    expect(events).toEqual([{ type: 'end', exitCode: 126, error: 'permission denied' }]);
+  });
+
   it('ignores frames it does not recognise', async () => {
     const { client } = testClient([
       sseJson([
@@ -398,6 +432,77 @@ describe('commands', () => {
     expect(killed.status).toBe('killed');
     expect(http.last().method).toBe('DELETE');
     expect(http.query().get('signal')).toBe('TERM');
+  });
+
+  it('keeps a background command that exited before it had a pid', async () => {
+    const { client, http } = testClient([
+      jsonResponse(
+        {
+          stdout: '',
+          stderr: '/no/such: command not found\n',
+          exit_code: 127,
+          duration_ms: 4,
+          success: false,
+          timed_out: false,
+          error: 'command not found',
+        },
+        200,
+      ),
+    ]);
+    const onStderr = vi.fn();
+    const onExit = vi.fn();
+    const handle = await client.runtime.runCmd(RUNTIME_ID, '/no/such', {
+      background: true,
+      workingDir: '/workspace',
+      onStderr,
+      onExit,
+    });
+
+    expect(handle.pid).toBeNull();
+    await vi.waitFor(() => expect(onExit).toHaveBeenCalledWith(127));
+    expect(onStderr).toHaveBeenCalledWith('/no/such: command not found\n');
+
+    const waited = await handle.wait();
+    expect(waited.exitCode).toBe(127);
+    expect(waited.error).toBe('command not found');
+    expect(waited.stderr).toBe('/no/such: command not found\n');
+    expect(waited.success).toBe(false);
+
+    const current = await handle.refresh();
+    expect(current.pid).toBeNull();
+    expect(current.command).toBe('/no/such');
+    expect(current.workingDir).toBe('/workspace');
+    expect(current.status).toBe('exited');
+    expect(current.exitCode).toBe(127);
+    expect(current.background).toBe(true);
+
+    const killed = await handle.kill('KILL');
+    expect(killed.exitCode).toBe(127);
+    expect(killed.status).toBe('exited');
+    expect(http.requests).toHaveLength(1);
+    expect(http.last().method).toBe('POST');
+  });
+
+  it('sends a zero command timeout as the server default', async () => {
+    const { client, http } = testClient([
+      jsonResponse(
+        {
+          pid: 7,
+          command: 'sleep',
+          background: true,
+          status: 'running',
+        },
+        201,
+      ),
+    ]);
+    await client.runtime.runCmd(RUNTIME_ID, 'sleep', {
+      background: true,
+      timeoutSeconds: 0,
+    });
+    expect(http.jsonBody()).toEqual({ command: 'sleep', background: true, timeout: 0 });
+    await expect(
+      client.runtime.runCmd(RUNTIME_ID, 'sleep', { timeoutSeconds: -1 }),
+    ).rejects.toThrow('timeoutSeconds must be a non-negative integer.');
   });
 
   it('uses the server duration and deadline flag on a live stream', async () => {

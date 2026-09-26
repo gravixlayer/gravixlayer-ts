@@ -64,9 +64,17 @@ async function loadFs(): Promise<FsModule> {
   }
 }
 
+/**
+ * Secret env files stay out of the archive.
+ * `.env` and `gravixlayer/.env.local` are still loaded as the build environment.
+ */
+function isSecretDotenv(name: string): boolean {
+  return name === '.env' || name.startsWith('.env.') || name === '.envrc';
+}
+
 /** True when a path component should be skipped. */
 function isExcluded(name: string, excludes: ReadonlySet<string>): boolean {
-  if (excludes.has(name)) return true;
+  if (excludes.has(name) || isSecretDotenv(name)) return true;
   return EXCLUDED_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 

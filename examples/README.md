@@ -18,7 +18,7 @@ They import the package by name, exactly as your own code would.
 | `GRAVIXLAYER_CLOUD` | Cloud for runtimes and template builds. Defaults to `aws`. |
 | `GRAVIXLAYER_REGION` | Region for runtimes and template builds. Defaults to `us-east-1`. |
 
-A guest cannot reach the internet unless a network policy allows it. Examples
+A runtime cannot reach the internet unless a network policy allows it. Examples
 that install a package or clone a repository attach a temporary allow-all
 policy and remove it on the way out.
 
@@ -31,7 +31,7 @@ policy and remove it on the way out.
 | [03-env-and-metadata](runtimes/03-env-and-metadata.ts) | Environment variables and metadata. |
 | [04-run-python-code](runtimes/04-run-python-code.ts) | Execute code and read the result. |
 | [05-run-shell-commands](runtimes/05-run-shell-commands.ts) | Shell commands, arguments, working directories. |
-| [06-file-operations](runtimes/06-file-operations.ts) | The guest filesystem, end to end. |
+| [06-file-operations](runtimes/06-file-operations.ts) | The filesystem, end to end. |
 | [07-code-contexts](runtimes/07-code-contexts.ts) | Keep interpreter state between calls. |
 | [08-metrics](runtimes/08-metrics.ts) | CPU, memory, disk, and network usage. |
 | [09-timeouts](runtimes/09-timeouts.ts) | Expire a sandbox automatically. |
@@ -44,9 +44,14 @@ policy and remove it on the way out.
 | [16-lifecycle](runtimes/16-lifecycle.ts) | Pause, resume, and stop. |
 | [17-web-service](runtimes/17-web-service.ts) | Publish a guest port to a public HTTPS URL. |
 | [18-terminal-sessions](runtimes/18-terminal-sessions.ts) | Drive an interactive shell. |
-| [19-snapshots](runtimes/19-snapshots.ts) | Capture a sandbox and restore it. |
+| [19-snapshot-lifecycle](runtimes/19-snapshot-lifecycle.ts) | Capture, restore, deactivate, activate, and delete. |
 | [20-error-handling](runtimes/20-error-handling.ts) | Errors, timeouts, cancellation, retries. |
 | [21-tracing](runtimes/21-tracing.ts) | OpenTelemetry spans for SDK calls. |
+| [22-run-node-code](runtimes/22-run-node-code.ts) | Execute JavaScript. |
+| [23-background-commands](runtimes/23-background-commands.ts) | Start a command, wait, reattach, and stop it. |
+| [24-disable-ssh](runtimes/24-disable-ssh.ts) | Turn SSH off. |
+| [25-revoke-ssh](runtimes/25-revoke-ssh.ts) | Revoke SSH, turn it back on, and rotate the key. |
+| [26-runtime-logs](runtimes/26-runtime-logs.ts) | Print a line from inside a sandbox. |
 
 ## Templates
 
@@ -57,6 +62,7 @@ policy and remove it on the way out.
 | [03-git-clone](templates/03-git-clone.ts) | Bake a git repository into the image. |
 | [04-dockerfile](templates/04-dockerfile.ts) | Build from a Dockerfile. |
 | [05-list-and-delete](templates/05-list-and-delete.ts) | List, inspect, and delete templates. |
+| [06-private-git](templates/06-private-git.ts) | Build from a private git repository. |
 
 ## Agents
 

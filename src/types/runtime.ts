@@ -512,7 +512,8 @@ export function parseCommandRunResponse(data: Record<string, unknown>): CommandR
 
 /** A command that was started in the background, or retained after it exited. */
 export interface CommandInfo {
-  pid: number;
+  /** `null` when the command exited before it had a process id. */
+  pid: number | null;
   command: string;
   args: string[];
   workingDir: string;
@@ -526,8 +527,9 @@ export interface CommandInfo {
 }
 
 export function parseCommandInfo(data: Record<string, unknown>): CommandInfo {
+  const pid = optNum(data, 'pid');
   return {
-    pid: num(data, 'pid'),
+    pid: pid !== undefined && pid > 0 ? pid : null,
     command: str(data, 'command'),
     args: strArray(data, 'args'),
     workingDir: str(data, 'working_dir'),

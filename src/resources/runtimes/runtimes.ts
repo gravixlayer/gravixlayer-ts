@@ -126,7 +126,10 @@ export interface RunCommandOptions extends CommandFollowOptions {
   workingDir?: string;
   /** Environment variables for this command only. */
   environment?: Record<string, string>;
-  /** Seconds before the command is killed. */
+  /**
+   * Seconds before the command is killed. `0` uses the server default: 300
+   * seconds in the foreground, and no deadline in the background.
+   */
   timeoutSeconds?: number;
   /** Start the command and return as soon as it is running. */
   background?: boolean;
@@ -160,7 +163,7 @@ export interface RunCodeOptions extends RequestOptions, CodeCallbacks {
 export type CommandStreamEvent =
   | { type: 'stdout'; data: string }
   | { type: 'stderr'; data: string }
-  | { type: 'end'; exitCode: number; durationMs?: number; timedOut?: boolean }
+  | { type: 'end'; exitCode: number; durationMs?: number; timedOut?: boolean; error?: string }
   | { type: 'error'; message: string };
 
 /** An event from a streaming code execution. */
@@ -187,6 +190,14 @@ function requestOptions(options: RequestOptions): RequestOptions {
   if (options.maxRetries !== undefined) out.maxRetries = options.maxRetries;
   if (options.headers) out.headers = options.headers;
   return out;
+}
+
+/** A command deadline may be zero. Zero is the server's default, not "invalid". */
+function nonNegativeInt(value: number, label: string): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new GravixLayerInvalidArgumentError(`${label} must be a non-negative integer.`);
+  }
+  return value;
 }
 
 /**
@@ -222,10 +233,15 @@ async function* commandFrames(
         yield { type: 'stderr', data: str(record, 'data') };
         break;
       case 'end': {
-        const end: CommandStreamEvent = { type: 'end', exitCode: num(record, 'exit_code') };
+        const end: Extract<CommandStreamEvent, { type: 'end' }> = {
+          type: 'end',
+          exitCode: num(record, 'exit_code'),
+        };
         const durationMs = optNum(record, 'duration_ms');
         if (durationMs !== undefined) end.durationMs = durationMs;
         if (record['timed_out'] !== undefined) end.timedOut = bool(record, 'timed_out');
+        const error = optStr(record, 'error');
+        if (error !== undefined) end.error = error;
         yield end;
         return;
       }
@@ -255,14 +271,23 @@ async function collectCommand(
   const stdout: string[] = [];
   const stderr: string[] = [];
   const startedAt = monotonicMs();
-  const result = (exitCode: number, durationMs?: number, timedOut = false): CommandRunResponse => ({
-    stdout: stdout.join(''),
-    stderr: stderr.join(''),
-    exitCode,
-    durationMs: durationMs ?? Math.round(monotonicMs() - startedAt),
-    success: exitCode === 0,
-    timedOut,
-  });
+  const result = (
+    exitCode: number,
+    durationMs?: number,
+    timedOut = false,
+    error?: string,
+  ): CommandRunResponse => {
+    const response: CommandRunResponse = {
+      stdout: stdout.join(''),
+      stderr: stderr.join(''),
+      exitCode,
+      durationMs: durationMs ?? Math.round(monotonicMs() - startedAt),
+      success: exitCode === 0,
+      timedOut,
+    };
+    if (error !== undefined) response.error = error;
+    return response;
+  };
 
   for await (const event of events) {
     switch (event.type) {
@@ -276,7 +301,7 @@ async function collectCommand(
         break;
       case 'end':
         callbacks.onExit?.(event.exitCode);
-        return result(event.exitCode, event.durationMs, event.timedOut);
+        return result(event.exitCode, event.durationMs, event.timedOut, event.error);
       case 'error':
         if (detached) throw new GravixLayerConnectionError(event.message);
         stderr.push(event.message);
@@ -660,7 +685,7 @@ export class Runtimes extends APIResource {
           options: requestOptions(options),
         }),
       );
-      const handle = new CommandHandle(this, runtimeId, num(started, 'pid'));
+      const handle = backgroundHandle(this, runtimeId, command, options, started);
       if (options.onStdout || options.onStderr || options.onExit) handle.follow(options);
       return handle;
     }
@@ -725,8 +750,8 @@ export class Runtimes extends APIResource {
     if (options.workingDir !== undefined) body['working_dir'] = options.workingDir;
     if (options.environment !== undefined) body['environment'] = options.environment;
     if (options.timeoutSeconds !== undefined) {
-      // The command endpoint takes milliseconds.
-      body['timeout'] = assertPositiveInt(options.timeoutSeconds, 'timeoutSeconds') * 1000;
+      // The command endpoint takes milliseconds. Zero is the server default.
+      body['timeout'] = nonNegativeInt(options.timeoutSeconds, 'timeoutSeconds') * 1000;
     }
     if (options.background) body['background'] = true;
     return body;
@@ -1062,7 +1087,11 @@ export class Runtimes extends APIResource {
   }
 }
 
-/** A background command. `wait` attaches to its output until it exits. */
+/** A background command. `wait` attaches to its output until it exits.
+ *
+ * `pid` is `null` when the command exited before it had a process id.
+ * `wait`, `refresh`, and `kill` then return that result and do not call the API.
+ */
 export class CommandHandle {
   private readonly waits = new Set<AbortController>();
   private failure: Error | undefined;
@@ -1070,7 +1099,8 @@ export class CommandHandle {
   constructor(
     private readonly commands: Runtimes,
     readonly runtimeId: string,
-    readonly pid: number,
+    readonly pid: number | null,
+    private readonly finished?: { result: CommandRunResponse; info: CommandInfo },
   ) {}
 
   /** What stopped the last {@link follow}, if it failed. */
@@ -1079,7 +1109,7 @@ export class CommandHandle {
   }
 
   wait(options: CommandCallbacks & RequestOptions = {}): Promise<CommandRunResponse> {
-    return this.read(options, new AbortController());
+    return this.finishedResult(options) ?? this.read(options, new AbortController());
   }
 
   /**
@@ -1096,11 +1126,13 @@ export class CommandHandle {
   }
 
   kill(signal?: 'KILL' | 'TERM' | 'INT' | 'HUP'): Promise<CommandInfo> {
-    return this.commands.killCommand(this.runtimeId, this.pid, signal);
+    if (this.finished) return Promise.resolve(this.finished.info);
+    return this.commands.killCommand(this.runtimeId, this.livePid(), signal);
   }
 
   refresh(): Promise<CommandInfo> {
-    return this.commands.getCommand(this.runtimeId, this.pid);
+    if (this.finished) return Promise.resolve(this.finished.info);
+    return this.commands.getCommand(this.runtimeId, this.livePid());
   }
 
   /** Stop every open `wait()` and `follow()` on this command. The command itself keeps running. */
@@ -1109,22 +1141,76 @@ export class CommandHandle {
     this.waits.clear();
   }
 
+  private livePid(): number {
+    if (this.pid === null || !Number.isInteger(this.pid) || this.pid <= 0) {
+      throw new GravixLayerConnectionError('background command finished without an exit code');
+    }
+    return this.pid;
+  }
+
+  private finishedResult(options: CommandCallbacks): Promise<CommandRunResponse> | undefined {
+    const finished = this.finished;
+    if (!finished) return undefined;
+    return Promise.resolve().then(() => deliverFinished(finished.result, options));
+  }
+
   private read(
     options: CommandCallbacks & RequestOptions,
     controller: AbortController,
   ): Promise<CommandRunResponse> {
+    const finished = this.finishedResult(options);
+    if (finished) return finished;
     const caller = options.signal;
     const stop = (): void => controller.abort(caller?.reason);
     if (caller?.aborted) stop();
     else caller?.addEventListener('abort', stop, { once: true });
     this.waits.add(controller);
     return this.commands
-      .waitCommand(this.runtimeId, this.pid, { ...options, signal: controller.signal })
+      .waitCommand(this.runtimeId, this.livePid(), { ...options, signal: controller.signal })
       .finally(() => {
         this.waits.delete(controller);
         caller?.removeEventListener('abort', stop);
       });
   }
+}
+
+function deliverFinished(
+  result: CommandRunResponse,
+  options: CommandCallbacks,
+): CommandRunResponse {
+  if (result.stdout) options.onStdout?.(result.stdout);
+  if (result.stderr) options.onStderr?.(result.stderr);
+  options.onExit?.(result.exitCode);
+  return result;
+}
+
+function backgroundHandle(
+  commands: Runtimes,
+  runtimeId: string,
+  command: string,
+  options: RunCommandOptions,
+  started: Record<string, unknown>,
+): CommandHandle {
+  const pid = optNum(started, 'pid');
+  if (pid !== undefined && pid > 0) return new CommandHandle(commands, runtimeId, pid);
+  if (started['exit_code'] === undefined) {
+    throw new GravixLayerConnectionError('background command finished without an exit code');
+  }
+  const result = parseCommandRunResponse(started);
+  const info: CommandInfo = {
+    pid: null,
+    command,
+    args: options.args ?? [],
+    workingDir: options.workingDir ? options.workingDir : '/workspace',
+    background: true,
+    status: result.timedOut ? 'timed_out' : 'exited',
+    exitCode: result.exitCode,
+    startedAt: null,
+    endedAt: null,
+    durationMs: result.durationMs,
+    timedOut: result.timedOut,
+  };
+  return new CommandHandle(commands, runtimeId, null, { result, info });
 }
 
 /** List, inspect, attach to, and stop background commands. */

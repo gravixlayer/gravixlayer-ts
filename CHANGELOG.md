@@ -5,7 +5,17 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-## [0.1.23] - 2026-08-29
+## [0.1.24] - 2026-09-26
+### Changed
+- `runCmd` and `streamCmd` accept `timeoutSeconds: 0`. That sends `timeout: 0`, which is the server default: 300 seconds in the foreground and no deadline in the background. The HTTP timeout stays the client default.
+
+### Fixed
+- A streamed command keeps `error` from the `end` event. A unary command already did. `streamCmd` includes it on the end event, and `runCmd` puts it on the result.
+- A background command that exits before it has a pid returns a handle with `pid: null`. `wait()`, `refresh()`, and `kill()` return that result and do not call the command routes. Before, the handle stored pid `0` and those calls failed before the exit code could be read.
+- The package no longer depends on an older published copy of itself. That dependency had come back in the working tree and would have installed a second copy of the SDK.
+- An agent source archive leaves out `.env`, `.env.*`, and `.envrc`. `.env` and `gravixlayer/.env.local` are still loaded as the build environment.
+
+## [0.1.23] - 2026-09-26
 ### Fixed
 - `CommandHandle.disconnect()` stops every open `wait()` on the handle. Before, it stopped only the most recent one, and never a wait that was given its own `signal`. A caller's `signal` still stops only its own wait.
 - The package no longer depends on an older published copy of itself, so an install pulls in one copy of the SDK.

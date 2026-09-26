@@ -256,6 +256,9 @@ describe('reading a project from disk', () => {
     const root = await project({
       'main.py': 'print(1)',
       '.env': 'SECRET=1',
+      'gravixlayer/.env.local': 'SECRET=2',
+      '.envrc': 'export SECRET=3',
+      '.env.production': 'SECRET=4',
       '__pycache__/main.cpython-312.pyc': 'x',
       'node_modules/pkg/index.js': 'x',
       '.git/config': 'x',

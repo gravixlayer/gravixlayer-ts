@@ -14,14 +14,16 @@ export const GUEST_DEADLINE_MARGIN_MS = 30_000;
  *
  * An explicit per-request `timeout` always wins. When only the guest deadline
  * is set, the transport waits that long plus {@link GUEST_DEADLINE_MARGIN_MS}.
- * `undefined` means "use the client default".
+ * `undefined` and `0` mean "use the client default". Zero is the server's
+ * own default, not a zero-length deadline.
  */
 export function timeoutForGuestDeadline(
   timeoutSeconds: number | undefined,
   explicitTimeout: number | undefined,
 ): number | undefined {
   if (explicitTimeout !== undefined) return explicitTimeout;
-  if (timeoutSeconds === undefined) return undefined;
+  // Zero is the server default (omitted), not a zero-length guest deadline.
+  if (timeoutSeconds === undefined || timeoutSeconds === 0) return undefined;
   return timeoutSeconds * 1000 + GUEST_DEADLINE_MARGIN_MS;
 }
 
