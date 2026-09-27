@@ -206,7 +206,8 @@ export class RuntimeFile extends APIResource {
     const size = optNum(data, 'size');
     const b64 = optStr(data, 'content_base64');
     if (b64 !== undefined) response.contentBase64 = b64;
-    response.size = size ?? (b64 !== undefined ? fromBase64(b64).length : utf8Encode(content).length);
+    response.size =
+      size ?? (b64 !== undefined ? fromBase64(b64).length : utf8Encode(content).length);
     return response;
   }
 
