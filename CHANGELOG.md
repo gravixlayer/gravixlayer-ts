@@ -5,6 +5,12 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.25] - 2026-09-29
+### Added
+- `FileReadResponse.contentBase64` — the exact file bytes for binary reads
+  (the API emits it when content isn't valid UTF-8; `content` stays the lossy
+  preview).
+
 ## [0.1.24] - 2026-09-26
 ### Changed
 - `runCmd` and `streamCmd` accept `timeoutSeconds: 0`. That sends `timeout: 0`, which is the server default: 300 seconds in the foreground and no deadline in the background. The HTTP timeout stays the client default.

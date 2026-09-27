@@ -246,6 +246,8 @@ export interface FileReadResponse {
   path?: string;
   /** Size in bytes. Computed from the content when the API omits it. */
   size?: number;
+  /** Present when the file isn't valid UTF-8 — holds the exact bytes. */
+  contentBase64?: string;
 }
 
 /** Result of writing a file. */

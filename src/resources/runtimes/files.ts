@@ -5,7 +5,7 @@
  * within the guest, and the guest's default working directory is `/workspace`.
  */
 
-import { utf8Encode, type BinaryLike } from '../../core/binary.js';
+import { fromBase64, utf8Encode, type BinaryLike } from '../../core/binary.js';
 import { GravixLayerError, GravixLayerInvalidArgumentError } from '../../core/errors.js';
 import { asRecord, bool, optNum, optStr, parseList, str } from '../../core/parse.js';
 import { iterSSEJson } from '../../core/sse.js';
@@ -203,7 +203,10 @@ export class RuntimeFile extends APIResource {
     const response: FileReadResponse = { content };
     const responsePath = optStr(data, 'path') ?? path;
     response.path = responsePath;
-    response.size = optNum(data, 'size') ?? utf8Encode(content).length;
+    const size = optNum(data, 'size');
+    const b64 = optStr(data, 'content_base64');
+    if (b64 !== undefined) response.contentBase64 = b64;
+    response.size = size ?? (b64 !== undefined ? fromBase64(b64).length : utf8Encode(content).length);
     return response;
   }
 
