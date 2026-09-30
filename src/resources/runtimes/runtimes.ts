@@ -42,6 +42,7 @@ import {
   type SSHInfo,
   type SSHStatus,
 } from '../../types/runtime.js';
+import { parseForkResponse, type ForkResponse } from '../../types/snapshots.js';
 import { parseTemplateInfo, type TemplateListResponse } from '../../types/templates.js';
 import { APIResource, type ClientContext } from '../resource.js';
 import { RuntimeFile } from './files.js';
@@ -55,6 +56,9 @@ import { RuntimeService } from './services.js';
  * default request budget allows.
  */
 const SNAPSHOT_RESTORE_TIMEOUT_MS = 180_000;
+
+/** A fork captures the parent once, then starts every child. */
+const FORK_TIMEOUT_MS = 600_000;
 
 /** Template used when none is given. */
 const DEFAULT_TEMPLATE = 'base-small';
@@ -100,6 +104,25 @@ export interface ListRuntimesOptions extends RequestOptions {
   limit?: number;
   /** Number of runtimes to skip. Defaults to 0. */
   offset?: number;
+}
+
+/** Options for {@link Runtimes.fork}. */
+export interface ForkRuntimeOptions extends RequestOptions {
+  /** Number of children to start (1–100). Defaults to 1. */
+  count?: number;
+  /** Timeout applied to each child, in seconds. The parent is unaffected. */
+  timeoutSeconds?: number;
+  /**
+   * Keep the fork's capture as a named snapshot for later reuse. When false,
+   * the capture is cleaned up once every child has started.
+   */
+  persistSnapshot?: boolean;
+  /** Name for the persisted snapshot. Only meaningful with `persistSnapshot`. */
+  name?: string;
+  /** Extra environment variables on every child, merged over the parent's. */
+  envVars?: Record<string, string>;
+  /** Extra metadata merged over the parent's on each child. */
+  metadata?: Record<string, unknown>;
 }
 
 /** Callbacks that stream a command's output as it runs. */
@@ -575,6 +598,43 @@ export class Runtimes extends APIResource {
       service: SERVICES.agents,
       options,
     });
+  }
+
+  /**
+   * Fork a running runtime into `count` independent children.
+   *
+   * The parent's state is captured once, then every child restores from that
+   * capture — the parent keeps running with its own ID, timeout, and
+   * placement. Results are per-child: {@link forkRuntimes} returns the ones
+   * that started and {@link forkErrors} the ones that did not.
+   *
+   * To fork an already-saved snapshot instead, use
+   * {@link Snapshots.fork | `client.snapshots.fork`}.
+   */
+  async fork(runtimeId: string, options: ForkRuntimeOptions = {}): Promise<ForkResponse> {
+    assertRuntimeId(runtimeId);
+
+    const body: Record<string, unknown> = { count: options.count ?? 1 };
+    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
+    if (options.persistSnapshot) body['persist_snapshot'] = true;
+    if (options.name !== undefined) body['name'] = options.name;
+    if (options.envVars !== undefined) body['env_vars'] = options.envVars;
+    if (options.metadata !== undefined) body['metadata'] = options.metadata;
+
+    const transport: RequestOptions = { ...options };
+    if (transport.timeout === undefined) transport.timeout = FORK_TIMEOUT_MS;
+
+    return parseForkResponse(
+      asRecord(
+        await this.http.request({
+          method: 'POST',
+          path: `runtime/${runtimeId}/fork`,
+          service: SERVICES.agents,
+          body,
+          options: transport,
+        }),
+      ),
+    );
   }
 
   // -------------------------------------------------------------------------

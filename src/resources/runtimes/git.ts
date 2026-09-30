@@ -24,6 +24,8 @@ export interface GitCloneOptions extends RequestOptions {
   depth?: number;
   /** Token for a private repository. */
   authToken?: string;
+  /** Server-side deadline for the clone, in seconds. */
+  timeoutSeconds?: number;
 }
 
 /** Options for {@link RuntimeGit.pull} and {@link RuntimeGit.fetch}. */
@@ -34,6 +36,8 @@ export interface GitFetchOptions extends RequestOptions {
   branch?: string;
   /** Token for a private repository. */
   authToken?: string;
+  /** Server-side deadline for the remote operation, in seconds. */
+  timeoutSeconds?: number;
 }
 
 /** Options for {@link RuntimeGit.push}. */
@@ -48,6 +52,8 @@ export interface GitPushOptions extends RequestOptions {
   password?: string;
   /** Token authentication, which takes precedence over username and password. */
   authToken?: string;
+  /** Server-side deadline for the push, in seconds. */
+  timeoutSeconds?: number;
 }
 
 /** Options for {@link RuntimeGit.commit}. */
@@ -86,6 +92,7 @@ export class RuntimeGit extends APIResource {
     if (options.branch !== undefined) body['branch'] = options.branch;
     if (options.depth !== undefined) body['depth'] = options.depth;
     if (options.authToken !== undefined) body['auth_token'] = options.authToken;
+    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
 
     return this.run(runtimeId, 'clone', body, options);
   }
@@ -140,6 +147,7 @@ export class RuntimeGit extends APIResource {
     if (options.remote !== undefined) body['remote'] = options.remote;
     if (options.branch !== undefined) body['branch'] = options.branch;
     if (options.authToken !== undefined) body['auth_token'] = options.authToken;
+    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
 
     return this.run(runtimeId, 'pull', body, options);
   }
@@ -155,6 +163,7 @@ export class RuntimeGit extends APIResource {
     const body: Record<string, unknown> = { repository_path: repositoryPath };
     if (options.remote !== undefined) body['remote'] = options.remote;
     if (options.authToken !== undefined) body['auth_token'] = options.authToken;
+    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
 
     return this.run(runtimeId, 'fetch', body, options);
   }
@@ -173,6 +182,7 @@ export class RuntimeGit extends APIResource {
     if (options.username !== undefined) body['username'] = options.username;
     if (options.password !== undefined) body['password'] = options.password;
     if (options.authToken !== undefined) body['auth_token'] = options.authToken;
+    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
 
     return this.run(runtimeId, 'push', body, options);
   }

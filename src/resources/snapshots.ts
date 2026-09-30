@@ -14,8 +14,10 @@ import type { RequestOptions } from '../core/transport.js';
 import { buildListEndpoint, encodePathSegment, SERVICES, type QueryValue } from '../core/url.js';
 import { assertNonEmpty, assertOneOf, assertRuntimeId } from '../core/validate.js';
 import {
+  parseForkResponse,
   parseSnapshot,
   SnapshotKind,
+  type ForkResponse,
   type Snapshot,
   type SnapshotDeleteResponse,
   type SnapshotListResponse,
@@ -27,6 +29,9 @@ import { APIResource } from './resource.js';
  * which takes longer than the default request budget allows.
  */
 const SNAPSHOT_CREATE_TIMEOUT_MS = 600_000;
+
+/** A fork captures once, then starts every child — the same ceiling applies. */
+const FORK_TIMEOUT_MS = 600_000;
 
 /** Default page size for {@link Snapshots.list}. */
 const DEFAULT_PAGE_SIZE = 20;
@@ -58,6 +63,18 @@ export interface ListSnapshotsOptions extends RequestOptions {
   source?: string;
   /** Project to scope the listing to. */
   projectId?: string;
+}
+
+/** Options for {@link Snapshots.fork}. */
+export interface ForkSnapshotOptions extends RequestOptions {
+  /** Number of children to start (1–100). Defaults to 1. */
+  count?: number;
+  /** Timeout applied to each child, in seconds. */
+  timeoutSeconds?: number;
+  /** Environment variables applied to every child. */
+  envVars?: Record<string, string>;
+  /** Metadata merged onto every child. */
+  metadata?: Record<string, unknown>;
 }
 
 /** Strip operation-specific fields, leaving only per-request transport options. */
@@ -213,5 +230,42 @@ export class Snapshots extends APIResource {
 
     // The API answers 204, so the confirmation is assembled here.
     return { snapshotId: snapshot, deleted: true };
+  }
+
+  /**
+   * Start `count` independent runtimes from a snapshot.
+   *
+   * No capture runs and the source runtime does not need to be alive. Results
+   * are per-child — {@link forkRuntimes} returns the ones that started and
+   * {@link forkErrors} the ones that did not.
+   *
+   * @example
+   * ```ts
+   * const result = await client.snapshots.fork('deps-installed', { count: 10 });
+   * for (const child of forkRuntimes(result)) { ... }
+   * ```
+   */
+  async fork(snapshot: string, options: ForkSnapshotOptions = {}): Promise<ForkResponse> {
+    const path = `${snapshotPath(snapshot)}/fork`;
+
+    const body: Record<string, unknown> = { count: options.count ?? 1 };
+    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
+    if (options.envVars !== undefined) body['env_vars'] = options.envVars;
+    if (options.metadata !== undefined) body['metadata'] = options.metadata;
+
+    const transport = requestOptions(options);
+    if (transport.timeout === undefined) transport.timeout = FORK_TIMEOUT_MS;
+
+    return parseForkResponse(
+      asRecord(
+        await this.http.request({
+          method: 'POST',
+          path,
+          service: SERVICES.agents,
+          body,
+          options: transport,
+        }),
+      ),
+    );
   }
 }

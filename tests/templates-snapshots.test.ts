@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  forkErrors,
+  forkRuntimes,
   GravixLayerInvalidArgumentError,
   SnapshotKind,
   TemplateBuildError,
@@ -10,7 +12,14 @@ import {
   isTerminalBuildState,
 } from '../src/index.js';
 import { fromBase64, utf8Decode } from '../src/core/binary.js';
-import { RUNTIME_ID, emptyResponse, expectRejection, jsonResponse, testClient } from './helpers.js';
+import {
+  RUNTIME_ID,
+  emptyResponse,
+  expectRejection,
+  jsonResponse,
+  runtimePayload,
+  testClient,
+} from './helpers.js';
 
 interface Step {
   type: string;
@@ -524,6 +533,112 @@ describe('snapshots', () => {
     await expectRejection(client.snapshots.activate(''), GravixLayerInvalidArgumentError);
     await expectRejection(client.snapshots.deactivate(''), GravixLayerInvalidArgumentError);
     await expectRejection(client.snapshots.delete(''), GravixLayerInvalidArgumentError);
+    expect(http.requests).toHaveLength(0);
+  });
+});
+
+describe('fork', () => {
+  const CHILD_A = {
+    runtime_id: 'aaaaaaaa-2222-4333-8444-555555555555',
+    status: 'running',
+    template: 'base-small',
+    cloud: 'aws',
+    region: 'us-east-1',
+  };
+  const CHILD_B = {
+    runtime_id: 'bbbbbbbb-2222-4333-8444-555555555555',
+    status: 'running',
+    template: 'base-small',
+    cloud: 'aws',
+    region: 'us-east-1',
+  };
+  const FORK_RESP = {
+    snapshot_id: 'cccccccc-2222-4333-8444-555555555555',
+    snapshot_persisted: false,
+    parent_runtime_id: RUNTIME_ID,
+    children: [
+      { runtime: CHILD_A },
+      { error: 'capacity_exhausted', code: 'capacity_exhausted' },
+      { runtime: CHILD_B },
+    ],
+  };
+
+  it('forks a runtime, parsing per-child results', async () => {
+    const { client, http } = testClient([jsonResponse(FORK_RESP)]);
+    const res = await client.runtime.fork(RUNTIME_ID, { count: 3 });
+
+    expect(http.last().method).toBe('POST');
+    expect(http.last().url).toContain(`/v1/agents/runtime/${RUNTIME_ID}/fork`);
+    expect(http.jsonBody()).toEqual({ count: 3 });
+    expect(res.snapshotId).toBe(FORK_RESP.snapshot_id);
+    expect(res.snapshotPersisted).toBe(false);
+    expect(res.parentRuntimeId).toBe(RUNTIME_ID);
+    expect(res.children).toHaveLength(3);
+    expect(forkRuntimes(res).map((r) => r.runtimeId)).toEqual([
+      CHILD_A.runtime_id,
+      CHILD_B.runtime_id,
+    ]);
+    expect(forkErrors(res)).toEqual([{ error: 'capacity_exhausted', code: 'capacity_exhausted' }]);
+  });
+
+  it('sends the full runtime-fork option set', async () => {
+    const { client, http } = testClient([jsonResponse(FORK_RESP)]);
+    await client.runtime.fork(RUNTIME_ID, {
+      count: 5,
+      timeoutSeconds: 600,
+      persistSnapshot: true,
+      name: 'kept-ckpt',
+      envVars: { A: 'b' },
+      metadata: { k: 1 },
+    });
+    expect(http.jsonBody()).toEqual({
+      count: 5,
+      timeout_seconds: 600,
+      persist_snapshot: true,
+      name: 'kept-ckpt',
+      env_vars: { A: 'b' },
+      metadata: { k: 1 },
+    });
+  });
+
+  it('defaults to a single child and validates the runtime id', async () => {
+    const { client, http } = testClient([jsonResponse(FORK_RESP)]);
+    await client.runtime.fork(RUNTIME_ID);
+    expect(http.jsonBody()).toEqual({ count: 1 });
+    await expectRejection(client.runtime.fork('not-a-uuid'), GravixLayerInvalidArgumentError);
+  });
+
+  it('forks from a bound runtime handle', async () => {
+    const { client, http } = testClient([jsonResponse(runtimePayload()), jsonResponse(FORK_RESP)]);
+    const runtime = await client.runtime.create();
+    const res = await runtime.fork({ count: 2 });
+    expect(http.last().url).toContain(`/runtime/${RUNTIME_ID}/fork`);
+    expect(http.jsonBody()).toEqual({ count: 2 });
+    expect(forkRuntimes(res)).toHaveLength(2);
+  });
+
+  it('forks a snapshot without a parent', async () => {
+    const resp = { ...FORK_RESP, parent_runtime_id: undefined };
+    const { client, http } = testClient([jsonResponse(resp)]);
+    const res = await client.snapshots.fork('ckpt-1', {
+      count: 10,
+      timeoutSeconds: 300,
+      envVars: { X: '1' },
+    });
+    expect(http.last().url).toContain('/v1/agents/snapshots/ckpt-1/fork');
+    expect(http.jsonBody()).toEqual({
+      count: 10,
+      timeout_seconds: 300,
+      env_vars: { X: '1' },
+    });
+    expect(res.parentRuntimeId).toBeUndefined();
+    expect(forkRuntimes(res)).toHaveLength(2);
+    expect(forkErrors(res)).toHaveLength(1);
+  });
+
+  it('requires a snapshot reference', async () => {
+    const { client, http } = testClient([]);
+    await expectRejection(client.snapshots.fork(''), GravixLayerInvalidArgumentError);
     expect(http.requests).toHaveLength(0);
   });
 });

@@ -61,6 +61,8 @@ import type {
   GitPushOptions,
 } from './git.js';
 import type { CreatePtyOptions, PtyHandle, PtyStreamEvent } from './pty.js';
+import type { ForkRuntimeOptions } from './runtimes.js';
+import type { ForkResponse } from '../../types/snapshots.js';
 import type {
   CodeCallbacks,
   CodeStreamEvent,
@@ -268,6 +270,15 @@ export class Runtime {
   /** Wake the runtime, restoring it exactly as it was. */
   async resume(options: RequestOptions = {}): Promise<void> {
     await this.runtimes.resume(this.requireAlive(), options);
+  }
+
+  /**
+   * Fork this runtime into `count` independent children — the parent's state
+   * is captured once and every child restores from it. This runtime keeps
+   * running unchanged; results are per-child (`forkRuntimes`/`forkErrors`).
+   */
+  async fork(options: ForkRuntimeOptions = {}): Promise<ForkResponse> {
+    return this.runtimes.fork(this.requireAlive(), options);
   }
 
   /** Change how long the runtime may keep running. */

@@ -6,7 +6,8 @@
  * repeating the setup work.
  */
 
-import { bool, num, optStr, str } from '../core/parse.js';
+import { asRecord, bool, num, optStr, str } from '../core/parse.js';
+import { parseRuntimeInfo, type RuntimeInfo } from './runtime.js';
 
 /** How much of a runtime a snapshot captures. */
 export const SnapshotKind = {
@@ -92,4 +93,64 @@ export interface SnapshotDeleteResponse {
   /** The identifier or name that was deleted. */
   snapshotId: string;
   deleted: boolean;
+}
+
+/**
+ * One fork child that failed to start. Fork resolves per child — a single
+ * failure never fails the request.
+ */
+export interface ForkError {
+  /** Human-readable failure reason. */
+  error: string;
+  /** Stable machine-readable code, for example `capacity_exhausted`. */
+  code: string;
+}
+
+/** Result of `runtimes.fork` and `snapshots.fork`. */
+export interface ForkResponse {
+  /**
+   * Per-child results in request order — a `RuntimeInfo` on success or a
+   * `ForkError` on failure.
+   */
+  children: (RuntimeInfo | ForkError)[];
+  /** Snapshot the children were created from. */
+  snapshotId: string;
+  /** Whether the capture was kept as a named snapshot. */
+  snapshotPersisted: boolean;
+  /** Parent runtime on a live fork; absent on a snapshot fork. */
+  parentRuntimeId?: string;
+}
+
+function isForkError(child: RuntimeInfo | ForkError): child is ForkError {
+  return (child as ForkError).code !== undefined;
+}
+
+/** RuntimeInfo entries that started — drops the per-child failures. */
+export function forkRuntimes(response: ForkResponse): RuntimeInfo[] {
+  return response.children.filter((c): c is RuntimeInfo => !isForkError(c));
+}
+
+/** Per-child failures inside the response. */
+export function forkErrors(response: ForkResponse): ForkError[] {
+  return response.children.filter(isForkError);
+}
+
+export function parseForkResponse(data: Record<string, unknown>): ForkResponse {
+  const raw = data['children'];
+  const children = (Array.isArray(raw) ? raw : []).map((item): RuntimeInfo | ForkError => {
+    const rec = asRecord(item);
+    const runtime = rec['runtime'];
+    if (runtime && typeof runtime === 'object') {
+      return parseRuntimeInfo(asRecord(runtime));
+    }
+    return { error: str(rec, 'error', 'fork failed'), code: str(rec, 'code', 'internal_error') };
+  });
+  const response: ForkResponse = {
+    children,
+    snapshotId: str(data, 'snapshot_id'),
+    snapshotPersisted: bool(data, 'snapshot_persisted'),
+  };
+  const parentRuntimeId = optStr(data, 'parent_runtime_id');
+  if (parentRuntimeId !== undefined) response.parentRuntimeId = parentRuntimeId;
+  return response;
 }

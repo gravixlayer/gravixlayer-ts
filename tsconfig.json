@@ -8,7 +8,7 @@
 
     // Examples import the package by name, exactly as a user would. This maps
     // that name to the sources so they typecheck and run without a build.
-    "baseUrl": ".",
+    // `paths` resolves relative to this file; `baseUrl` is unnecessary.
     "paths": {
       "gravixlayer": ["./src/index.ts"]
     },

@@ -5,7 +5,22 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-## [0.1.25] - 2026-09-29
+## [0.1.26] - 2026-09-30 
+### Added
+- `runtimes.fork` — fork a running runtime into `count` (1–100) independent
+  children from one capture. `ForkRuntimeOptions` covers `count`,
+  `timeoutSeconds`, `persistSnapshot`/`name` (keeps the capture as a named
+  snapshot), plus `envVars`/`metadata` overrides merged over the parent's.
+- `snapshots.fork` — start `count` runtimes from an already-saved snapshot
+  with no capture and no source-runtime requirement (`ForkSnapshotOptions`).
+- `ForkResponse`/`ForkError` types plus `forkRuntimes`/`forkErrors` helpers
+  that split the per-child results.
+
+- `runtime.git.clone`/`pull`/`push`/`fetch` accept `timeoutSeconds` — a
+  per-operation server-side deadline (default 300s, maximum 900s) so remote
+  operations fail with a timeout error instead of holding the request.
+
+## [0.1.25] - 2026-09-29  
 ### Added
 - `FileReadResponse.contentBase64` — the exact file bytes for binary reads
   (the API emits it when content isn't valid UTF-8; `content` stays the lossy

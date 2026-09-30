@@ -70,6 +70,7 @@ export {
   type CommandStreamEvent,
   type CreateContextOptions,
   type CreateRuntimeOptions,
+  type ForkRuntimeOptions,
   type ListRuntimesOptions,
   type RunCodeOptions,
   type RunCommandOptions,
@@ -203,11 +204,16 @@ export {
 export {
   Snapshots,
   type CreateSnapshotOptions,
+  type ForkSnapshotOptions,
   type ListSnapshotsOptions,
 } from './resources/snapshots.js';
 
 export {
+  forkErrors,
+  forkRuntimes,
   SnapshotKind,
+  type ForkError,
+  type ForkResponse,
   type Snapshot,
   type SnapshotDeleteResponse,
   type SnapshotListResponse,
