@@ -5,6 +5,27 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.27] - 2026-10-05 
+### Changed
+- `http2` now defaults to `true` on Node. Requests multiplex on one HTTP/2
+  session per origin, shared across client instances in the process — a second
+  client never pays a second handshake — and an origin that does not offer
+  HTTP/2 falls back to the HTTP/1.1 keep-alive pool automatically. Pass
+  `http2: false` to always use HTTP/1.1 keep-alive. Custom `fetch` and
+  non-Node runtimes are unaffected.
+- Node transport reworked for lower first-request latency. `node:*` modules
+  load synchronously where the runtime allows it, the TLS trust store is built
+  while DNS resolves, and `warmup()`/`preconnect()` now actually opens the
+  HTTP/2 session instead of deferring it to the first request.
+- API calls skip building `Response`/`Headers` objects on the hot path: the
+  transport consumes status, headers, and raw bytes directly, so less work
+  sits between the wire and your result. Responses to a caller-supplied
+  `fetch` behave exactly as before.
+
+### Fixed
+- A request body read that outlives a torn-down socket now fails fast instead
+  of waiting on a completion that never arrives.
+
 ## [0.1.26] - 2026-09-30 
 ### Added
 - `runtimes.fork` — fork a running runtime into `count` (1–100) independent

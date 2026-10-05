@@ -12,6 +12,7 @@ import { GravixLayerInvalidArgumentError } from './core/errors.js';
 import { createPooledFetch } from './core/http.js';
 import { maybeEnableFromEnv } from './core/telemetry.js';
 import { Transport, type FetchLike, type RequestOptions } from './core/transport.js';
+import { fetchDispatch, type Dispatch } from './core/wire.js';
 import { buildListEndpoint, SERVICES } from './core/url.js';
 import { Agents } from './resources/agents.js';
 import { Identity } from './resources/identity.js';
@@ -82,16 +83,19 @@ export interface ClientOptions {
    * Replacement for the global `fetch`.
    *
    * Useful for a custom agent, a proxy, or deterministic tests. When omitted
-   * on Node, the SDK reuses an HTTP/1.1 keep-alive pool (or one HTTP/2 session
-   * per origin when {@link ClientOptions.http2} is true). Closing the client
-   * destroys those sockets immediately so the process can exit.
+   * on Node, the SDK multiplexes requests on one HTTP/2 session per origin
+   * (or an HTTP/1.1 keep-alive pool when {@link ClientOptions.http2} is
+   * false). Closing the client destroys those sockets immediately so the
+   * process can exit.
    */
   fetch?: FetchLike;
   /**
    * Use HTTP/2 multiplexing on Node.
    *
-   * Defaults to `false` (HTTP/1.1 keep-alive). Pass `true` to open one HTTP/2
-   * session per origin. Ignored when a custom `fetch` is supplied.
+   * Defaults to `true`: one HTTP/2 session per origin, shared across client
+   * instances, with an automatic fall back to HTTP/1.1 keep-alive when an
+   * origin does not offer HTTP/2. Pass `false` to always use HTTP/1.1
+   * keep-alive. Ignored when a custom `fetch` is supplied.
    */
   http2?: boolean;
   /**
@@ -187,7 +191,8 @@ export class GravixLayer implements ClientContext {
     }
 
     let fetchImpl = options.fetch;
-    let preconnect: (() => Promise<void>) | undefined;
+    let dispatchImpl: Dispatch | undefined;
+    let preconnect: ((origin?: string) => Promise<void>) | undefined;
     let closePool: (() => Promise<void>) | undefined;
     if (!fetchImpl) {
       if (typeof globalThis.fetch !== 'function') {
@@ -195,11 +200,14 @@ export class GravixLayer implements ClientContext {
           'This runtime has no global fetch. Use Node 20 or newer, or pass a `fetch` implementation.',
         );
       }
-      const pooled = createPooledFetch({ http2: options.http2 === true });
+      const pooled = createPooledFetch({ http2: options.http2 !== false });
       fetchImpl = pooled.fetch;
-      preconnect = () => pooled.preconnect();
+      dispatchImpl = pooled.dispatch;
+      preconnect = (origin) => pooled.preconnect(origin);
       closePool = () => pooled.close();
     }
+    // A caller-supplied fetch still drives API calls, through an adapter.
+    dispatchImpl ??= fetchDispatch(fetchImpl);
 
     // Tracing stays off unless the environment asks for it, so a plain client
     // never starts an exporter on its own.
@@ -217,6 +225,7 @@ export class GravixLayer implements ClientContext {
         ...lowercaseKeys(options.defaultHeaders ?? {}),
       },
       fetch: fetchImpl,
+      dispatch: dispatchImpl,
       preconnect,
       close: closePool,
     });

@@ -1,21 +1,36 @@
 /**
  * Node HTTP client.
  *
- * HTTPS defaults to an HTTP/1.1 keep-alive pool (IPv4, hostname SNI, enough
- * sockets for concurrent create+exec). Pass `http2: true` to multiplex on one
- * HTTP/2 session per origin instead, with HTTP/1.1 fallback if ALPN is not
- * `h2`.
+ * HTTPS defaults to one HTTP/2 session per origin (IPv4, hostname SNI, every
+ * request multiplexed), with an automatic fall back to HTTP/1.1 keep-alive
+ * when ALPN does not offer `h2`. Pass `http2: false` to always use the
+ * HTTP/1.1 keep-alive pool. HTTP/2 sessions and DNS answers are shared by
+ * every pooled client in the process, so a second client never pays a second
+ * handshake.
+ *
+ * The wire layer returns status, headers, and body bytes without building
+ * WHATWG `Response`/`Headers` objects; the public `fetch` facade adds them
+ * only for callers that want the standard shape.
  *
  * Keep-alive sockets and HTTP/2 sessions are unref'd when idle so they do not
  * hold the process open. `close()` still destroys them immediately — graceful
  * GOAWAY is not waited on.
  *
- * `node:*` modules are imported dynamically so Bun, Deno, and edge bundles
- * never evaluate them.
+ * `node:*` modules load through `process.getBuiltinModule`, which resolves
+ * synchronously without a dynamic import. On runtimes that predate it, the
+ * client falls back to `import()` so Bun, Deno, and edge bundles never
+ * evaluate them until a request needs them.
  */
 
 import { utf8Encode } from './binary.js';
 import { GravixLayerInvalidArgumentError } from './errors.js';
+import {
+  readAll,
+  type Dispatch,
+  type HeaderSource,
+  type WireRequest,
+  type WireResponse,
+} from './wire.js';
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -26,7 +41,8 @@ export type DnsLookup = (hostname: string, options: unknown, callback?: DnsLooku
 
 export interface NativeNodeFetchOptions {
   /**
-   * Negotiate HTTP/2 on HTTPS. Defaults to false (HTTP/1.1 keep-alive).
+   * Negotiate HTTP/2 on HTTPS. Defaults to true; `false` selects the HTTP/1.1
+   * keep-alive pool.
    */
   http2?: boolean;
   /**
@@ -42,8 +58,16 @@ export interface NativeNodeFetchOptions {
 }
 
 export interface NativeNodeFetch {
+  /** `fetch`-shaped call for callers that need a WHATWG `Response`. */
   fetch: FetchLike;
-  preconnect(): Promise<void>;
+  /** Wire call: status, headers, and body bytes with no WHATWG objects. */
+  dispatch: Dispatch;
+  /**
+   * Warm the transport. With an origin (and `http2`), this opens the HTTP/2
+   * session: DNS, TLS, and the session handshake all complete before the next
+   * request. Without an origin it only makes sure the machinery is loaded.
+   */
+  preconnect(origin?: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -112,14 +136,18 @@ interface DestroyableAgent {
   freeSockets?: NodeJS.Dict<NetSocket[]>;
 }
 
+type RawHeaders = NodeJS.Dict<string | string[] | number | undefined>;
+
 interface HttpIncomingMessage {
   statusCode?: number;
   statusMessage?: string;
-  headers: NodeJS.Dict<string | string[] | undefined>;
+  headers: RawHeaders;
   resume(): void;
+  destroy(error?: Error): void;
   on(event: 'data', listener: (chunk: Buffer | string) => void): void;
   once(event: 'end', listener: () => void): void;
   once(event: 'error', listener: (error: Error) => void): void;
+  once(event: 'close', listener: () => void): void;
 }
 
 interface NetSocket {
@@ -134,7 +162,7 @@ interface BodySink {
   writableEnded: boolean;
   destroyed: boolean;
   write(chunk: Uint8Array): boolean;
-  end(chunk?: string | Buffer): void;
+  end(chunk?: string | Uint8Array): void;
   destroy(error?: Error): void;
   once(event: 'drain' | 'close', listener: () => void): void;
   off(event: 'drain' | 'close', listener: () => void): void;
@@ -145,10 +173,11 @@ interface HttpClientRequest {
   destroyed: boolean;
   on(event: 'error', listener: (error: Error) => void): void;
   on(event: 'socket', listener: (socket: NetSocket) => void): void;
+  once(event: 'error', listener: (error: Error) => void): void;
   once(event: 'drain' | 'close', listener: () => void): void;
   off(event: 'drain' | 'close', listener: () => void): void;
   write(chunk: Uint8Array): boolean;
-  end(chunk?: string | Buffer): void;
+  end(chunk?: string | Uint8Array): void;
   destroy(error?: Error): void;
 }
 
@@ -170,23 +199,25 @@ interface TlsSocket {
   unref(): void;
   once(event: 'error', listener: (error: Error) => void): TlsSocket;
   once(event: 'secureConnect', listener: () => void): TlsSocket;
+  once(event: 'close', listener: () => void): TlsSocket;
 }
 
 interface TlsLib {
   connect(options: Record<string, unknown>): TlsSocket;
+  createSecureContext(options?: Record<string, unknown>): unknown;
 }
 
 interface Http2Stream {
   writableEnded: boolean;
   destroyed: boolean;
   write(chunk: Uint8Array): boolean;
-  end(chunk?: string | Buffer): void;
+  end(chunk?: string | Uint8Array): void;
   destroy(error?: Error): void;
   close(code?: number): void;
   on(event: 'data', listener: (chunk: Buffer | string) => void): void;
   once(event: 'error', listener: (error: Error) => void): void;
   once(event: 'end', listener: () => void): void;
-  once(event: 'response', listener: (headers: Http2Headers) => void): void;
+  once(event: 'response', listener: (headers: RawHeaders) => void): void;
   once(event: 'drain' | 'close', listener: () => void): void;
   off(event: 'drain' | 'close', listener: () => void): void;
 }
@@ -222,7 +253,7 @@ interface DnsLib {
 
 type Http2Headers = Record<string, string | string[] | number | undefined>;
 
-interface NodeHttpMods {
+interface NodeLibs {
   http: HttpLib;
   https: HttpLib;
   http2: Http2Lib;
@@ -231,15 +262,46 @@ interface NodeHttpMods {
   toWeb: (readable: object) => ReadableStream<Uint8Array>;
 }
 
-interface NodeH1Pool {
-  fetch: FetchLike;
-  close(): void;
-}
-
 interface H2Session {
   session: Http2Session;
   socket: TlsSocket;
   ping: ReturnType<typeof setInterval> | undefined;
+  /** The loaded `node:*` modules, kept so dispatch does not re-resolve them. */
+  node: NodeLibs;
+}
+
+/** A session that is either connecting or ready. */
+interface SessionEntry {
+  ready: Promise<H2Session>;
+}
+
+/**
+ * Connection state shared by every pooled client in the process.
+ *
+ * HTTP/2 sessions, DNS answers, and sockets still completing their handshake
+ * live here so a second client to the same origin reuses them. `users` counts
+ * the clients holding the pool; the last `close()` drains it. A client built
+ * with a custom `lookup` gets a private pool so test DNS never leaks into
+ * shared state.
+ */
+interface SessionPool {
+  /** Reference count of live clients. */
+  users: number;
+  /** Shared-pool registry key (`rejectUnauthorized`), or none when private. */
+  key: boolean | undefined;
+  /** Drained; no new sessions may be created. */
+  closed: boolean;
+  addresses: AddressBook;
+  sessions: Map<string, SessionEntry>;
+  /** Origins whose server did not negotiate HTTP/2; they stay on HTTP/1.1. */
+  h1Only: Set<string>;
+  /** TLS sockets still handshaking, so `close()` can drop them. */
+  connectingSockets: Set<TlsSocket>;
+}
+
+interface NodeH1Agents {
+  httpAgent: DestroyableAgent;
+  httpsAgent: DestroyableAgent;
 }
 
 /** A hostname's IPv4 addresses, the one in use first. */
@@ -263,207 +325,367 @@ interface MultipartBody {
   parts: ReadonlyArray<Uint8Array | Blob>;
 }
 
-type OutgoingBody = string | Buffer | MultipartBody | undefined;
+type OutgoingBody = string | Uint8Array | MultipartBody | undefined;
 
-let mods: NodeHttpMods | undefined;
-let modsLoading: Promise<NodeHttpMods | null> | undefined;
+const EMPTY_BYTES = new Uint8Array(0);
 
-async function loadMods(): Promise<NodeHttpMods | null> {
-  if (mods) return mods;
-  modsLoading ??= (async () => {
+let libs: NodeLibs | undefined;
+let importing: Promise<NodeLibs> | undefined;
+
+/**
+ * Load the Node modules the transport needs.
+ *
+ * `process.getBuiltinModule` resolves a built-in synchronously — no promise,
+ * no loader round trip — so the first request does not wait on `import()`.
+ * Runtimes without it (older Node, Deno) take the dynamic-import path, and a
+ * failure rejects only the request that needed the modules.
+ */
+function nodeLibs(): Promise<NodeLibs> {
+  if (libs) return Promise.resolve(libs);
+
+  const builtin =
+    typeof process !== 'undefined' && typeof process.getBuiltinModule === 'function'
+      ? process.getBuiltinModule.bind(process)
+      : undefined;
+  if (builtin) {
     try {
-      const [http, https, http2, tls, stream, dns] = await Promise.all([
-        import('node:http'),
-        import('node:https'),
-        import('node:http2'),
-        import('node:tls'),
-        import('node:stream'),
-        import('node:dns'),
-      ]);
-      const loaded: NodeHttpMods = {
+      const stream = builtin('node:stream') as {
+        Readable: { toWeb(readable: object): ReadableStream<Uint8Array> };
+      };
+      libs = {
+        http: builtin('node:http') as unknown as HttpLib,
+        https: builtin('node:https') as unknown as HttpLib,
+        http2: builtin('node:http2') as unknown as Http2Lib,
+        tls: builtin('node:tls') as unknown as TlsLib,
+        dns: builtin('node:dns') as unknown as DnsLib,
+        toWeb: stream.Readable.toWeb.bind(stream.Readable) as NodeLibs['toWeb'],
+      };
+      return Promise.resolve(libs);
+    } catch {
+      // A partial node:* implementation (Bun) can throw here; fall through to
+      // the dynamic-import path, which reports any real failure to the caller.
+    }
+  }
+
+  importing ??= Promise.all([
+    import('node:http'),
+    import('node:https'),
+    import('node:http2'),
+    import('node:tls'),
+    import('node:stream'),
+    import('node:dns'),
+  ]).then(
+    ([http, https, http2, tls, stream, dns]) => {
+      const loaded: NodeLibs = {
         http: http as unknown as HttpLib,
         https: https as unknown as HttpLib,
         http2: http2 as unknown as Http2Lib,
         tls: tls as unknown as TlsLib,
         dns: dns as unknown as DnsLib,
-        toWeb: stream.Readable.toWeb.bind(stream.Readable) as NodeHttpMods['toWeb'],
+        toWeb: stream.Readable.toWeb.bind(stream.Readable) as NodeLibs['toWeb'],
       };
-      mods = loaded;
+      libs = loaded;
       return loaded;
-    } catch {
-      return null;
+    },
+    (error: unknown) => {
+      importing = undefined;
+      throw new GravixLayerInvalidArgumentError(
+        'The GravixLayer client could not load Node HTTP modules.',
+        { cause: error },
+      );
+    },
+  );
+  return importing;
+}
+
+/**
+ * Build the TLS trust store once per process.
+ *
+ * The first secure context parses every root certificate, which costs real
+ * milliseconds on small machines. Doing it off the request path (or while DNS
+ * is in flight) keeps that work out of the first request's critical path.
+ */
+let trustStoreReady = false;
+function warmTrustStore(): void {
+  if (trustStoreReady) return;
+  const tls = libs?.tls;
+  if (!tls) return;
+  try {
+    tls.createSecureContext();
+    trustStoreReady = true;
+  } catch {
+    // A broken trust store fails the real handshake instead.
+  }
+}
+
+/**
+ * Header lookup over the raw header map a Node response carries.
+ *
+ * Values join repeated entries the way `Headers.get` does. Node already
+ * lower-cases HTTP/1.1 and HTTP/2 header names, so `get` only pays for the
+ * caller's casing.
+ */
+export class NodeHeaders implements HeaderSource {
+  private readonly values = new Map<string, string>();
+
+  constructor(raw: RawHeaders) {
+    for (const key of Object.keys(raw)) {
+      if (key.startsWith(':')) continue;
+      const value = raw[key];
+      if (value === undefined) continue;
+      this.values.set(key, Array.isArray(value) ? value.join(',') : String(value));
     }
-  })();
-  return modsLoading;
+  }
+
+  get(name: string): string | null {
+    return this.values.get(name.toLowerCase()) ?? null;
+  }
+
+  forEach(callback: (value: string, name: string) => void): void {
+    for (const [name, value] of this.values) callback(value, name);
+  }
+}
+
+/** HTTP/2 and DNS state shared by every pooled client without a custom lookup. */
+const sharedPools = new Map<boolean, SessionPool>();
+
+function createPool(opts: { rejectUnauthorized: boolean; lookup?: DnsLookup }): SessionPool {
+  const lookup = opts.lookup;
+  return {
+    users: 0,
+    key: undefined,
+    closed: false,
+    sessions: new Map(),
+    h1Only: new Set(),
+    connectingSockets: new Set(),
+    addresses: createAddressBook((hostname, callback) => {
+      if (lookup) {
+        lookup(hostname, { family: 4, all: true }, callback);
+        return;
+      }
+      void nodeLibs().then(
+        (node) => {
+          node.dns.lookup(hostname, { family: 4, all: true }, callback);
+        },
+        (error: unknown) =>
+          callback(error instanceof Error ? error : new Error(String(error)), undefined),
+      );
+    }),
+  };
+}
+
+function acquirePool(opts: { rejectUnauthorized: boolean; lookup?: DnsLookup }): SessionPool {
+  if (opts.lookup) {
+    const pool = createPool(opts);
+    pool.users = 1;
+    return pool;
+  }
+  let pool = sharedPools.get(opts.rejectUnauthorized);
+  if (!pool) {
+    pool = createPool(opts);
+    pool.key = opts.rejectUnauthorized;
+    sharedPools.set(opts.rejectUnauthorized, pool);
+  }
+  pool.users += 1;
+  return pool;
+}
+
+function releasePool(pool: SessionPool): void {
+  pool.users -= 1;
+  if (pool.users > 0) return;
+  if (pool.key !== undefined && sharedPools.get(pool.key) === pool) {
+    sharedPools.delete(pool.key);
+  }
+  pool.closed = true;
+  pool.addresses.clear();
+  for (const socket of pool.connectingSockets) {
+    dropSocket(socket);
+  }
+  pool.connectingSockets.clear();
+  const pending = [...pool.sessions.values()];
+  pool.sessions.clear();
+  for (const entry of pending) {
+    void entry.ready.then(
+      (handle) => closeH2(handle),
+      () => undefined,
+    );
+  }
 }
 
 export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): NativeNodeFetch {
-  const http2Wanted = options.http2 === true;
+  const http2Wanted = options.http2 !== false;
   const rejectUnauthorized = options.rejectUnauthorized !== false;
-  const lookup = options.lookup;
+  const pool = acquirePool({ rejectUnauthorized, lookup: options.lookup });
 
   let closed = false;
-  let h1Pool: NodeH1Pool | undefined;
-  let h1Ready: Promise<NodeH1Pool | undefined> | undefined;
-  const h2FailedOrigins = new Set<string>();
-  const h2Sessions = new Map<string, Promise<H2Session>>();
-  const h2Live = new Map<string, H2Session>();
-  const connectingSockets = new Set<TlsSocket>();
+  let h1: { agents: NodeH1Agents; node: NodeLibs } | undefined;
+  let h1Init: Promise<{ agents: NodeH1Agents; node: NodeLibs }> | undefined;
 
-  const loaded = loadMods();
-  void loaded;
+  const closedError = () =>
+    new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
 
-  const addresses = createAddressBook((hostname, callback) => {
-    if (lookup) {
-      lookup(hostname, { family: 4, all: true }, callback);
-      return;
+  /**
+   * The live HTTP/2 session for an origin, connecting it when needed.
+   *
+   * Concurrent callers share one connect promise, so a burst pays a single
+   * DNS+TLS+session setup. A session that arrived closed is dropped and
+   * re-dialed once per call.
+   */
+  const sessionFor = (origin: string, url: URL): Promise<H2Session> => {
+    const existing = pool.sessions.get(origin);
+    if (existing) {
+      return existing.ready.then((handle) => {
+        if (!handle.session.closed && !handle.session.destroyed) return handle;
+        if (pool.sessions.get(origin) === existing) pool.sessions.delete(origin);
+        return sessionFor(origin, url);
+      });
     }
-    void loaded.then((node) => {
-      if (!node) {
-        callback(new Error('The GravixLayer client could not load Node HTTP modules.'), undefined);
-        return;
-      }
-      node.dns.lookup(hostname, { family: 4, all: true }, callback);
-    });
-  });
-
-  const ensureH1 = (): Promise<NodeH1Pool | undefined> => {
-    h1Ready ??= (async () => {
-      if (closed) return undefined;
-      const node = await loaded;
-      if (!node || closed) return undefined;
-      h1Pool = createNodeH1Pool(node, { rejectUnauthorized, addresses });
-      return h1Pool;
-    })();
-    return h1Ready;
-  };
-
-  const sessionFor = (url: URL, node: NodeHttpMods): Promise<H2Session> => {
-    const origin = url.origin;
-    const existing = h2Sessions.get(origin);
-    if (existing) return existing;
-    const pending = connectH2(node, url, {
-      rejectUnauthorized,
-      addresses,
-      connectingSockets,
-    }).then(({ session, socket }) => {
-      if (closed) {
-        dropH2(session, socket);
-        throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
-      }
-      const ping = setInterval(() => {
-        if (session.destroyed || session.closed) return;
-        session.ping((error) => {
-          if (error) dropH2(session, socket);
+    if (pool.closed) return Promise.reject(closedError());
+    const created: SessionEntry = {
+      ready: connectH2(url, {
+        rejectUnauthorized,
+        addresses: pool.addresses,
+        connectingSockets: pool.connectingSockets,
+      }).then((handle) => {
+        if (pool.closed) {
+          dropH2(handle.session, handle.socket);
+          throw closedError();
+        }
+        const ping = setInterval(() => {
+          if (handle.session.destroyed || handle.session.closed) return;
+          handle.session.ping((error) => {
+            if (error) dropH2(handle.session, handle.socket);
+          });
+        }, H2_PING_MS);
+        ping.unref();
+        // Idle sessions must not keep a CLI alive after the last request.
+        silenceHandle(handle.session);
+        silenceHandle(handle.socket);
+        handle.ping = ping;
+        // Remove only this entry: a reconnect may already have replaced it.
+        handle.session.once('close', () => {
+          clearInterval(ping);
+          if (pool.sessions.get(origin) === created) pool.sessions.delete(origin);
         });
-      }, H2_PING_MS);
-      ping.unref();
-      // Idle sessions must not keep a CLI alive after the last request.
-      silenceHandle(session);
-      silenceHandle(socket);
-      const handle: H2Session = { session, socket, ping };
-      h2Live.set(origin, handle);
-      session.once('close', () => {
-        clearInterval(ping);
-        h2Sessions.delete(origin);
-        h2Live.delete(origin);
-      });
-      session.once('error', () => {
-        dropH2(session, socket);
-      });
-      return handle;
-    });
-    void pending.catch((error: unknown) => {
-      h2Sessions.delete(origin);
-      h2Live.delete(origin);
+        handle.session.once('error', () => {
+          dropH2(handle.session, handle.socket);
+        });
+        return handle;
+      }),
+    };
+    void created.ready.catch((error: unknown) => {
+      if (pool.sessions.get(origin) === created) pool.sessions.delete(origin);
       // Only a server that does not offer HTTP/2 moves the origin to HTTP/1.1
       // for good. A network failure tries HTTP/2 again on the next request.
-      if (isHttp2Unsupported(error)) h2FailedOrigins.add(origin);
+      if (isHttp2Unsupported(error)) pool.h1Only.add(origin);
     });
-    h2Sessions.set(origin, pending);
-    return pending;
+    pool.sessions.set(origin, created);
+    return created.ready;
   };
 
-  const liveSession = async (url: URL, node: NodeHttpMods): Promise<H2Session> => {
-    const handle = await sessionFor(url, node);
-    if (!handle.session.closed && !handle.session.destroyed) return handle;
-    h2Sessions.delete(url.origin);
-    h2Live.delete(url.origin);
-    return sessionFor(url, node);
+  // A burst must share one init: checking `h1` after the await would give
+  // every concurrent caller its own agent pair and its own sockets.
+  const h1Agents = (): Promise<{ agents: NodeH1Agents; node: NodeLibs }> => {
+    if (h1) return Promise.resolve(h1);
+    h1Init ??= nodeLibs().then((node) => {
+      if (closed) throw closedError();
+      h1 = { agents: createNodeH1Agents(node, { rejectUnauthorized }), node };
+      return h1;
+    });
+    return h1Init;
   };
 
-  const fetch: FetchLike = async (input, init = {}) => {
-    if (closed) {
-      throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
-    }
-
-    const url = new URL(input);
-    const tryH2 = http2Wanted && url.protocol === 'https:' && !h2FailedOrigins.has(url.origin);
-    if (tryH2) {
-      const node = await loaded;
-      if (closed) {
-        throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
-      }
-      if (node) {
+  const dispatch: Dispatch = async (request) => {
+    if (closed) throw closedError();
+    const url = new URL(request.url);
+    if (http2Wanted && url.protocol === 'https:' && !pool.h1Only.has(url.origin)) {
+      try {
+        const handle = await sessionFor(url.origin, url);
+        if (closed) throw closedError();
+        return await h2Dispatch(handle, url, request);
+      } catch (error) {
+        if (closed) throw closedError();
         // Only the handshake falls back to HTTP/1.1. A failure after the
         // session is up must not replay the request (POST create is not
         // idempotent).
-        try {
-          const handle = await liveSession(url, node);
-          if (closed) {
-            throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
-          }
-          return await h2Fetch(node, handle.session, url, init);
-        } catch (error) {
-          if (closed || !isHttp2HandshakeFailure(error) || !isReplayableBody(init.body)) {
-            throw error;
-          }
+        if (!isHttp2HandshakeFailure(error) || !isReplayableRequest(request)) {
+          throw error;
         }
       }
     }
+    const { agents, node } = await h1Agents();
+    if (closed) throw closedError();
+    return h1Dispatch(node, agents, pool.addresses, { rejectUnauthorized }, request);
+  };
 
-    const pool = await ensureH1();
-    if (closed) {
-      throw new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
+  /**
+   * `fetch`-shaped facade over {@link dispatch} for callers that need the
+   * standard `Response` object. API calls take `dispatch` instead.
+   */
+  const fetch: FetchLike = async (input, init = {}) => {
+    const request = requestFromInit(input, init);
+    const reply = await dispatch(request);
+    const headers = new Headers();
+    reply.headers.forEach((value, name) => headers.append(name, value));
+    if (request.stream) {
+      return new Response(reply.body, {
+        status: reply.status,
+        statusText: reply.statusText,
+        headers,
+      });
     }
-    if (!pool) {
-      throw new GravixLayerInvalidArgumentError(
-        'The GravixLayer client could not create an HTTP dispatcher.',
-      );
-    }
-    return pool.fetch(input, init);
+    const empty =
+      reply.status === 204 ||
+      reply.status === 205 ||
+      reply.status === 304 ||
+      request.method === 'HEAD';
+    // The collected bytes are always backed by a real ArrayBuffer.
+    const body = empty ? null : ((await reply.bytes()) as Uint8Array<ArrayBuffer>);
+    return new Response(body, {
+      status: reply.status,
+      statusText: reply.statusText,
+      headers,
+    });
   };
 
   return {
     fetch,
-    async preconnect() {
-      await loaded;
-      if (http2Wanted) return;
-      await ensureH1();
+    dispatch,
+    async preconnect(origin) {
+      await nodeLibs();
+      warmTrustStore();
+      if (closed || !origin) return;
+      let url: URL;
+      try {
+        url = new URL(origin);
+      } catch {
+        return;
+      }
+      try {
+        // DNS is the one cost every protocol shares; resolve it up front. The
+        // HTTP/2 path below reuses this same in-flight lookup.
+        await pool.addresses.resolveIpv4(url.hostname);
+        if (http2Wanted && url.protocol === 'https:' && !pool.h1Only.has(url.origin)) {
+          const handle = await sessionFor(url.origin, url);
+          if (closed) dropH2(handle.session, handle.socket);
+          return;
+        }
+        await h1Agents();
+      } catch {
+        // A preconnect failure surfaces on the real request instead.
+      }
     },
     async close() {
+      if (closed) return;
       closed = true;
-      h2FailedOrigins.clear();
-      addresses.clear();
-      for (const socket of connectingSockets) {
-        dropSocket(socket);
+      const agents = h1?.agents;
+      h1 = undefined;
+      h1Init = undefined;
+      if (agents) {
+        destroyAgent(agents.httpAgent);
+        destroyAgent(agents.httpsAgent);
       }
-      connectingSockets.clear();
-      const pending = [...h2Sessions.values()];
-      h2Sessions.clear();
-      const live = [...h2Live.values()];
-      h2Live.clear();
-      for (const handle of live) closeH2(handle);
-      for (const ready of pending) {
-        void ready.then(
-          (handle) => closeH2(handle),
-          () => undefined,
-        );
-      }
-      const h1 = h1Pool;
-      h1Pool = undefined;
-      h1Ready = undefined;
-      h1?.close();
+      releasePool(pool);
     },
   };
 }
@@ -643,15 +865,19 @@ function releaseIdleSockets(agent: DestroyableAgent): void {
 }
 
 async function connectH2(
-  node: NodeHttpMods,
   url: URL,
   opts: {
     rejectUnauthorized: boolean;
     addresses: AddressBook;
     connectingSockets: Set<TlsSocket>;
   },
-): Promise<{ session: Http2Session; socket: TlsSocket }> {
-  const address = await opts.addresses.resolveIpv4(url.hostname);
+): Promise<H2Session> {
+  // DNS runs on the libuv thread pool, so the trust store is built while the
+  // lookup is in flight instead of sitting between it and the handshake.
+  const resolving = opts.addresses.resolveIpv4(url.hostname);
+  const node = await nodeLibs();
+  warmTrustStore();
+  const address = await resolving;
   const port = Number(url.port) || 443;
 
   return await new Promise((resolve, reject) => {
@@ -667,7 +893,7 @@ async function connectH2(
       if (settled) return;
       settled = true;
       opts.connectingSockets.delete(socket);
-      resolve({ session, socket });
+      resolve({ session, socket, ping: undefined, node });
     };
 
     const servername = tlsServername(url.hostname);
@@ -690,6 +916,9 @@ async function connectH2(
     socket.once('error', (error) => {
       if (isConnectFailure(error)) opts.addresses.demote(url.hostname, address);
       fail(markHandshake(error));
+    });
+    socket.once('close', () => {
+      fail(handshakeError('HTTP/2 connect closed'));
     });
     socket.once('secureConnect', () => {
       socket.setTimeout(0);
@@ -724,91 +953,189 @@ async function connectH2(
   });
 }
 
-function h2Fetch(
-  node: NodeHttpMods,
-  session: Http2Session,
-  url: URL,
-  init: RequestInit,
-): Promise<Response> {
-  return (async () => {
-    const { body, headers } = await materializeBody(init);
-    const method = (init.method ?? 'GET').toUpperCase();
-    const h2Headers: Http2Headers = {
-      ':method': method,
-      ':path': `${url.pathname}${url.search}`,
-      ':scheme': 'https',
-      ':authority': url.host,
-    };
-    for (const [key, value] of Object.entries(headers)) {
-      if (value === undefined || H2_FORBIDDEN.has(key.toLowerCase())) continue;
-      h2Headers[key] = value;
+function h2Dispatch(handle: H2Session, url: URL, request: WireRequest): Promise<WireResponse> {
+  const { session, node } = handle;
+  const CANCEL = node.http2.constants.NGHTTP2_CANCEL;
+  const { body, headers } = encodeRequestBody(request);
+  const h2Headers: Http2Headers = {
+    ':method': request.method,
+    ':path': `${url.pathname}${url.search}`,
+    ':scheme': 'https',
+    ':authority': url.host,
+  };
+  for (const key of Object.keys(headers)) {
+    const value = headers[key];
+    if (value === undefined || H2_FORBIDDEN.has(key)) continue;
+    h2Headers[key] = value;
+  }
+
+  const signal = request.signal;
+
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error('aborted'));
+      return;
     }
-
-    const toWeb = node.toWeb;
-    const signal = init.signal ?? undefined;
-    const streamBody = wantsStreamingBody(init);
-
-    return await new Promise<Response>((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(signal.reason ?? new Error('aborted'));
+    const req = session.request(h2Headers, { endStream: body === undefined });
+    const onAbort = () => {
+      const reason = signal?.reason ?? new Error('aborted');
+      req.close(CANCEL);
+      req.destroy(reason instanceof Error ? reason : new Error(String(reason)));
+      reject(reason);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    req.once('error', (error) => {
+      signal?.removeEventListener('abort', onAbort);
+      reject(error);
+    });
+    req.once('response', (incoming) => {
+      const status = Number(incoming[':status'] ?? 200);
+      const headers = new NodeHeaders(incoming);
+      if (isEmptyBody(status, request.method)) {
+        signal?.removeEventListener('abort', onAbort);
+        resolve({
+          status,
+          statusText: '',
+          headers,
+          body: null,
+          bytes: async () => EMPTY_BYTES,
+          cancel: () => undefined,
+        });
         return;
       }
-      const req = session.request(h2Headers, { endStream: body === undefined });
-      const onAbort = () => {
-        const reason = signal?.reason ?? new Error('aborted');
-        req.close(node.http2.constants.NGHTTP2_CANCEL);
-        req.destroy(reason);
-        reject(reason);
+      if (request.stream) {
+        // The signal stays wired until the stream closes, so an abort after
+        // the headers still cancels the stream and fails the body.
+        req.once('close', () => signal?.removeEventListener('abort', onAbort));
+        const body = node.toWeb(req);
+        resolve({
+          status,
+          statusText: '',
+          headers,
+          body,
+          bytes: () => readAll(body),
+          cancel: () => {
+            void body.cancel().catch(() => undefined);
+          },
+        });
+        return;
+      }
+      // Read eagerly so the stream always has its error listener attached;
+      // the extra catch silences a body nobody ends up reading.
+      const bodyReady = readNodeBody(req);
+      void bodyReady.catch(() => undefined);
+      void bodyReady.then(
+        () => signal?.removeEventListener('abort', onAbort),
+        () => signal?.removeEventListener('abort', onAbort),
+      );
+      resolve({
+        status,
+        statusText: '',
+        headers,
+        body: null,
+        bytes: () => bodyReady,
+        cancel: () => {
+          req.close(CANCEL);
+          req.destroy();
+        },
+      });
+    });
+    sendBody(req, body);
+  });
+}
+
+function h1Dispatch(
+  node: NodeLibs,
+  agents: NodeH1Agents,
+  addresses: AddressBook,
+  opts: { rejectUnauthorized: boolean },
+  request: WireRequest,
+): Promise<WireResponse> {
+  return (async () => {
+    const url = new URL(request.url);
+    const isHttps = url.protocol === 'https:';
+    const lib = isHttps ? node.https : node.http;
+    const agent = isHttps ? agents.httpsAgent : agents.httpAgent;
+    const { body, headers } = encodeRequestBody(request);
+    if (!('host' in headers)) headers.host = url.host;
+    const address = await addresses.resolveIpv4(url.hostname);
+
+    return await new Promise<WireResponse>((resolve, reject) => {
+      const reqOpts: Record<string, unknown> = {
+        protocol: url.protocol,
+        hostname: address,
+        port: url.port || (isHttps ? 443 : 80),
+        path: `${url.pathname}${url.search}`,
+        method: request.method,
+        headers,
+        agent,
+        family: 4,
+        autoSelectFamily: false,
+        noDelay: true,
+        signal: request.signal ?? undefined,
       };
-      signal?.addEventListener('abort', onAbort, { once: true });
-      req.once('error', (error) => {
-        signal?.removeEventListener('abort', onAbort);
+      if (isHttps) {
+        const servername = tlsServername(url.hostname);
+        if (servername) reqOpts['servername'] = servername;
+        reqOpts['rejectUnauthorized'] = opts.rejectUnauthorized;
+        reqOpts['ALPNProtocols'] = ['http/1.1'];
+      }
+      const req = lib.request(reqOpts, (res) => {
+        const status = res.statusCode ?? 200;
+        const headers = new NodeHeaders(res.headers);
+        if (isEmptyBody(status, request.method)) {
+          res.resume();
+          resolve({
+            status,
+            statusText: res.statusMessage ?? '',
+            headers,
+            body: null,
+            bytes: async () => EMPTY_BYTES,
+            cancel: () => undefined,
+          });
+          return;
+        }
+        if (request.stream) {
+          const body = node.toWeb(res);
+          resolve({
+            status,
+            statusText: res.statusMessage ?? '',
+            headers,
+            body,
+            bytes: () => readAll(body),
+            cancel: () => {
+              void body.cancel().catch(() => undefined);
+            },
+          });
+          return;
+        }
+        // Eager read keeps an error listener on the response between the
+        // headers resolving and the caller asking for the body.
+        const bodyReady = readNodeBody(res, req);
+        void bodyReady.catch(() => undefined);
+        resolve({
+          status,
+          statusText: res.statusMessage ?? '',
+          headers,
+          body: null,
+          bytes: () => bodyReady,
+          cancel: () => res.destroy(),
+        });
+      });
+      req.on('error', (error) => {
+        if (isConnectFailure(error)) addresses.demote(url.hostname, address);
         reject(error);
       });
-      req.once('response', (incoming) => {
-        const status = Number(incoming[':status'] ?? 200);
-        const empty = status === 204 || status === 205 || status === 304 || method === 'HEAD';
-        const headersOut = h2ToHeaders(incoming);
-        if (empty) {
-          signal?.removeEventListener('abort', onAbort);
-          resolve(new Response(null, { status, headers: headersOut }));
-          return;
-        }
-        if (streamBody) {
-          // The signal stays wired until the stream closes, so an abort after
-          // the headers still cancels the stream and fails the body.
-          req.once('close', () => signal?.removeEventListener('abort', onAbort));
-          resolve(
-            new Response(toWeb(req) as ReadableStream<Uint8Array>, {
-              status,
-              headers: headersOut,
-            }),
-          );
-          return;
-        }
-        void readNodeBody(req).then(
-          (buf) => {
-            signal?.removeEventListener('abort', onAbort);
-            resolve(new Response(new Uint8Array(buf), { status, headers: headersOut }));
-          },
-          (error) => {
-            signal?.removeEventListener('abort', onAbort);
-            reject(error);
-          },
-        );
+      req.on('socket', (socket) => {
+        socket.setNoDelay(true);
+        socket.ref();
       });
       sendBody(req, body);
     });
   })();
 }
 
-function createNodeH1Pool(
-  node: NodeHttpMods,
-  opts: {
-    rejectUnauthorized: boolean;
-    addresses: AddressBook;
-  },
-): NodeH1Pool {
+function createNodeH1Agents(node: NodeLibs, opts: { rejectUnauthorized: boolean }): NodeH1Agents {
   const shared = {
     keepAlive: true,
     keepAliveMsecs: TCP_KEEPALIVE_DELAY_MS,
@@ -826,119 +1153,105 @@ function createNodeH1Pool(
   });
   releaseIdleSockets(httpAgent);
   releaseIdleSockets(httpsAgent);
-
-  const toWeb = node.toWeb;
-
-  const fetch: FetchLike = async (input, init = {}) => {
-    const url = new URL(input);
-    const isHttps = url.protocol === 'https:';
-    const lib = isHttps ? node.https : node.http;
-    const agent = isHttps ? httpsAgent : httpAgent;
-    const { body, headers } = await materializeBody(init);
-    const method = (init.method ?? 'GET').toUpperCase();
-    const address = await opts.addresses.resolveIpv4(url.hostname);
-    if (!headerHas(headers, 'host')) headers.host = url.host;
-    const streamBody = wantsStreamingBody(init);
-
-    return await new Promise<Response>((resolve, reject) => {
-      const reqOpts: Record<string, unknown> = {
-        protocol: url.protocol,
-        hostname: address,
-        port: url.port || (isHttps ? 443 : 80),
-        path: `${url.pathname}${url.search}`,
-        method,
-        headers,
-        agent,
-        family: 4,
-        autoSelectFamily: false,
-        noDelay: true,
-        signal: init.signal ?? undefined,
-      };
-      if (isHttps) {
-        const servername = tlsServername(url.hostname);
-        if (servername) reqOpts['servername'] = servername;
-        reqOpts['rejectUnauthorized'] = opts.rejectUnauthorized;
-        reqOpts['ALPNProtocols'] = ['http/1.1'];
-      }
-      const req = lib.request(reqOpts, (res) => {
-        const status = res.statusCode ?? 200;
-        const statusText = res.statusMessage ?? '';
-        const empty = status === 204 || status === 205 || status === 304 || method === 'HEAD';
-        const headersOut = incomingToHeaders(res.headers);
-        if (empty) {
-          res.resume();
-          resolve(new Response(null, { status, statusText, headers: headersOut }));
-          return;
-        }
-        if (streamBody) {
-          resolve(
-            new Response(toWeb(res) as ReadableStream<Uint8Array>, {
-              status,
-              statusText,
-              headers: headersOut,
-            }),
-          );
-          return;
-        }
-        void readNodeBody(res).then(
-          (buf) =>
-            resolve(new Response(new Uint8Array(buf), { status, statusText, headers: headersOut })),
-          reject,
-        );
-      });
-      req.on('error', (error) => {
-        if (isConnectFailure(error)) opts.addresses.demote(url.hostname, address);
-        reject(error);
-      });
-      req.on('socket', (socket) => {
-        socket.setNoDelay(true);
-        socket.ref();
-      });
-      sendBody(req, body);
-    });
-  };
-
-  return {
-    fetch,
-    close() {
-      destroyAgent(httpAgent);
-      destroyAgent(httpsAgent);
-    },
-  };
+  return { httpAgent, httpsAgent };
 }
 
-async function materializeBody(init: RequestInit): Promise<{
+/**
+ * Lay out the outgoing body and derive the headers the wire needs.
+ *
+ * The caller's header record is never mutated: the encoded copy is returned
+ * alongside the body, so a retried request sees its original headers.
+ */
+function encodeRequestBody(request: WireRequest): {
   body: OutgoingBody;
-  headers: Record<string, string | string[] | undefined>;
-}> {
-  const headers = outgoingHeaders(init.headers);
-  const body = init.body;
-  if (body == null) return { body: undefined, headers };
-  if (typeof body === 'string') return { body, headers };
-  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(body)) return { body, headers };
-  if (body instanceof Uint8Array) return { body: Buffer.from(body), headers };
-  if (body instanceof ArrayBuffer) return { body: Buffer.from(body), headers };
-  if (ArrayBuffer.isView(body)) {
-    return {
-      body: Buffer.from(body.buffer, body.byteOffset, body.byteLength),
-      headers,
-    };
-  }
-  if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
-    if (!headerHas(headers, 'content-type')) {
-      headers['content-type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
-    }
-    return { body: body.toString(), headers };
-  }
-  if (typeof FormData !== 'undefined' && body instanceof FormData) {
-    const multipart = encodeMultipart(body);
+  headers: Record<string, string>;
+} {
+  const headers = { ...request.headers };
+  if (request.form) {
+    const multipart = encodeMultipart(request.form);
     headers['content-type'] = multipart.contentType;
     headers['content-length'] = String(multipart.length);
     return { body: multipart, headers };
   }
+  return { body: request.body, headers };
+}
+
+/**
+ * Translate `fetch` arguments into a wire request.
+ *
+ * Body types the wire cannot carry (raw streams) raise the same argument
+ * error `fetch` would surface through the SDK.
+ */
+function requestFromInit(input: string, init: RequestInit): WireRequest {
+  const headers: Record<string, string> = {};
+  const initHeaders = init.headers;
+  if (initHeaders) {
+    if (typeof Headers !== 'undefined' && initHeaders instanceof Headers) {
+      initHeaders.forEach((value, key) => {
+        headers[key] = value;
+      });
+    } else if (Array.isArray(initHeaders)) {
+      for (const [key, value] of initHeaders) headers[key.toLowerCase()] = value;
+    } else {
+      for (const [key, value] of Object.entries(initHeaders)) {
+        headers[key.toLowerCase()] = value;
+      }
+    }
+  }
+
+  const request: WireRequest = {
+    url: input,
+    method: (init.method ?? 'GET').toUpperCase(),
+    headers,
+    signal: init.signal ?? undefined,
+    stream: wantsStreamingBody(headers),
+  };
+
+  const body = init.body;
+  if (body == null) return request;
+  if (typeof body === 'string') {
+    request.body = body;
+    return request;
+  }
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(body)) {
+    request.body = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    return request;
+  }
+  if (body instanceof Uint8Array) {
+    request.body = body;
+    return request;
+  }
+  if (body instanceof ArrayBuffer) {
+    request.body = new Uint8Array(body);
+    return request;
+  }
+  if (ArrayBuffer.isView(body)) {
+    request.body = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    return request;
+  }
+  if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
+    if (!('content-type' in headers)) {
+      headers['content-type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+    }
+    request.body = body.toString();
+    return request;
+  }
+  if (typeof FormData !== 'undefined' && body instanceof FormData) {
+    request.form = body;
+    return request;
+  }
   throw new GravixLayerInvalidArgumentError(
     'This request body type is not supported by the Node HTTP client.',
   );
+}
+
+/**
+ * Handshake fallback must not replay a body it cannot safely resend.
+ * Strings and byte buffers are safe to send a second time; an already-encoded
+ * multipart body is not.
+ */
+function isReplayableRequest(request: WireRequest): boolean {
+  return request.form === undefined;
 }
 
 /** Write the request body, if any, and end the request. */
@@ -1052,89 +1365,56 @@ async function write(req: BodySink, chunk: Uint8Array): Promise<boolean> {
   });
 }
 
-function outgoingHeaders(init?: HeadersInit): Record<string, string | string[] | undefined> {
-  if (!init) return {};
-  if (typeof Headers !== 'undefined' && init instanceof Headers) {
-    const out: Record<string, string> = {};
-    init.forEach((value, key) => {
-      out[key] = value;
-    });
-    return out;
-  }
-  if (Array.isArray(init)) {
-    const out: Record<string, string> = {};
-    for (const [key, value] of init) out[key] = value;
-    return out;
-  }
-  return { ...(init as Record<string, string>) };
+function wantsStreamingBody(headers: Record<string, string>): boolean {
+  const accept = headers['accept'];
+  return typeof accept === 'string' && accept.toLowerCase().includes('text/event-stream');
 }
 
-function headerHas(headers: Record<string, string | string[] | undefined>, name: string): boolean {
-  const needle = name.toLowerCase();
-  return Object.keys(headers).some((key) => key.toLowerCase() === needle);
-}
-
-function incomingToHeaders(raw: NodeJS.Dict<string | string[] | undefined>): Headers {
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(raw)) {
-    if (key === undefined || value === undefined) continue;
-    if (Array.isArray(value)) {
-      for (const item of value) headers.append(key, item);
-    } else {
-      headers.set(key, value);
-    }
-  }
-  return headers;
-}
-
-function h2ToHeaders(raw: Http2Headers): Headers {
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(raw)) {
-    if (key.startsWith(':') || value === undefined) continue;
-    if (Array.isArray(value)) {
-      for (const item of value) headers.append(key, String(item));
-    } else {
-      headers.set(key, String(value));
-    }
-  }
-  return headers;
-}
-
-function wantsStreamingBody(init: RequestInit): boolean {
-  const headers = outgoingHeaders(init.headers);
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() !== 'accept' || value == null) continue;
-    const text = Array.isArray(value) ? value.join(',') : String(value);
-    if (text.toLowerCase().includes('text/event-stream')) return true;
-  }
-  return false;
-}
-
-function readNodeBody(stream: {
-  on(event: 'data', listener: (chunk: Buffer | string) => void): void;
-  once(event: 'end', listener: () => void): void;
-  once(event: 'error', listener: (error: Error) => void): void;
-}): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    stream.on('data', (chunk) => {
-      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-    });
-    stream.once('end', () => resolve(Buffer.concat(chunks)));
-    stream.once('error', reject);
-  });
+function isEmptyBody(status: number, method: string): boolean {
+  return status === 204 || status === 205 || status === 304 || method === 'HEAD';
 }
 
 /**
- * Handshake fallback must not replay a consumed stream (FormData, fetch
- * streams). Strings and byte buffers are safe to send a second time.
+ * Read a response stream to its end.
+ *
+ * `abortSource` is the request that owns the body: on HTTP/1.1 a dead socket
+ * reports on the request, not the response, so both can settle the read.
  */
-function isReplayableBody(body: BodyInit | null | undefined): boolean {
-  if (body == null) return true;
-  if (typeof body === 'string') return true;
-  if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return true;
-  if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) return true;
-  return false;
+function readNodeBody(
+  stream: {
+    on(event: 'data', listener: (chunk: Buffer | string) => void): void;
+    once(event: 'end', listener: () => void): void;
+    once(event: 'error', listener: (error: Error) => void): void;
+    once(event: 'close', listener: () => void): void;
+  },
+  abortSource?: {
+    once(event: 'error', listener: (error: Error) => void): void;
+  },
+): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let ended = false;
+    const earlyClose = () => {
+      // A reset mid-body must not leave the read waiting on an 'end' that
+      // never arrives.
+      if (!ended) reject(new Error('The response stream closed before the body completed.'));
+    };
+    stream.on('data', (chunk) => {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    });
+    stream.once('end', () => {
+      ended = true;
+      if (chunks.length === 0) {
+        resolve(EMPTY_BYTES);
+        return;
+      }
+      const buffer = Buffer.concat(chunks);
+      resolve(new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength));
+    });
+    stream.once('error', reject);
+    stream.once('close', earlyClose);
+    abortSource?.once('error', reject);
+  });
 }
 
 const H2_HANDSHAKE = 'h2handshake';
@@ -1164,4 +1444,16 @@ function isHttp2HandshakeFailure(error: unknown): boolean {
 /** True when the server negotiated a protocol other than HTTP/2. */
 function isHttp2Unsupported(error: unknown): boolean {
   return (error as { code?: unknown } | undefined)?.code === H2_NOT_NEGOTIATED;
+}
+
+// Warm the machinery while the event loop is idle so the first request does
+// not pay module-load and trust-store setup on its critical path. The handle
+// is unref'd, so this never keeps a process alive.
+if (typeof setImmediate === 'function') {
+  const idle = setImmediate(() => {
+    void nodeLibs()
+      .then(() => warmTrustStore())
+      .catch(() => undefined);
+  });
+  (idle as { unref?: () => void }).unref?.();
 }

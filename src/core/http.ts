@@ -4,17 +4,16 @@
  * Node's global `fetch` speaks HTTP/1.1 with a short keep-alive. Concurrent
  * create+exec would each pay a new TCP+TLS handshake.
  *
- * On Node the SDK opens an HTTP/1.1 keep-alive pool (IPv4, hostname SNI) with
- * enough sockets for parallel work. Pass `http2: true` to multiplex on one
- * HTTP/2 session per origin instead; origins that do not speak HTTP/2 still
- * fall back to the keep-alive pool. Bun, Deno, and edge runtimes keep their
- * native `fetch`. A caller-supplied `fetch` always wins.
+ * On Node the SDK multiplexes on one HTTP/2 session per origin (IPv4,
+ * hostname SNI); origins that do not speak HTTP/2 fall back to the HTTP/1.1
+ * keep-alive pool, and `http2: false` selects the pool directly. Bun, Deno,
+ * and edge runtimes keep their native `fetch`. A caller-supplied `fetch`
+ * always wins.
  */
 
 import { createNativeNodeFetch, type DnsLookup } from './node-http.js';
-
-/** A `fetch`-compatible function. */
-type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+import { fetchDispatch, type Dispatch } from './wire.js';
+import type { FetchLike } from './transport.js';
 
 /** Where the SDK is running, as far as the HTTP stack is concerned. */
 export type HostRuntime = 'node' | 'bun' | 'deno' | 'other';
@@ -22,8 +21,16 @@ export type HostRuntime = 'node' | 'bun' | 'deno' | 'other';
 /** A fetch implementation plus the hooks that own its connection pool. */
 export interface PooledFetch {
   fetch: FetchLike;
-  /** Best-effort: load native bindings so the first request does not. */
-  preconnect(): Promise<void>;
+  /**
+   * The same requests without WHATWG objects: status, headers, and body
+   * bytes. The transport sends API calls through this.
+   */
+  dispatch: Dispatch;
+  /**
+   * Warm the transport so the first request does not. Given an origin, this
+   * resolves DNS and, for `http2`, opens the pooled session.
+   */
+  preconnect(origin?: string): Promise<void>;
   /** Drain and close pooled sockets. Safe to call more than once. */
   close(): Promise<void>;
 }
@@ -31,8 +38,8 @@ export interface PooledFetch {
 /** Options for {@link createPooledFetch}. */
 export interface PooledFetchOptions {
   /**
-   * Enable HTTP/2 on Node HTTPS origins. Defaults to false (HTTP/1.1
-   * keep-alive). Set true to multiplex on one session per origin.
+   * Enable HTTP/2 on Node HTTPS origins. Defaults to true (one session per
+   * origin); `false` selects the HTTP/1.1 keep-alive pool.
    */
   http2?: boolean;
   /**
@@ -65,8 +72,8 @@ export function hostRuntime(): HostRuntime {
 }
 
 /**
- * Bind a fetch that, on Node, reuses a keep-alive HTTP/1.1 pool (or one
- * HTTP/2 session per origin when `http2: true`).
+ * Bind a fetch that, on Node, reuses one HTTP/2 session per origin (or the
+ * HTTP/1.1 keep-alive pool when `http2: false` or the origin lacks `h2`).
  *
  * Everywhere else this is `globalThis.fetch`. Construction does not touch
  * the network; sockets open on the first request (or {@link PooledFetch.preconnect}).
@@ -74,7 +81,12 @@ export function hostRuntime(): HostRuntime {
 export function createPooledFetch(options: PooledFetchOptions = {}): PooledFetch {
   if (hostRuntime() !== 'node') {
     const fallback = bindGlobalFetch();
-    return { fetch: fallback, preconnect: async () => undefined, close: async () => undefined };
+    return {
+      fetch: fallback,
+      dispatch: fetchDispatch(fallback),
+      preconnect: async () => undefined,
+      close: async () => undefined,
+    };
   }
 
   const native = createNativeNodeFetch({
@@ -84,11 +96,12 @@ export function createPooledFetch(options: PooledFetchOptions = {}): PooledFetch
   });
 
   // Load `node:*` modules in the background so the first real request does not.
-  void native.preconnect();
+  void native.preconnect().catch(() => undefined);
 
   return {
     fetch: native.fetch,
-    preconnect: () => native.preconnect(),
+    dispatch: native.dispatch,
+    preconnect: (origin) => native.preconnect(origin),
     close: () => native.close(),
   };
 }

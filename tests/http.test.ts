@@ -219,7 +219,7 @@ describe('pooled fetch', () => {
     }
   });
 
-  it('uses HTTP/1.1 by default even when the origin speaks HTTP/2', async () => {
+  it('uses HTTP/2 by default when the origin speaks it', async () => {
     const certs = selfSignedCerts();
 
     let sessions = 0;
@@ -244,9 +244,9 @@ describe('pooled fetch', () => {
         pooled.fetch(`https://127.0.0.1:${port}/one`, {}),
         pooled.fetch(`https://127.0.0.1:${port}/two`, {}),
       ]);
-      expect(await a.json()).toEqual({ path: '/one', version: '1.1' });
-      expect(await b.json()).toEqual({ path: '/two', version: '1.1' });
-      expect(sessions).toBe(0);
+      expect(await a.json()).toEqual({ path: '/one', version: '2.0' });
+      expect(await b.json()).toEqual({ path: '/two', version: '2.0' });
+      expect(sessions).toBe(1);
     } finally {
       await pooled.close();
       await closeServer(server);

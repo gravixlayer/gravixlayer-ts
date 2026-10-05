@@ -1,8 +1,9 @@
 /**
  * The HTTP engine shared by every resource.
  *
- * Built on the global `fetch`, so the same code runs on Node 20+, Deno, Bun,
- * Cloudflare Workers, and Vercel Edge without a platform adapter.
+ * API calls go through {@link Dispatch}, a byte-level contract any runtime can
+ * satisfy, so the same code runs on Node 20+, Deno, Bun, Cloudflare Workers,
+ * and Vercel Edge without a platform adapter.
  */
 
 import { utf8Decode } from './binary.js';
@@ -18,6 +19,7 @@ import {
 import { sleep } from './time.js';
 import { buildUrl, isAbsoluteUrl, withQuery, type QueryValue } from './url.js';
 import { endSpan, failSpan, injectContext, startClientSpan } from './telemetry.js';
+import type { Dispatch, HeaderSource, WireRequest, WireResponse } from './wire.js';
 
 /** Status codes treated as success. Mirrors the API's documented responses. */
 export const SUCCESS_STATUS: ReadonlySet<number> = new Set([200, 201, 202, 204, 207]);
@@ -79,11 +81,23 @@ export interface TransportConfig {
   timeout: number;
   maxRetries: number;
   defaultHeaders: Record<string, string>;
+  /**
+   * Send an API request. Returns status, headers, and the body as bytes or a
+   * stream, without building WHATWG `Response` objects.
+   */
+  dispatch: Dispatch;
+  /**
+   * `fetch` for calls that bypass the control plane, such as a request to a
+   * published service, which still needs the standard response shape.
+   */
   fetch: FetchLike;
   /** Drain pooled sockets. Absent when the client uses a caller-supplied fetch. */
   close?: () => Promise<void>;
-  /** Load native HTTP bindings so the first request does not wait on them. */
-  preconnect?: () => Promise<void>;
+  /**
+   * Warm the connection to an origin — on Node this opens the pooled HTTP/2
+   * session or resolves DNS — so the first request does not pay for it.
+   */
+  preconnect?: (origin?: string) => Promise<void>;
 }
 
 const DEFAULT_SERVICE = 'v1/inference';
@@ -93,7 +107,11 @@ const DEFAULT_SERVICE = 'v1/inference';
  * signal until it is read or discarded, so a stalled body cannot outlive them.
  */
 interface Reply {
-  response: Response;
+  status: number;
+  statusText: string;
+  headers: HeaderSource;
+  /** The live body of a streamed response; `null` otherwise. */
+  stream: ReadableStream<Uint8Array> | null;
   /** Read the body in full, then release the attempt. */
   read(): Promise<Uint8Array>;
   /** Drop the body unread and release the attempt. */
@@ -116,7 +134,7 @@ async function backoffSleep(ms: number, signal?: AbortSignal): Promise<void> {
  * extension. The result is clamped so a misbehaving upstream cannot stall a
  * client for an unbounded time.
  */
-export function parseRetryAfter(headers: Headers): number | null {
+export function parseRetryAfter(headers: HeaderSource): number | null {
   const ms = headers.get('retry-after-ms');
   if (ms) {
     const parsed = Number(ms);
@@ -150,7 +168,7 @@ export function backoffMs(attempt: number): number {
 }
 
 /** Collect response headers into a plain lower-cased object. */
-function headersToObject(headers: Headers): Record<string, string> {
+function headersToObject(headers: HeaderSource): Record<string, string> {
   const out: Record<string, string> = {};
   headers.forEach((value, key) => {
     out[key.toLowerCase()] = value;
@@ -225,12 +243,18 @@ export class Transport {
   }
 
   /**
-   * Load native HTTP bindings so the next request does not wait on them.
+   * Warm the connection to the API so the next request does not pay for it.
    *
    * Does not send an application request. Credential checks stay on `warmup()`.
    */
   async preconnect(): Promise<void> {
-    await this.config.preconnect?.();
+    let origin: string | undefined;
+    try {
+      origin = new URL(this.config.baseUrl).origin;
+    } catch {
+      origin = undefined;
+    }
+    await this.config.preconnect?.(origin);
   }
 
   /** Drain pooled sockets. Safe to call more than once. No-op without a pool. */
@@ -241,7 +265,7 @@ export class Transport {
   /** Send a request and parse the JSON response. */
   async request<T>(spec: RequestSpec): Promise<T> {
     const reply = await this.send(spec, false);
-    return parseJson<T>(reply.response, await reply.read()) as T;
+    return parseJson<T>(reply.status, reply.headers, await reply.read()) as T;
   }
 
   /** Send a request and discard the response body. */
@@ -265,15 +289,14 @@ export class Transport {
    */
   async requestStream(spec: RequestSpec): Promise<ReadableStream<Uint8Array>> {
     const reply = await this.send(spec, true);
-    const { response } = reply;
-    if (!response.body) {
+    if (!reply.stream) {
       reply.discard();
       throw new GravixLayerError('The server returned an empty streaming response.', {
-        status: response.status,
-        headers: headersToObject(response.headers),
+        status: reply.status,
+        headers: headersToObject(reply.headers),
       });
     }
-    return response.body;
+    return reply.stream;
   }
 
   /** True when an absolute URL points anywhere other than the API's origin. */
@@ -313,14 +336,10 @@ export class Transport {
     for (const [key, value] of Object.entries(options.headers ?? {})) {
       headers[key.toLowerCase()] = value;
     }
-    // `fetch` must choose the multipart boundary itself.
+    // The multipart boundary is chosen where the body is encoded.
     if (spec.form) delete headers['content-type'];
 
-    const body: BodyInit | undefined = spec.form
-      ? spec.form
-      : spec.body !== undefined
-        ? JSON.stringify(spec.body)
-        : undefined;
+    const body = spec.body !== undefined && !spec.form ? JSON.stringify(spec.body) : undefined;
 
     const span = startClientSpan(method, url);
     if (span) injectContext(headers);
@@ -331,12 +350,13 @@ export class Transport {
         method,
         headers,
         body,
+        form: spec.form,
         stream,
         timeout,
         maxRetries,
         userSignal,
       });
-      span?.setAttribute('http.response.status_code', reply.response.status);
+      span?.setAttribute('http.response.status_code', reply.status);
       return reply;
     } catch (error) {
       failSpan(span, error);
@@ -350,13 +370,14 @@ export class Transport {
     url: string;
     method: string;
     headers: Record<string, string>;
-    body: BodyInit | undefined;
+    body: string | undefined;
+    form: FormData | undefined;
     stream: boolean;
     timeout: number;
     maxRetries: number;
     userSignal: AbortSignal | undefined;
   }): Promise<Reply> {
-    const { url, method, headers, body, stream, timeout, maxRetries, userSignal } = args;
+    const { url, method, headers, body, form, stream, timeout, maxRetries, userSignal } = args;
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -371,6 +392,7 @@ export class Transport {
           method,
           headers,
           body,
+          form,
           stream,
           timeout,
           userSignal,
@@ -388,7 +410,7 @@ export class Transport {
         throw error;
       }
 
-      const { status } = reply.response;
+      const { status } = reply;
       if (SUCCESS_STATUS.has(status)) return reply;
 
       if (
@@ -396,7 +418,7 @@ export class Transport {
         (status === 429 || REPLAYABLE_METHOD.has(method)) &&
         attempt < maxRetries
       ) {
-        const retryAfter = parseRetryAfter(reply.response.headers);
+        const retryAfter = parseRetryAfter(reply.headers);
         // Release the connection without blocking the backoff on it.
         reply.discard();
         await backoffSleep(retryAfter ?? backoffMs(attempt), userSignal);
@@ -414,12 +436,13 @@ export class Transport {
     url: string;
     method: string;
     headers: Record<string, string>;
-    body: BodyInit | undefined;
+    body: string | undefined;
+    form: FormData | undefined;
     stream: boolean;
     timeout: number;
     userSignal: AbortSignal | undefined;
   }): Promise<Reply> {
-    const { url, method, headers, body, stream, timeout, userSignal } = args;
+    const { url, method, headers, body, form, stream, timeout, userSignal } = args;
 
     const controller = new AbortController();
     let timedOut = false;
@@ -461,38 +484,41 @@ export class Transport {
       );
     };
 
-    let response: Response;
+    const wire: WireRequest = {
+      url,
+      method,
+      headers,
+      body,
+      form,
+      signal: controller.signal,
+      stream,
+    };
+
+    let wireReply: WireResponse;
     try {
-      response = await this.config.fetch(url, {
-        method,
-        headers,
-        body: body ?? null,
-        signal: controller.signal,
-        // Streaming responses must not be buffered by an intermediate cache.
-        ...(stream ? { cache: 'no-store' as RequestCache } : {}),
-      });
+      wireReply = await this.config.dispatch(wire);
     } catch (error) {
       release();
       throw failure(error);
     }
 
-    if (stream && SUCCESS_STATUS.has(response.status) && response.body) {
+    let liveStream: ReadableStream<Uint8Array> | null = null;
+    if (stream && SUCCESS_STATUS.has(wireReply.status) && wireReply.body) {
       // Headers arrived, so the timeout has done its job. Teardown is
       // deferred until the body is drained or cancelled, which keeps the
       // caller's abort signal wired to the live stream.
       if (timer !== undefined) clearTimeout(timer);
-      response = new Response(withStreamCleanup(response.body, release, failure), {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
+      liveStream = withStreamCleanup(wireReply.body, release, failure);
     }
 
     return {
-      response,
+      status: wireReply.status,
+      statusText: wireReply.statusText,
+      headers: wireReply.headers,
+      stream: liveStream,
       read: async () => {
         try {
-          return new Uint8Array(await response.arrayBuffer());
+          return await wireReply.bytes();
         } catch (error) {
           throw failure(error);
         } finally {
@@ -501,23 +527,23 @@ export class Transport {
       },
       discard: () => {
         release();
-        void response.body?.cancel().catch(() => undefined);
+        wireReply.cancel();
       },
     };
   }
 }
 
 /** Parse a JSON body, tolerating `204` and other empty responses. */
-function parseJson<T>(response: Response, bytes: Uint8Array): T | undefined {
-  if (response.status === 204) return undefined;
+function parseJson<T>(status: number, headers: HeaderSource, bytes: Uint8Array): T | undefined {
+  if (status === 204) return undefined;
   const text = utf8Decode(bytes);
   if (text.trim() === '') return undefined;
   try {
     return JSON.parse(text) as T;
   } catch {
     throw new GravixLayerError('The server returned a malformed JSON response.', {
-      status: response.status,
-      headers: headersToObject(response.headers),
+      status,
+      headers: headersToObject(headers),
       body: text,
     });
   }
@@ -525,7 +551,6 @@ function parseJson<T>(response: Response, bytes: Uint8Array): T | undefined {
 
 /** Build the error for a non-success response, consuming its body. */
 async function errorFromReply(reply: Reply): Promise<GravixLayerError> {
-  const { response } = reply;
   const bytes = await reply.read().catch(() => undefined);
   const text = bytes ? utf8Decode(bytes) : '';
   let parsed: unknown;
@@ -535,8 +560,8 @@ async function errorFromReply(reply: Reply): Promise<GravixLayerError> {
     parsed = undefined;
   }
 
-  return errorFromStatus(response.status, formatErrorMessage(text, parsed), {
-    headers: headersToObject(response.headers),
+  return errorFromStatus(reply.status, formatErrorMessage(text, parsed), {
+    headers: headersToObject(reply.headers),
     body: parsed ?? text,
   });
 }

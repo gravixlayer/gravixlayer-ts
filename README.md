@@ -33,8 +33,10 @@ Cloud and region default to `aws` / `us-east-1`. Override with
 ## Requirements
 
 Node 20 or newer. The SDK is built on `fetch` and web streams, so it also runs
-on Deno, Bun, and edge runtimes. On Node, HTTPS reuses a keep-alive HTTP/1.1
-pool. Pass `http2: true` to multiplex requests on one HTTP/2 session per origin.
+on Deno, Bun, and edge runtimes. On Node, HTTPS requests multiplex on one
+HTTP/2 session per origin by default. Pass `http2: false` to use a keep-alive
+HTTP/1.1 pool instead; origins that do not offer HTTP/2 fall back to it
+automatically.
 
 Browsers are refused by default — a browser build would hand your API key to
 every visitor. Call the API from your own server.
@@ -57,12 +59,14 @@ const client = new GravixLayer({
 | `region` | `GRAVIXLAYER_REGION`, then `us-east-1` | Runtimes and template builds. |
 | `timeout` | `60000` | Per request, in milliseconds. `0` disables it. |
 | `maxRetries` | `3` | Transient failures only. |
-| `http2` | `false` | Node only. HTTP/2 multiplexing; default is HTTP/1.1 keep-alive. |
+| `http2` | `true` | Node only. One HTTP/2 session per origin; `false` selects HTTP/1.1 keep-alive. |
 | `fetch` | Node pooled `fetch`, else global `fetch` | For a proxy, a custom agent, or tests. |
 
-Construct the client once and reuse it. On Node, one client keeps a pooled
-HTTP connection to the API. Call `await client.warmup()` at startup if you
-want TCP and TLS paid before the first request that matters.
+Construct the client once and reuse it. On Node, the SDK keeps pooled
+connections to the API, and the HTTP/2 session is shared between client
+instances in the same process — a second client never pays a second handshake.
+Connections open lazily on the first request; call `await client.warmup()` if
+you want the connection and credentials verified before a request that matters.
 Call `await client.close()` when a short-lived process is done so keep-alive
 sockets are destroyed and the process can exit.
 
