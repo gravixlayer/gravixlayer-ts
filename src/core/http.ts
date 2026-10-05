@@ -52,6 +52,11 @@ export interface PooledFetchOptions {
    * Not part of the public client.
    */
   lookup?: DnsLookup;
+  /**
+   * Origin to resolve while the transport loads. The lookup overlaps module
+   * initialization; it never opens a socket. Not part of the public client.
+   */
+  origin?: string;
 }
 
 interface NodeProcess {
@@ -93,6 +98,7 @@ export function createPooledFetch(options: PooledFetchOptions = {}): PooledFetch
     http2: options.http2,
     rejectUnauthorized: options.rejectUnauthorized,
     lookup: options.lookup,
+    origin: options.origin,
   });
 
   // Load `node:*` modules in the background so the first real request does not.

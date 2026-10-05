@@ -123,6 +123,164 @@ describe('pooled fetch', () => {
     }
   });
 
+  it('resolves the origin while the transport loads', async () => {
+    const seen: Array<{ hostname: string; family?: unknown; all?: unknown }> = [];
+    const pooled = createPooledFetch({
+      http2: false,
+      origin: 'http://prefetch.test',
+      lookup: (hostname, options, callback) => {
+        const opts =
+          typeof options === 'function' ? {} : ((options as Record<string, unknown>) ?? {});
+        seen.push({ hostname, family: opts.family, all: opts.all });
+        const cb = (typeof options === 'function' ? options : callback) as DnsLookupCallback;
+        queueMicrotask(() => cb(null, [{ address: '10.0.0.1', family: 4 }]));
+      },
+    });
+
+    try {
+      // The lookup fires inside construction, ahead of any request.
+      expect(seen).toEqual([{ hostname: 'prefetch.test', family: 4, all: true }]);
+    } finally {
+      await pooled.close();
+    }
+  });
+
+  it('serves the first request from the prefetched answer', async () => {
+    const server = createHttpServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const seen: string[] = [];
+    const pooled = createPooledFetch({
+      http2: false,
+      origin: 'http://prefetch.test',
+      lookup: (hostname, options, callback) => {
+        seen.push(hostname);
+        const cb = (typeof options === 'function' ? options : callback) as (
+          err: NodeJS.ErrnoException | null,
+          addresses: Array<{ address: string; family: number }>,
+        ) => void;
+        queueMicrotask(() => cb(null, [{ address: '127.0.0.1', family: 4 }]));
+      },
+    });
+
+    try {
+      const response = await pooled.fetch(`http://prefetch.test:${port}/`, {});
+      expect(response.status).toBe(200);
+      await response.body?.cancel().catch(() => undefined);
+      // The construction-time answer served the request; no second lookup ran.
+      expect(seen).toEqual(['prefetch.test']);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+    }
+  });
+
+  it('prefetches the origin for an HTTP/2 session', async () => {
+    const certs = selfSignedCerts();
+    const server = createSecureServer(certs);
+    server.on('stream', (stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+      stream.end(JSON.stringify({ ok: true }));
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const seen: string[] = [];
+    const pooled = createPooledFetch({
+      origin: 'https://prefetch.test',
+      rejectUnauthorized: false,
+      lookup: (hostname, options, callback) => {
+        seen.push(hostname);
+        const cb = (typeof options === 'function' ? options : callback) as (
+          err: NodeJS.ErrnoException | null,
+          addresses: Array<{ address: string; family: number }>,
+        ) => void;
+        queueMicrotask(() => cb(null, [{ address: '127.0.0.1', family: 4 }]));
+      },
+    });
+
+    try {
+      const response = await pooled.fetch(`https://prefetch.test:${port}/`, {});
+      expect(response.status).toBe(200);
+      await response.body?.cancel().catch(() => undefined);
+      expect(seen).toEqual(['prefetch.test']);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('looks the host up again when the origin prefetch fails', async () => {
+    const server = createHttpServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const { lookup } = await import('node:dns');
+    const seen: string[] = [];
+    let failFirst = true;
+    const pooled = createPooledFetch({
+      http2: false,
+      origin: 'http://localhost',
+      lookup: (hostname, options, callback) => {
+        seen.push(hostname);
+        const cb = (typeof options === 'function' ? options : callback) as DnsLookupCallback;
+        const shouldFail = failFirst;
+        failFirst = false;
+        queueMicrotask(() => {
+          if (shouldFail) {
+            cb(new Error('getaddrinfo ENOTFOUND'), undefined);
+            return;
+          }
+          lookup(
+            hostname,
+            { family: 4, all: true },
+            cb as (
+              err: NodeJS.ErrnoException | null,
+              addresses: Array<{ address: string; family: number }>,
+            ) => void,
+          );
+        });
+      },
+    });
+
+    try {
+      const response = await pooled.fetch(`http://localhost:${port}/`, {});
+      expect(response.status).toBe(200);
+      await response.body?.cancel().catch(() => undefined);
+      // The failed prefetch is not cached: the request retried the lookup.
+      expect(seen).toEqual(['localhost', 'localhost']);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+    }
+  });
+
+  it('skips the origin lookup for IP literals and bad URLs', async () => {
+    const seen: string[] = [];
+    const lookup = (hostname: string) => {
+      seen.push(hostname);
+    };
+    const literal = createPooledFetch({ origin: 'http://127.0.0.1:8080', lookup });
+    const invalid = createPooledFetch({ origin: 'not a url', lookup });
+    const hostless = createPooledFetch({ origin: 'file:///etc/hosts', lookup });
+    const plain = createPooledFetch({ lookup });
+
+    try {
+      await expect(plain.preconnect('not a url')).resolves.toBeUndefined();
+      expect(seen).toEqual([]);
+    } finally {
+      await literal.close();
+      await invalid.close();
+      await hostless.close();
+      await plain.close();
+    }
+  });
+
   it('opens parallel HTTP/1.1 sockets for concurrent requests', async () => {
     let connections = 0;
     let inFlight = 0;

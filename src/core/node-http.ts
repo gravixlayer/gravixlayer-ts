@@ -17,9 +17,10 @@
  * GOAWAY is not waited on.
  *
  * `node:*` modules load through `process.getBuiltinModule`, which resolves
- * synchronously without a dynamic import. On runtimes that predate it, the
- * client falls back to `import()` so Bun, Deno, and edge bundles never
- * evaluate them until a request needs them.
+ * synchronously without a dynamic import, and the load is kicked while this
+ * module evaluates so the first client never waits on it. On runtimes that
+ * predate it the client falls back to `import()`, which resolves in the
+ * background all the same.
  */
 
 import { utf8Encode } from './binary.js';
@@ -55,6 +56,11 @@ export interface NativeNodeFetchOptions {
    * Not part of the public client.
    */
   lookup?: DnsLookup;
+  /**
+   * Origin to resolve while the transport loads. The lookup overlaps module
+   * initialization; it never opens a socket. Not part of the public client.
+   */
+  origin?: string;
 }
 
 export interface NativeNodeFetch {
@@ -333,20 +339,27 @@ let libs: NodeLibs | undefined;
 let importing: Promise<NodeLibs> | undefined;
 
 /**
+ * `process.getBuiltinModule`, bound, where the runtime offers it.
+ *
+ * Resolving a built-in this way is synchronous — no promise, no loader round
+ * trip — so work queued behind it never waits on `import()`.
+ */
+const builtinModule = (): ((id: string) => unknown) | undefined =>
+  typeof process !== 'undefined' && typeof process.getBuiltinModule === 'function'
+    ? (process.getBuiltinModule.bind(process) as (id: string) => unknown)
+    : undefined;
+
+/**
  * Load the Node modules the transport needs.
  *
- * `process.getBuiltinModule` resolves a built-in synchronously — no promise,
- * no loader round trip — so the first request does not wait on `import()`.
- * Runtimes without it (older Node, Deno) take the dynamic-import path, and a
- * failure rejects only the request that needed the modules.
+ * On runtimes without `getBuiltinModule` (older Node, Deno) the dynamic
+ * import path resolves them, and a failure rejects only the request that
+ * needed the modules.
  */
 function nodeLibs(): Promise<NodeLibs> {
   if (libs) return Promise.resolve(libs);
 
-  const builtin =
-    typeof process !== 'undefined' && typeof process.getBuiltinModule === 'function'
-      ? process.getBuiltinModule.bind(process)
-      : undefined;
+  const builtin = builtinModule();
   if (builtin) {
     try {
       const stream = builtin('node:stream') as {
@@ -396,6 +409,54 @@ function nodeLibs(): Promise<NodeLibs> {
     },
   );
   return importing;
+}
+
+let dnsModule: DnsLib | undefined;
+let dnsImporting: Promise<DnsLib> | undefined;
+
+/**
+ * `node:dns`, synchronously where the runtime allows it.
+ *
+ * A lookup fired while a client is being built must start immediately — a
+ * promise hop would queue it behind the heavier {@link nodeLibs} load it is
+ * meant to overlap. Returns undefined where only the dynamic import works;
+ * {@link dnsLib} covers that case.
+ */
+function syncDns(): DnsLib | undefined {
+  if (dnsModule) return dnsModule;
+  if (libs?.dns) {
+    dnsModule = libs.dns;
+    return dnsModule;
+  }
+  const builtin = builtinModule();
+  if (!builtin) return undefined;
+  try {
+    dnsModule = builtin('node:dns') as DnsLib;
+    return dnsModule;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `node:dns` alone, for runtimes where {@link syncDns} cannot resolve it. */
+function dnsLib(): Promise<DnsLib> {
+  const loaded = syncDns();
+  if (loaded) return Promise.resolve(loaded);
+
+  dnsImporting ??= import('node:dns').then(
+    (dns) => {
+      dnsModule = dns as unknown as DnsLib;
+      return dnsModule;
+    },
+    (error: unknown) => {
+      dnsImporting = undefined;
+      throw new GravixLayerInvalidArgumentError(
+        'The GravixLayer client could not load the Node DNS module.',
+        { cause: error },
+      );
+    },
+  );
+  return dnsImporting;
 }
 
 /**
@@ -463,9 +524,17 @@ function createPool(opts: { rejectUnauthorized: boolean; lookup?: DnsLookup }): 
         lookup(hostname, { family: 4, all: true }, callback);
         return;
       }
-      void nodeLibs().then(
-        (node) => {
-          node.dns.lookup(hostname, { family: 4, all: true }, callback);
+      // `node:dns` alone is enough here; reaching for it directly keeps a
+      // lookup fired during client construction ahead of the heavier module
+      // load instead of queued behind it.
+      const dns = syncDns();
+      if (dns) {
+        dns.lookup(hostname, { family: 4, all: true }, callback);
+        return;
+      }
+      void dnsLib().then(
+        (loaded) => {
+          loaded.lookup(hostname, { family: 4, all: true }, callback);
         },
         (error: unknown) =>
           callback(error instanceof Error ? error : new Error(String(error)), undefined),
@@ -516,6 +585,20 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
   const http2Wanted = options.http2 !== false;
   const rejectUnauthorized = options.rejectUnauthorized !== false;
   const pool = acquirePool({ rejectUnauthorized, lookup: options.lookup });
+
+  // The hostname lookup needs only `node:dns`, so it starts before the
+  // heavier module load and finishes inside the gap between constructing a
+  // client and its first request. A failed answer is not cached: the real
+  // request simply looks the host up again.
+  if (options.origin !== undefined) {
+    let hostname: string | undefined;
+    try {
+      hostname = new URL(options.origin).hostname;
+    } catch {
+      hostname = undefined;
+    }
+    if (hostname) void pool.addresses.resolveIpv4(hostname).catch(() => undefined);
+  }
 
   let closed = false;
   let h1: { agents: NodeH1Agents; node: NodeLibs } | undefined;
@@ -652,19 +735,26 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     fetch,
     dispatch,
     async preconnect(origin) {
+      let url: URL | undefined;
+      if (origin !== undefined) {
+        try {
+          url = new URL(origin);
+        } catch {
+          url = undefined;
+        }
+      }
+      // DNS is the one cost every protocol shares and needs only `node:dns`:
+      // it resolves next to the module load below, not after it. The HTTP/2
+      // path reuses this same in-flight lookup.
+      const resolving = url === undefined ? undefined : pool.addresses.resolveIpv4(url.hostname);
+      // A `closed` early return below skips `await resolving`; the guard keeps
+      // a failed lookup from surfacing as an unhandled rejection.
+      resolving?.catch(() => undefined);
       await nodeLibs();
       warmTrustStore();
-      if (closed || !origin) return;
-      let url: URL;
+      if (closed || url === undefined) return;
       try {
-        url = new URL(origin);
-      } catch {
-        return;
-      }
-      try {
-        // DNS is the one cost every protocol shares; resolve it up front. The
-        // HTTP/2 path below reuses this same in-flight lookup.
-        await pool.addresses.resolveIpv4(url.hostname);
+        await resolving;
         if (http2Wanted && url.protocol === 'https:' && !pool.h1Only.has(url.origin)) {
           const handle = await sessionFor(url.origin, url);
           if (closed) dropH2(handle.session, handle.socket);
@@ -875,6 +965,9 @@ async function connectH2(
   // DNS runs on the libuv thread pool, so the trust store is built while the
   // lookup is in flight instead of sitting between it and the handshake.
   const resolving = opts.addresses.resolveIpv4(url.hostname);
+  // If `nodeLibs` rejects, `resolving` is never awaited; the guard keeps a
+  // failed lookup from surfacing as an unhandled rejection.
+  resolving.catch(() => undefined);
   const node = await nodeLibs();
   warmTrustStore();
   const address = await resolving;
@@ -1446,14 +1539,15 @@ function isHttp2Unsupported(error: unknown): boolean {
   return (error as { code?: unknown } | undefined)?.code === H2_NOT_NEGOTIATED;
 }
 
-// Warm the machinery while the event loop is idle so the first request does
-// not pay module-load and trust-store setup on its critical path. The handle
-// is unref'd, so this never keeps a process alive.
-if (typeof setImmediate === 'function') {
-  const idle = setImmediate(() => {
-    void nodeLibs()
-      .then(() => warmTrustStore())
-      .catch(() => undefined);
-  });
-  (idle as { unref?: () => void }).unref?.();
+// Import-time warm.
+//
+// The first `getBuiltinModule` call for each `node:*` module runs real
+// initialization — the HTTP/2 parser, the TLS wrapper — so the package pays
+// it while it evaluates rather than inside the first client. On runtimes
+// that take the dynamic-import path the load resolves in the background all
+// the same, and nothing here holds a process open.
+if (typeof process !== 'undefined' && typeof process.versions?.node === 'string') {
+  void nodeLibs()
+    .then(() => warmTrustStore())
+    .catch(() => undefined);
 }

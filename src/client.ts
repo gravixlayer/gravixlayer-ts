@@ -200,7 +200,19 @@ export class GravixLayer implements ClientContext {
           'This runtime has no global fetch. Use Node 20 or newer, or pass a `fetch` implementation.',
         );
       }
-      const pooled = createPooledFetch({ http2: options.http2 !== false });
+      // Resolving the API host while the transport loads overlaps the module
+      // initialization instead of sitting inside the first request. A URL
+      // that fails to parse just skips the lookup.
+      let poolOrigin: string | undefined;
+      try {
+        poolOrigin = new URL(baseUrl).origin;
+      } catch {
+        poolOrigin = undefined;
+      }
+      const pooled = createPooledFetch({
+        http2: options.http2 !== false,
+        origin: poolOrigin,
+      });
       fetchImpl = pooled.fetch;
       dispatchImpl = pooled.dispatch;
       preconnect = (origin) => pooled.preconnect(origin);

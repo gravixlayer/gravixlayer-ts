@@ -5,6 +5,18 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.28] - 2026-10-05 
+### Changed
+- Node transport machinery now warms while the package is imported instead of
+  inside the first client, so module initialization no longer sits on the
+  first request's critical path.
+- Constructing a client resolves the API hostname while the transport loads.
+  The lookup overlaps that work, and the answer serves the first request;
+  a failed lookup is never cached, so requests unaffected by it simply look
+  the host up again.
+- `preconnect()`/`warmup()` resolve the origin in parallel with module
+  loading rather than after it.
+
 ## [0.1.27] - 2026-10-05 
 ### Changed
 - `http2` now defaults to `true` on Node. Requests multiplex on one HTTP/2
