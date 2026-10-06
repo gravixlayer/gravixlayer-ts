@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPooledFetch, hostRuntime } from '../src/core/http.js';
 import {
   createAddressBook,
+  queryIpv4,
   wrapIpv4Lookup,
   type DnsLookupCallback,
 } from '../src/core/node-http.js';
@@ -569,6 +570,100 @@ describe('pooled fetch', () => {
     }
   });
 
+  it('spreads a deep burst over several HTTP/2 sessions', async () => {
+    const certs = selfSignedCerts();
+    let sessions = 0;
+    const server = createSecureServer(certs);
+    server.on('session', () => {
+      sessions += 1;
+    });
+    server.on('stream', (stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+      stream.end(JSON.stringify({ via: 'h2' }));
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
+
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 16 }, (_, i) =>
+          pooled.fetch(`https://127.0.0.1:${port}/req-${i}`, {}),
+        ),
+      );
+      for (const response of responses) {
+        expect(await response.json()).toEqual({ via: 'h2' });
+      }
+      // Past four in flight the pool opens lanes, capped at four sessions.
+      expect(sessions).toBe(4);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('warms the whole lane pool once a burst is proven', async () => {
+    const certs = selfSignedCerts();
+    let sessions = 0;
+    const server = createSecureServer(certs);
+    server.on('session', () => {
+      sessions += 1;
+    });
+    server.on('stream', (stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+      stream.end(JSON.stringify({ via: 'h2' }));
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
+
+    try {
+      // The fifth in-flight request proves the burst: the pool fills at once.
+      const responses = await Promise.all(
+        Array.from({ length: 5 }, (_, i) => pooled.fetch(`https://127.0.0.1:${port}/req-${i}`, {})),
+      );
+      for (const response of responses) {
+        expect(await response.json()).toEqual({ via: 'h2' });
+      }
+      // The extra lanes warm in the background; their sessions land a tick
+      // after the burst's responses.
+      await vi.waitFor(() => expect(sessions).toBe(4));
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps sequential requests on one HTTP/2 session', async () => {
+    const certs = selfSignedCerts();
+    let sessions = 0;
+    const server = createSecureServer(certs);
+    server.on('session', () => {
+      sessions += 1;
+    });
+    server.on('stream', (stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+      stream.end(JSON.stringify({ via: 'h2' }));
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
+
+    try {
+      for (let i = 0; i < 6; i++) {
+        const response = await pooled.fetch(`https://127.0.0.1:${port}/req-${i}`, {});
+        expect(await response.json()).toEqual({ via: 'h2' });
+      }
+      expect(sessions).toBe(1);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps HTTP/2 on one origin after another origin falls back to HTTP/1.1', async () => {
     const h1Certs = selfSignedCerts();
     const h2Certs = selfSignedCerts();
@@ -750,14 +845,32 @@ describe('address book', () => {
     await expect(addresses.resolveIpv4('api.test')).resolves.toBe('10.0.0.2');
   });
 
-  it('ignores a demotion for an address that is not in use', async () => {
+  it('ignores a demotion for an unknown host or unlisted address', async () => {
     const { addresses, calls } = scriptedBook([['10.0.0.1', '10.0.0.2']]);
     await addresses.resolveIpv4('api.test');
 
-    addresses.demote('api.test', '10.0.0.2');
+    addresses.demote('api.test', '10.0.0.9');
     addresses.demote('other.test', '10.0.0.1');
     await expect(addresses.resolveIpv4('api.test')).resolves.toBe('10.0.0.1');
     expect(calls).toHaveLength(1);
+  });
+
+  it('moves a demoted non-head address to the back', async () => {
+    const { addresses } = scriptedBook([['10.0.0.1', '10.0.0.2', '10.0.0.3']]);
+    await addresses.resolveIpv4('api.test');
+
+    addresses.demote('api.test', '10.0.0.2');
+    await expect(addresses.resolveIpv4All('api.test')).resolves.toEqual([
+      '10.0.0.1',
+      '10.0.0.3',
+      '10.0.0.2',
+    ]);
+  });
+
+  it('returns every resolved address from resolveIpv4All', async () => {
+    const { addresses } = scriptedBook([['10.0.0.1', '10.0.0.2']]);
+    await expect(addresses.resolveIpv4All('api.test')).resolves.toEqual(['10.0.0.1', '10.0.0.2']);
+    await expect(addresses.resolveIpv4All('10.0.0.7')).resolves.toEqual(['10.0.0.7']);
   });
 
   it('forgets every answer on clear', async () => {
@@ -769,8 +882,93 @@ describe('address book', () => {
   });
 });
 
+describe('queryIpv4', () => {
+  it('returns c-ares A records without calling getaddrinfo', () => {
+    const calls: string[] = [];
+    queryIpv4(
+      {
+        resolve4(_hostname, callback) {
+          calls.push('resolve4');
+          callback(null, ['10.0.0.1', '10.0.0.2']);
+        },
+        lookup() {
+          calls.push('lookup');
+        },
+      },
+      'api.gravixlayer.ai',
+      (err, answer) => {
+        expect(err).toBeNull();
+        expect(answer).toEqual(['10.0.0.1', '10.0.0.2']);
+      },
+    );
+    expect(calls).toEqual(['resolve4']);
+  });
+
+  it('falls back to getaddrinfo when c-ares has no A record', () => {
+    const calls: string[] = [];
+    queryIpv4(
+      {
+        resolve4(_hostname, callback) {
+          calls.push('resolve4');
+          callback(Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' }), []);
+        },
+        lookup(_hostname, _options, callback) {
+          calls.push('lookup');
+          (callback as DnsLookupCallback)(null, [{ address: '127.0.0.1', family: 4 }]);
+        },
+      },
+      'localhost',
+      (err, answer) => {
+        expect(err).toBeNull();
+        expect(answer).toEqual([{ address: '127.0.0.1', family: 4 }]);
+      },
+    );
+    expect(calls).toEqual(['resolve4', 'lookup']);
+  });
+
+  it('does not fall back when the A query times out', () => {
+    const calls: string[] = [];
+    const failure = Object.assign(new Error('ETIMEOUT'), { code: 'ETIMEOUT' });
+    queryIpv4(
+      {
+        resolve4(_hostname, callback) {
+          calls.push('resolve4');
+          callback(failure, []);
+        },
+        lookup() {
+          calls.push('lookup');
+        },
+      },
+      'api.gravixlayer.ai',
+      (err) => {
+        expect(err).toBe(failure);
+      },
+    );
+    expect(calls).toEqual(['resolve4']);
+  });
+
+  it('uses getaddrinfo when c-ares is unavailable', () => {
+    const calls: string[] = [];
+    queryIpv4(
+      {
+        lookup(_hostname, options, callback) {
+          calls.push('lookup');
+          expect(options).toEqual({ family: 4, all: true });
+          (callback as DnsLookupCallback)(null, ['10.1.1.1']);
+        },
+      },
+      'api.gravixlayer.ai',
+      (err, answer) => {
+        expect(err).toBeNull();
+        expect(answer).toEqual(['10.1.1.1']);
+      },
+    );
+    expect(calls).toEqual(['lookup']);
+  });
+});
+
 describe('system resolver', () => {
-  it('resolves a hostname through the system resolver when none is injected', async () => {
+  it('reaches a hosts-file name when the A query misses', async () => {
     const server = createHttpServer((req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ host: req.headers.host }));
@@ -780,6 +978,8 @@ describe('system resolver', () => {
     const pooled = createPooledFetch({ http2: false });
 
     try {
+      // `localhost` is not a DNS A record. The c-ares miss must fall back to
+      // getaddrinfo, which reads the hosts file.
       const response = await pooled.fetch(`http://localhost:${port}/`, {});
       expect(await response.json()).toEqual({ host: `localhost:${port}` });
     } finally {

@@ -83,18 +83,19 @@ export interface ClientOptions {
    * Replacement for the global `fetch`.
    *
    * Useful for a custom agent, a proxy, or deterministic tests. When omitted
-   * on Node, the SDK multiplexes requests on one HTTP/2 session per origin
-   * (or an HTTP/1.1 keep-alive pool when {@link ClientOptions.http2} is
-   * false). Closing the client destroys those sockets immediately so the
-   * process can exit.
+   * on Node, the SDK multiplexes requests over a small HTTP/2 session pool
+   * per origin (or an HTTP/1.1 keep-alive pool when
+   * {@link ClientOptions.http2} is false). Closing the client destroys those
+   * sockets immediately so the process can exit.
    */
   fetch?: FetchLike;
   /**
    * Use HTTP/2 multiplexing on Node.
    *
-   * Defaults to `true`: one HTTP/2 session per origin, shared across client
-   * instances, with an automatic fall back to HTTP/1.1 keep-alive when an
-   * origin does not offer HTTP/2. Pass `false` to always use HTTP/1.1
+   * Defaults to `true`: a small HTTP/2 session pool per origin, shared
+   * across client instances, that spreads bursts over several connections
+   * while a quiet client keeps one. Falls back to HTTP/1.1 keep-alive when
+   * an origin does not offer HTTP/2. Pass `false` to always use HTTP/1.1
    * keep-alive. Ignored when a custom `fetch` is supplied.
    */
   http2?: boolean;
@@ -251,11 +252,12 @@ export class GravixLayer implements ClientContext {
   }
 
   /**
-   * Open a connection to the API ahead of the first real request.
+   * Open connections to the API ahead of the first real request.
    *
-   * Loads native HTTP bindings, then sends one small authenticated request so
-   * that TCP, TLS, and the pooled connection are already ready when latency
-   * matters. Most useful right before issuing several requests at once.
+   * Loads native HTTP bindings, opens the pooled HTTP/2 sessions, then sends
+   * one small authenticated request so TCP, TLS, and the pooled connections
+   * are already ready when latency matters. Most useful right before issuing
+   * several requests at once.
    *
    * Throws the same errors any request would, which makes it a cheap way to
    * verify credentials at startup.

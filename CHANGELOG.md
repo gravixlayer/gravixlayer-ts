@@ -5,6 +5,33 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `examples/templates/dockerfiles/` — ready-to-build Dockerfile set matching
+  the Python SDK: `base`, `dax`, `agent-codex`, and `agent-claude`. All four
+  share the lean base layer (toolchain, git, Node 24, uv + Python 3.14 venv);
+  `dax` is the ComputeSDK DAX-ready shape; the agent images add the Codex and
+  Claude Code CLIs on top.
+
+### Changed
+- Node hostname resolution uses an A-record query (`dns.resolve4`) instead of
+  `dns.lookup` / `getaddrinfo`. The system resolver walks nsswitch on the
+  libuv thread pool, which was a flat tens of milliseconds on the first
+  create even when the DNS server and the API were under a millisecond away.
+  Names that exist only in the hosts file still fall back to `dns.lookup`.
+  A timeout does not fall back.
+- The TLS trust store is built while the package loads, and every handshake
+  reuses that context. The previous warm was deferred to a microtask, so it
+  still ran inside the first request.
+- HTTPS requests no longer pile onto a single HTTP/2 connection under burst.
+  The transport keeps up to four sessions per origin, opened lazily: the
+  first request that finds every live lane already carrying four requests
+  fills the pool at once, so a burst spreads over parallel connections whose
+  handshakes run together while sequential callers keep one session forever.
+  Each lane pins a different address from the DNS answer, and a lane that
+  fails reconnects to the next address instead of the one that just failed.
+  `preconnect()`/`warmup()` open the whole pool up front, and the HTTP/1.1
+  fallback spreads its sockets across the same answer list.
+
 ## [0.1.28] - 2026-10-05 
 ### Changed
 - Node transport machinery now warms while the package is imported instead of

@@ -309,7 +309,7 @@ describe('wire dispatch over HTTP/2', () => {
     }
   });
 
-  it('opens the session from preconnect(origin) before any request', async () => {
+  it('opens the session pool from preconnect(origin) before any request', async () => {
     const certs = selfSignedCerts();
     let sessions = 0;
     const server = createSecureServer(certs);
@@ -326,7 +326,7 @@ describe('wire dispatch over HTTP/2', () => {
 
     try {
       await pooled.preconnect(`https://127.0.0.1:${port}`);
-      await vi.waitFor(() => expect(sessions).toBe(1));
+      await vi.waitFor(() => expect(sessions).toBe(4));
       const reply = await pooled.dispatch({
         url: `https://127.0.0.1:${port}/`,
         method: 'GET',
@@ -334,7 +334,7 @@ describe('wire dispatch over HTTP/2', () => {
         stream: false,
       });
       expect(reply.status).toBe(200);
-      expect(sessions).toBe(1);
+      expect(sessions).toBe(4);
     } finally {
       await pooled.close();
       await closeServer(server);

@@ -4,11 +4,12 @@
  * Node's global `fetch` speaks HTTP/1.1 with a short keep-alive. Concurrent
  * create+exec would each pay a new TCP+TLS handshake.
  *
- * On Node the SDK multiplexes on one HTTP/2 session per origin (IPv4,
- * hostname SNI); origins that do not speak HTTP/2 fall back to the HTTP/1.1
- * keep-alive pool, and `http2: false` selects the pool directly. Bun, Deno,
- * and edge runtimes keep their native `fetch`. A caller-supplied `fetch`
- * always wins.
+ * On Node the SDK multiplexes over a small pool of HTTP/2 sessions per
+ * origin (IPv4, hostname SNI) — sequential callers share one session while a
+ * burst spreads across several — and origins that do not speak HTTP/2 fall
+ * back to the HTTP/1.1 keep-alive pool; `http2: false` selects the pool
+ * directly. Bun, Deno, and edge runtimes keep their native `fetch`. A
+ * caller-supplied `fetch` always wins.
  */
 
 import { createNativeNodeFetch, type DnsLookup } from './node-http.js';
@@ -28,7 +29,7 @@ export interface PooledFetch {
   dispatch: Dispatch;
   /**
    * Warm the transport so the first request does not. Given an origin, this
-   * resolves DNS and, for `http2`, opens the pooled session.
+   * resolves DNS and, for `http2`, opens the pooled sessions.
    */
   preconnect(origin?: string): Promise<void>;
   /** Drain and close pooled sockets. Safe to call more than once. */
@@ -38,8 +39,8 @@ export interface PooledFetch {
 /** Options for {@link createPooledFetch}. */
 export interface PooledFetchOptions {
   /**
-   * Enable HTTP/2 on Node HTTPS origins. Defaults to true (one session per
-   * origin); `false` selects the HTTP/1.1 keep-alive pool.
+   * Enable HTTP/2 on Node HTTPS origins. Defaults to true (a small session
+   * pool per origin); `false` selects the HTTP/1.1 keep-alive pool.
    */
   http2?: boolean;
   /**
@@ -77,8 +78,9 @@ export function hostRuntime(): HostRuntime {
 }
 
 /**
- * Bind a fetch that, on Node, reuses one HTTP/2 session per origin (or the
- * HTTP/1.1 keep-alive pool when `http2: false` or the origin lacks `h2`).
+ * Bind a fetch that, on Node, reuses a small HTTP/2 session pool per origin
+ * (or the HTTP/1.1 keep-alive pool when `http2: false` or the origin lacks
+ * `h2`).
  *
  * Everywhere else this is `globalThis.fetch`. Construction does not touch
  * the network; sockets open on the first request (or {@link PooledFetch.preconnect}).
