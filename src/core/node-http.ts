@@ -675,14 +675,16 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
   // heavier module load and finishes inside the gap between constructing a
   // client and its first request. A failed answer is not cached: the real
   // request simply looks the host up again.
+  let warmOrigin: URL | undefined;
   if (options.origin !== undefined) {
-    let hostname: string | undefined;
     try {
-      hostname = new URL(options.origin).hostname;
+      warmOrigin = new URL(options.origin);
     } catch {
-      hostname = undefined;
+      warmOrigin = undefined;
     }
-    if (hostname) void pool.addresses.resolveIpv4(hostname).catch(() => undefined);
+    if (warmOrigin?.hostname) {
+      void pool.addresses.resolveIpv4(warmOrigin.hostname).catch(() => undefined);
+    }
   }
 
   let closed = false;
@@ -753,6 +755,19 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     });
     return created;
   };
+
+  // The first lane's connect starts with the lookup the constructor already
+  // fired, so the first request finds a session mid-handshake instead of
+  // starting from nothing. One lane, not the pool: a client that never
+  // bursts never needs more than the connection it already pays for.
+  if (
+    warmOrigin !== undefined &&
+    http2Wanted &&
+    warmOrigin.protocol === 'https:' &&
+    (pool.sessions.get(warmOrigin.origin)?.entries.length ?? 0) === 0
+  ) {
+    openLane(warmOrigin.origin, warmOrigin);
+  }
 
   /**
    * The least-loaded live lane for an origin. Sequential callers reuse the

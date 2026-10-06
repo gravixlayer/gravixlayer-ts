@@ -5,6 +5,12 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.30] - 2026-10-06
+  The constructor now fires the first lane's handshake alongside the DNS
+  prefetch, so a create called right after `new GravixLayer()` finds a
+  session mid-handshake instead of starting one. `preconnect()`/`warmup()`
+  open the whole pool up front, and the HTTP/1.1 fallback spreads its
+  sockets across the same answer list.
 ## [0.1.29] - 2026-10-06
 ### Added
 - `examples/templates/dockerfiles/` — ready-to-build Dockerfile set matching
@@ -30,8 +36,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   handshakes run together while sequential callers keep one session forever.
   Each lane pins a different address from the DNS answer, and a lane that
   fails reconnects to the next address instead of the one that just failed.
-  `preconnect()`/`warmup()` open the whole pool up front, and the HTTP/1.1
-  fallback spreads its sockets across the same answer list.
+
 
 ## [0.1.28] - 2026-10-05 
 ### Changed

@@ -214,6 +214,45 @@ describe('pooled fetch', () => {
     }
   });
 
+  it('opens the first HTTP/2 lane while the client constructs', async () => {
+    const certs = selfSignedCerts();
+    let sessions = 0;
+    const server = createSecureServer(certs);
+    server.on('session', () => {
+      sessions += 1;
+    });
+    server.on('stream', (stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+      stream.end(JSON.stringify({ ok: true }));
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const pooled = createPooledFetch({
+      origin: `https://ctor.test:${port}`,
+      rejectUnauthorized: false,
+      lookup: (hostname, options, callback) => {
+        const cb = (typeof options === 'function' ? options : callback) as (
+          err: NodeJS.ErrnoException | null,
+          addresses: Array<{ address: string; family: number }>,
+        ) => void;
+        queueMicrotask(() => cb(null, [{ address: '127.0.0.1', family: 4 }]));
+      },
+    });
+
+    try {
+      // No request yet: the constructor already fired the lane's handshake.
+      await vi.waitFor(() => expect(sessions).toBe(1));
+      const response = await pooled.fetch(`https://ctor.test:${port}/`, {});
+      expect(response.status).toBe(200);
+      await response.body?.cancel().catch(() => undefined);
+      expect(sessions).toBe(1);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
   it('looks the host up again when the origin prefetch fails', async () => {
     const server = createHttpServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
