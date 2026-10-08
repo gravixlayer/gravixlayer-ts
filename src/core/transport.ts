@@ -19,7 +19,7 @@ import {
 import { sleep } from './time.js';
 import { buildUrl, isAbsoluteUrl, withQuery, type QueryValue } from './url.js';
 import { endSpan, failSpan, injectContext, startClientSpan } from './telemetry.js';
-import type { Dispatch, HeaderSource, WireRequest, WireResponse } from './wire.js';
+import type { Dispatch, HeaderSource, WireRequest } from './wire.js';
 
 /** Status codes treated as success. Mirrors the API's documented responses. */
 export const SUCCESS_STATUS: ReadonlySet<number> = new Set([200, 201, 202, 204, 207]);
@@ -387,18 +387,8 @@ export class Transport {
     maxRetries: number;
     userSignal: AbortSignal | undefined;
   }): Promise<Reply> {
-    const {
-      url,
-      parsedUrl,
-      method,
-      headers,
-      body,
-      form,
-      stream,
-      timeout,
-      maxRetries,
-      userSignal,
-    } = args;
+    const { url, parsedUrl, method, headers, body, form, stream, timeout, maxRetries, userSignal } =
+      args;
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
