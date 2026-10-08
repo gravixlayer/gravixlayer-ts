@@ -4,9 +4,12 @@
  * HTTPS defaults to HTTP/2 with a small pool of sessions per origin (IPv4,
  * hostname SNI): sequential callers reuse the first session while a burst
  * spreads over several lanes, each pinned to another resolved address so its
- * handshake and its requests do not queue behind a single connection. When
- * ALPN does not offer `h2` the transport falls back to HTTP/1.1 keep-alive;
- * pass `http2: false` to select the HTTP/1.1 pool outright. HTTP/2 sessions
+ * handshake and its requests do not queue behind a single connection. Each
+ * lane handshakes on its own thread: Node verifies the certificate on the
+ * thread that reads the socket, and one thread would finish the lanes one
+ * after another. When ALPN does not offer `h2` the transport falls back to
+ * HTTP/1.1 keep-alive; pass `http2: false` to select the HTTP/1.1 pool
+ * outright. HTTP/2 sessions
  * and DNS answers are shared by every pooled client in the process, so a
  * second client never pays a second handshake.
  *
@@ -32,7 +35,10 @@
  * background all the same.
  */
 
+import { dialLane, waitForLaneThreads } from './h2-lane.js';
 import { utf8Encode } from './binary.js';
+
+export { laneHandshakeThreads, useLaneThreads, watchLaneDials } from './h2-lane.js';
 import { GravixLayerInvalidArgumentError } from './errors.js';
 import {
   readAll,
@@ -235,6 +241,12 @@ interface HttpLib {
   ): HttpClientRequest;
 }
 
+/** Anything `close()` can drop while a handshake is still in flight. */
+interface ClosableSocket {
+  destroy(): void;
+  unref?: () => void;
+}
+
 interface TlsSocket {
   alpnProtocol: string | false | null;
   setTimeout(ms: number, callback?: () => void): TlsSocket;
@@ -409,8 +421,8 @@ interface SessionPool {
   sessions: Map<string, SessionLanes>;
   /** Origins whose server did not negotiate HTTP/2; they stay on HTTP/1.1. */
   h1Only: Set<string>;
-  /** TLS sockets still handshaking, so `close()` can drop them. */
-  connectingSockets: Set<TlsSocket>;
+  /** Sockets still handshaking, so `close()` can drop them. */
+  connectingSockets: Set<ClosableSocket>;
   /**
    * Lanes waiting on one DNS answer. The answer's callback dials every one
    * of them before it returns, so they do not take turns through `await`.
@@ -1334,7 +1346,7 @@ function releaseIdleSockets(agent: DestroyableAgent): void {
 interface ConnectH2Options {
   rejectUnauthorized: boolean;
   addresses: AddressBook;
-  connectingSockets: Set<TlsSocket>;
+  connectingSockets: Set<ClosableSocket>;
   parked: Map<string, ParkedDial[]>;
   isClosed: () => boolean;
   /**
@@ -1417,9 +1429,56 @@ function releaseParked(hostname: string, addresses: string[], opts: ConnectH2Opt
 
 /**
  * Start the TCP+TLS handshake now. The returned promise settles at HTTP/2
- * session connect; `tls.connect` itself has already run.
+ * session connect; the dial itself has already been issued.
+ *
+ * On Node the dial is posted to the lane's thread, which is what lets the
+ * other lanes verify at the same time. The in-process dial remains for a
+ * runtime that has no worker threads.
  */
 function dialSocket(
+  node: NodeLibs,
+  url: URL,
+  address: string,
+  opts: ConnectH2Options,
+): Promise<H2Session> {
+  let tracked: ClosableSocket | undefined;
+  const threaded = dialLane(
+    {
+      host: address,
+      port: Number(url.port) || 443,
+      origin: url.origin,
+      servername: tlsServername(url.hostname),
+      rejectUnauthorized: opts.rejectUnauthorized,
+      timeoutMs: CONNECT_TIMEOUT_MS,
+    },
+    (socket) => {
+      tracked = socket;
+      opts.connectingSockets.add(socket);
+    },
+  );
+  if (threaded) {
+    return threaded.then(
+      (opened) => {
+        if (tracked) opts.connectingSockets.delete(tracked);
+        return {
+          session: opened.session as unknown as Http2Session,
+          socket: opened.socket as unknown as TlsSocket,
+          ping: undefined,
+          node,
+        };
+      },
+      (error: unknown) => {
+        if (tracked) opts.connectingSockets.delete(tracked);
+        const err = error instanceof Error ? error : new Error(String(error));
+        if (isConnectFailure(err)) opts.addresses.demote(url.hostname, address);
+        throw err;
+      },
+    );
+  }
+  return dialSocketInline(node, url, address, opts);
+}
+
+function dialSocketInline(
   node: NodeLibs,
   url: URL,
   address: string,
@@ -2026,11 +2085,16 @@ if (typeof process !== 'undefined' && typeof process.versions?.node === 'string'
   if (libs) {
     warmTrustStore();
     primeTlsStack();
+    // Lane threads were spawned as this module began loading. Their TLS init
+    // overlapped the trust store above. Waiting here, still during import,
+    // keeps that startup out of the first request.
+    waitForLaneThreads();
   } else {
     void pending
       .then(() => {
         warmTrustStore();
         primeTlsStack();
+        waitForLaneThreads();
       })
       .catch(() => undefined);
   }

@@ -6,7 +6,8 @@
  *
  * On Node the SDK multiplexes over a small pool of HTTP/2 sessions per
  * origin (IPv4, hostname SNI) — sequential callers share one session while a
- * burst spreads across several — and origins that do not speak HTTP/2 fall
+ * burst spreads across several, each handshake on its own thread — and origins
+ * that do not speak HTTP/2 fall
  * back to the HTTP/1.1 keep-alive pool; `http2: false` selects the pool
  * directly. Bun, Deno, and edge runtimes keep their native `fetch`. A
  * caller-supplied `fetch` always wins.

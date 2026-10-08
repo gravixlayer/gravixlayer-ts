@@ -5,6 +5,14 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.34] - 2026-10-08
+### Fixed
+- HTTP/2 lane handshakes no longer share one thread. A burst's later lanes
+  were finishing TLS only after the earlier lanes had verified the
+  certificate, even though every server flight had already arrived. Each lane
+  now handshakes on its own thread. The threads finish their one-time TLS
+  init while the module loads, so the first request does not wait for one
+  to start.
 ## [0.1.33] - 2026-10-08
 ### Fixed
 - A burst of requests no longer waits while HTTP/2 lanes take turns

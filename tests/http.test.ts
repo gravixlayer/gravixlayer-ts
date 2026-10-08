@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import tls from 'node:tls';
 import { getEventListeners } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
@@ -14,7 +13,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPooledFetch, hostRuntime } from '../src/core/http.js';
 import {
   createAddressBook,
+  laneHandshakeThreads,
   queryIpv4,
+  useLaneThreads,
+  watchLaneDials,
   wrapIpv4Lookup,
   type DnsLookupCallback,
 } from '../src/core/node-http.js';
@@ -243,6 +245,7 @@ describe('pooled fetch', () => {
     try {
       // No request yet: the constructor already opened the whole lane pool.
       await vi.waitFor(() => expect(sessions).toBe(4));
+      expect(new Set(laneHandshakeThreads()).size).toBeGreaterThanOrEqual(4);
       const response = await pooled.fetch(`https://ctor.test:${port}/`, {});
       expect(response.status).toBe(200);
       await response.body?.cancel().catch(() => undefined);
@@ -264,7 +267,7 @@ describe('pooled fetch', () => {
     await listen(server);
     const port = (server.address() as AddressInfo).port;
     const dials: string[] = [];
-    const restore = tapConnect(dials);
+    const restore = watchLaneDials(dials);
     const pooled = createPooledFetch({
       origin: `https://127.0.0.1:${port}`,
       http2: true,
@@ -275,7 +278,7 @@ describe('pooled fetch', () => {
       },
     });
     try {
-      // Four SYNs in this turn. A promise hop before tls.connect would still
+      // Four dials in this turn. A promise hop before the dial would still
       // be at zero here — the constructor would have returned first.
       expect(dials).toEqual(['127.0.0.1', '127.0.0.1', '127.0.0.1', '127.0.0.1']);
     } finally {
@@ -296,7 +299,7 @@ describe('pooled fetch', () => {
     await listen(server);
     const port = (server.address() as AddressInfo).port;
     const dials: string[] = [];
-    const restore = tapConnect(dials);
+    const restore = watchLaneDials(dials);
     let answer: (() => void) | undefined;
     const lookups: string[] = [];
     const pooled = createPooledFetch({
@@ -328,7 +331,7 @@ describe('pooled fetch', () => {
 
   it('does not dial lanes that were still waiting on DNS when the client closes', async () => {
     const dials: string[] = [];
-    const restore = tapConnect(dials);
+    const restore = watchLaneDials(dials);
     const pooled = createPooledFetch({
       origin: 'https://parked.example',
       http2: true,
@@ -342,6 +345,28 @@ describe('pooled fetch', () => {
       expect(dials).toEqual([]);
     } finally {
       restore();
+    }
+  });
+
+  it('still handshakes in-process when lane threads are off', async () => {
+    const certs = selfSignedCerts();
+    const server = createSecureServer(certs);
+    server.on('stream', (stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+      stream.end(JSON.stringify({ via: 'inline' }));
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    useLaneThreads(false);
+    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
+    try {
+      const response = await pooled.fetch(`https://127.0.0.1:${port}/`, {});
+      expect(await response.json()).toEqual({ via: 'inline' });
+    } finally {
+      useLaneThreads(true);
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
     }
   });
 
@@ -846,19 +871,6 @@ const PAST_TTL_MS = 30_001;
 /** Let queued lookups and their continuations run. */
 function flush(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
-}
-
-/** Count `tls.connect` calls, then put the original back. */
-function tapConnect(dials: string[]): () => void {
-  const original = tls.connect;
-  const connect = original as unknown as (options: tls.ConnectionOptions) => tls.TLSSocket;
-  tls.connect = ((options: tls.ConnectionOptions) => {
-    dials.push(typeof options.host === 'string' ? options.host : '');
-    return connect(options);
-  }) as typeof tls.connect;
-  return () => {
-    tls.connect = original;
-  };
 }
 
 /** An address book over scripted answers, each delivered asynchronously. */
