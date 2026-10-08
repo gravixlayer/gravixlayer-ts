@@ -112,10 +112,13 @@ const H2_PING_MS = 25_000;
  * authenticating, writing responses — serialises there, so queue depth grows
  * with the burst. Extra lanes spread a burst over several connections, and
  * where DNS answers with several addresses each lane pins a different one so
- * lanes land on different endpoints as well. A quiet client never grows them:
- * the pool opens only once a burst is proven — every live lane already
- * carrying {@link H2_LANE_DEPTH} in-flight requests — and then fills out at
- * once rather than one handshake per request.
+ * lanes land on different endpoints as well.
+ *
+ * The client constructor opens all of them in one turn, and their SYNs go
+ * out together — a lane must not wait for the previous lane's `tls.connect`
+ * to return. Without an origin, the pool stays at one session until a burst
+ * is proven (every live lane already carrying {@link H2_LANE_DEPTH} requests)
+ * and then fills out the same way, in one turn.
  */
 const H2_LANES = 4;
 
@@ -124,6 +127,16 @@ const H2_LANE_DEPTH = 4;
 
 /** TCP/TLS/HTTP/2 connect deadline. */
 const CONNECT_TIMEOUT_MS = 10_000;
+
+/**
+ * Throwaway `tls.connect` calls while the module loads.
+ *
+ * The first call in a process initializes OpenSSL and costs several
+ * milliseconds; the second still costs a couple. A later call is a fraction
+ * of a millisecond. Paying the first two here, against a closed local port,
+ * keeps a burst's lanes from starting one after another.
+ */
+const TLS_PRIME_CONNECTS = 2;
 
 /**
  * How long a hostname's addresses are reused before being looked up again.
@@ -366,6 +379,16 @@ interface SessionLanes {
   opened: number;
 }
 
+/** A lane whose SYN waits on the single in-flight lookup for its host. */
+interface ParkedDial {
+  url: URL;
+  node: NodeLibs;
+  rejectUnauthorized: boolean;
+  addrIndex: number;
+  resolve: (handle: H2Session) => void;
+  reject: (error: unknown) => void;
+}
+
 /**
  * Connection state shared by every pooled client in the process.
  *
@@ -388,6 +411,11 @@ interface SessionPool {
   h1Only: Set<string>;
   /** TLS sockets still handshaking, so `close()` can drop them. */
   connectingSockets: Set<TlsSocket>;
+  /**
+   * Lanes waiting on one DNS answer. The answer's callback dials every one
+   * of them before it returns, so they do not take turns through `await`.
+   */
+  parked: Map<string, ParkedDial[]>;
 }
 
 interface NodeH1Agents {
@@ -406,6 +434,14 @@ export interface AddressBook {
   resolveIpv4(hostname: string): Promise<string>;
   /** Every current IPv4 answer for a hostname, the in-use address first. */
   resolveIpv4All(hostname: string): Promise<string[]>;
+  /**
+   * Addresses already in hand.
+   *
+   * `undefined` means a lookup is still required. A lane uses this so
+   * `tls.connect` runs in the turn that already knows the address — awaiting
+   * a resolved lookup would queue the SYN behind other work.
+   */
+  cachedIpv4(hostname: string): string[] | undefined;
   /** Move an address that failed to connect to the back of its host's list. */
   demote(hostname: string, address: string): void;
   clear(): void;
@@ -443,29 +479,37 @@ const builtinModule = (): ((id: string) => unknown) | undefined =>
  * import path resolves them, and a failure rejects only the request that
  * needed the modules.
  */
-function nodeLibs(): Promise<NodeLibs> {
-  if (libs) return Promise.resolve(libs);
-
-  const builtin = builtinModule();
-  if (builtin) {
-    try {
-      const stream = builtin('node:stream') as {
-        Readable: { toWeb(readable: object): ReadableStream<Uint8Array> };
-      };
-      libs = {
-        http: builtin('node:http') as unknown as HttpLib,
-        https: builtin('node:https') as unknown as HttpLib,
-        http2: builtin('node:http2') as unknown as Http2Lib,
-        tls: builtin('node:tls') as unknown as TlsLib,
-        dns: builtin('node:dns') as unknown as DnsLib,
-        toWeb: stream.Readable.toWeb.bind(stream.Readable) as NodeLibs['toWeb'],
-      };
-      return Promise.resolve(libs);
-    } catch {
-      // A partial node:* implementation (Bun) can throw here; fall through to
-      // the dynamic-import path, which reports any real failure to the caller.
-    }
+function loadBuiltinLibs(builtin: (id: string) => unknown): NodeLibs | undefined {
+  try {
+    const stream = builtin('node:stream') as {
+      Readable: { toWeb(readable: object): ReadableStream<Uint8Array> };
+    };
+    libs = {
+      http: builtin('node:http') as unknown as HttpLib,
+      https: builtin('node:https') as unknown as HttpLib,
+      http2: builtin('node:http2') as unknown as Http2Lib,
+      tls: builtin('node:tls') as unknown as TlsLib,
+      dns: builtin('node:dns') as unknown as DnsLib,
+      toWeb: stream.Readable.toWeb.bind(stream.Readable) as NodeLibs['toWeb'],
+    };
+    return libs;
+  } catch {
+    // A partial node:* implementation (Bun) can throw here.
+    return undefined;
   }
+}
+
+/** Node modules already loaded. No promise — a dial must not wait on one. */
+function syncNodeLibs(): NodeLibs | undefined {
+  if (libs) return libs;
+  const builtin = builtinModule();
+  if (!builtin) return undefined;
+  return loadBuiltinLibs(builtin);
+}
+
+function nodeLibs(): Promise<NodeLibs> {
+  const loaded = syncNodeLibs();
+  if (loaded) return Promise.resolve(loaded);
 
   importing ??= Promise.all([
     import('node:http'),
@@ -568,6 +612,46 @@ function warmTrustStore(): void {
   }
 }
 
+let tlsPrimed = false;
+
+/**
+ * Run the process's first `tls.connect` calls off the request path.
+ *
+ * They initialize OpenSSL. Measured on Node 22, the first is about 5 ms and
+ * the second about 2 ms; every call after that is well under a millisecond.
+ * Doing them here, then destroying the sockets, is why a four-lane burst can
+ * call `tls.connect` four times in one turn instead of each lane waiting for
+ * the previous lane's initialization.
+ */
+function primeTlsStack(): void {
+  if (tlsPrimed) return;
+  const tls = libs?.tls;
+  if (!tls) return;
+  tlsPrimed = true;
+  for (let i = 0; i < TLS_PRIME_CONNECTS; i += 1) {
+    try {
+      const socket = tls.connect({
+        // Same shape as a lane dial. A cheaper option set leaves the first
+        // real connect — SNI, both ALPN protocols — paying the init itself,
+        // which is what spaces the lanes out.
+        host: '127.0.0.1',
+        port: 1,
+        servername: 'localhost',
+        rejectUnauthorized: false,
+        noDelay: true,
+        ALPNProtocols: ['h2', 'http/1.1'],
+        ...(secureContext !== undefined ? { secureContext } : {}),
+      });
+      socket.once('error', () => undefined);
+      socket.unref();
+      socket.destroy();
+    } catch {
+      // The real handshake still runs; it just pays the one-time init itself.
+      break;
+    }
+  }
+}
+
 /**
  * Header lookup over the raw header map a Node response carries.
  *
@@ -608,6 +692,7 @@ function createPool(opts: { rejectUnauthorized: boolean; lookup?: DnsLookup }): 
     sessions: new Map(),
     h1Only: new Set(),
     connectingSockets: new Set(),
+    parked: new Map(),
     addresses: createAddressBook((hostname, callback) => {
       if (lookup) {
         lookup(hostname, { family: 4, all: true }, callback);
@@ -648,6 +733,10 @@ function acquirePool(opts: { rejectUnauthorized: boolean; lookup?: DnsLookup }):
   return pool;
 }
 
+function closedClientError(): GravixLayerInvalidArgumentError {
+  return new GravixLayerInvalidArgumentError('The GravixLayer client has been closed.');
+}
+
 function releasePool(pool: SessionPool): void {
   pool.users -= 1;
   if (pool.users > 0) return;
@@ -655,6 +744,11 @@ function releasePool(pool: SessionPool): void {
     sharedPools.delete(pool.key);
   }
   pool.closed = true;
+  const parked = [...pool.parked.values()];
+  pool.parked.clear();
+  for (const waiting of parked) {
+    for (const dial of waiting) dial.reject(closedClientError());
+  }
   pool.addresses.clear();
   for (const socket of pool.connectingSockets) {
     dropSocket(socket);
@@ -720,6 +814,8 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
         rejectUnauthorized,
         addresses: pool.addresses,
         connectingSockets: pool.connectingSockets,
+        parked: pool.parked,
+        isClosed: () => pool.closed,
         addrIndex: lanes.opened,
       }).then((handle) => {
         if (pool.closed) {
@@ -763,11 +859,11 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     return created;
   };
 
-  // Every lane's connect starts with the lookup the constructor already
-  // fired, so the handshakes run in parallel and a burst lands on sessions
-  // that are already open instead of queueing inside `sessionFor` while
-  // lanes dial. Idle lanes are unref'd and cost a quiet client nothing but
-  // a few sockets.
+  // Every lane dials in this turn when the address is known, or from the one
+  // DNS callback when it is not. The sockets are in flight before this
+  // function returns, so a burst that starts on the next line is not the
+  // thing that opens them and does not watch them take turns. Idle lanes are
+  // unref'd and cost a quiet client nothing but a few sockets.
   if (
     warmOrigin !== undefined &&
     http2Wanted &&
@@ -1096,10 +1192,7 @@ export function createAddressBook(
     return pending;
   };
 
-  const resolveAll = async (hostname: string): Promise<string[]> => {
-    if (IPV4_LITERAL.test(hostname)) return [hostname];
-    const known = hosts.get(hostname);
-    if (!known) return await lookupHost(hostname);
+  const fresh = (hostname: string, known: ResolvedHost): string[] => {
     if (known.expiresAt <= Date.now() && !lookups.has(hostname)) {
       // A failed refresh keeps the last good answer for another TTL.
       void lookupHost(hostname).catch(() => {
@@ -1109,11 +1202,24 @@ export function createAddressBook(
     return known.addresses;
   };
 
+  const resolveAll = async (hostname: string): Promise<string[]> => {
+    if (IPV4_LITERAL.test(hostname)) return [hostname];
+    const known = hosts.get(hostname);
+    if (!known) return await lookupHost(hostname);
+    return fresh(hostname, known);
+  };
+
   return {
     async resolveIpv4(hostname) {
       return (await resolveAll(hostname))[0] as string;
     },
     resolveIpv4All: resolveAll,
+    cachedIpv4(hostname) {
+      if (IPV4_LITERAL.test(hostname)) return [hostname];
+      const known = hosts.get(hostname);
+      if (!known) return undefined;
+      return fresh(hostname, known);
+    },
     demote(hostname, address) {
       const known = hosts.get(hostname);
       if (known === undefined) return;
@@ -1225,34 +1331,102 @@ function releaseIdleSockets(agent: DestroyableAgent): void {
   });
 }
 
-async function connectH2(
-  url: URL,
-  opts: {
-    rejectUnauthorized: boolean;
-    addresses: AddressBook;
-    connectingSockets: Set<TlsSocket>;
-    /**
-     * Which resolved address this lane pins. Lanes walk the answer list, so a
-     * multi-address origin's burst lands on several endpoints.
-     */
-    addrIndex: number;
-  },
-): Promise<H2Session> {
-  // The trust store is built at import. Building it here, while a c-ares
-  // query is in flight, would stall that query: unlike `dns.lookup`,
-  // `resolve4` is delivered on the event loop. The call stays so a runtime
-  // that could not warm at import still builds the store before the handshake.
-  const resolving = opts.addresses.resolveIpv4All(url.hostname);
-  // If `nodeLibs` rejects, `resolving` is never awaited; the guard keeps a
-  // failed lookup from surfacing as an unhandled rejection.
-  resolving.catch(() => undefined);
-  const node = await nodeLibs();
-  warmTrustStore();
-  const addresses = await resolving;
-  const address = addresses[opts.addrIndex % addresses.length] as string;
-  const port = Number(url.port) || 443;
+interface ConnectH2Options {
+  rejectUnauthorized: boolean;
+  addresses: AddressBook;
+  connectingSockets: Set<TlsSocket>;
+  parked: Map<string, ParkedDial[]>;
+  isClosed: () => boolean;
+  /**
+   * Which resolved address this lane pins. Lanes walk the answer list, so a
+   * multi-address origin's burst lands on several endpoints.
+   */
+  addrIndex: number;
+}
 
-  return await new Promise((resolve, reject) => {
+/**
+ * Open one HTTP/2 lane.
+ *
+ * The socket starts in this turn when the address is already known, and in
+ * the DNS callback — every parked lane, before that callback returns — when
+ * it is not. Nothing here `await`s. A promise chain before `tls.connect`
+ * is what left a burst sitting in `sessionFor` while lanes took turns dialing.
+ */
+function connectH2(url: URL, opts: ConnectH2Options): Promise<H2Session> {
+  const node = syncNodeLibs();
+  if (node) return dialOrPark(node, url, opts);
+  return nodeLibs().then((loaded) => dialOrPark(loaded, url, opts));
+}
+
+function dialOrPark(node: NodeLibs, url: URL, opts: ConnectH2Options): Promise<H2Session> {
+  if (opts.isClosed()) return Promise.reject(closedClientError());
+  // The trust store is built at import. Building it while a c-ares query is
+  // in flight would stall that query: `resolve4` is delivered on the event
+  // loop. A runtime that could not warm at import still builds it here,
+  // before any socket, and only on the first dial.
+  warmTrustStore();
+  const cached = opts.addresses.cachedIpv4(url.hostname);
+  if (cached !== undefined && cached.length > 0) {
+    return dialSocket(node, url, cached[opts.addrIndex % cached.length] as string, opts);
+  }
+
+  return new Promise((resolve, reject) => {
+    const dial: ParkedDial = {
+      url,
+      node,
+      rejectUnauthorized: opts.rejectUnauthorized,
+      addrIndex: opts.addrIndex,
+      resolve,
+      reject,
+    };
+    const waiting = opts.parked.get(url.hostname);
+    if (waiting !== undefined) {
+      waiting.push(dial);
+      return;
+    }
+    opts.parked.set(url.hostname, [dial]);
+    // One lookup for every lane parked above. Its continuation dials them
+    // all before yielding, so lane N does not wait for lane 1's handshake.
+    opts.addresses.resolveIpv4All(url.hostname).then(
+      (addresses) => releaseParked(url.hostname, addresses, opts),
+      (error: unknown) => {
+        const parked = opts.parked.get(url.hostname) ?? [];
+        opts.parked.delete(url.hostname);
+        for (const item of parked) item.reject(error);
+      },
+    );
+  });
+}
+
+/** Dial every lane that was waiting on this hostname. Runs inside the lookup. */
+function releaseParked(hostname: string, addresses: string[], opts: ConnectH2Options): void {
+  const parked = opts.parked.get(hostname) ?? [];
+  opts.parked.delete(hostname);
+  for (const dial of parked) {
+    if (opts.isClosed()) {
+      dial.reject(closedClientError());
+      continue;
+    }
+    const address = addresses[dial.addrIndex % addresses.length] as string;
+    dialSocket(dial.node, dial.url, address, {
+      ...opts,
+      rejectUnauthorized: dial.rejectUnauthorized,
+    }).then(dial.resolve, dial.reject);
+  }
+}
+
+/**
+ * Start the TCP+TLS handshake now. The returned promise settles at HTTP/2
+ * session connect; `tls.connect` itself has already run.
+ */
+function dialSocket(
+  node: NodeLibs,
+  url: URL,
+  address: string,
+  opts: ConnectH2Options,
+): Promise<H2Session> {
+  const port = Number(url.port) || 443;
+  return new Promise((resolve, reject) => {
     let settled = false;
     const fail = (error: Error) => {
       if (settled) return;
@@ -1851,7 +2025,13 @@ if (typeof process !== 'undefined' && typeof process.versions?.node === 'string'
   const pending = nodeLibs();
   if (libs) {
     warmTrustStore();
+    primeTlsStack();
   } else {
-    void pending.then(() => warmTrustStore()).catch(() => undefined);
+    void pending
+      .then(() => {
+        warmTrustStore();
+        primeTlsStack();
+      })
+      .catch(() => undefined);
   }
 }

@@ -82,8 +82,10 @@ export function hostRuntime(): HostRuntime {
  * (or the HTTP/1.1 keep-alive pool when `http2: false` or the origin lacks
  * `h2`).
  *
- * Everywhere else this is `globalThis.fetch`. Construction does not touch
- * the network; sockets open on the first request (or {@link PooledFetch.preconnect}).
+ * Everywhere else this is `globalThis.fetch`. On Node, passing an HTTPS
+ * `origin` opens the HTTP/2 lanes during construction: every SYN goes out in
+ * that turn when the address is already known, and from the single DNS
+ * callback when it is not.
  */
 export function createPooledFetch(options: PooledFetchOptions = {}): PooledFetch {
   if (hostRuntime() !== 'node') {

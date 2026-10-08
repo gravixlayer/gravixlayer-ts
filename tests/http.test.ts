@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import tls from 'node:tls';
 import { getEventListeners } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
@@ -250,6 +251,97 @@ describe('pooled fetch', () => {
       await pooled.close();
       await closeServer(server);
       rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('dials every lane before the constructor returns when the address is known', async () => {
+    const certs = selfSignedCerts();
+    const server = createSecureServer(certs);
+    server.on('stream', (stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+      stream.end('{}');
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const dials: string[] = [];
+    const restore = tapConnect(dials);
+    const pooled = createPooledFetch({
+      origin: `https://127.0.0.1:${port}`,
+      http2: true,
+      rejectUnauthorized: false,
+      lookup: (_hostname, options, callback) => {
+        const cb = (typeof options === 'function' ? options : callback) as DnsLookupCallback;
+        queueMicrotask(() => cb(null, [{ address: '127.0.0.1', family: 4 }]));
+      },
+    });
+    try {
+      // Four SYNs in this turn. A promise hop before tls.connect would still
+      // be at zero here — the constructor would have returned first.
+      expect(dials).toEqual(['127.0.0.1', '127.0.0.1', '127.0.0.1', '127.0.0.1']);
+    } finally {
+      restore();
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('dials every parked lane from the one DNS answer', async () => {
+    const certs = selfSignedCerts();
+    const server = createSecureServer(certs);
+    server.on('stream', (stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+      stream.end('{}');
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const dials: string[] = [];
+    const restore = tapConnect(dials);
+    let answer: (() => void) | undefined;
+    const lookups: string[] = [];
+    const pooled = createPooledFetch({
+      origin: `https://lanes.example:${port}`,
+      http2: true,
+      rejectUnauthorized: false,
+      lookup: (hostname, options, callback) => {
+        lookups.push(hostname);
+        const cb = (typeof options === 'function' ? options : callback) as DnsLookupCallback;
+        answer = () => cb(null, [{ address: '127.0.0.1', family: 4 }]);
+      },
+    });
+    try {
+      expect(dials).toEqual([]);
+      expect(lookups).toEqual(['lanes.example']);
+      if (!answer) throw new Error('lookup did not start');
+      answer();
+      // The answer settles a promise; the next turn dials all four lanes.
+      expect(dials).toEqual([]);
+      await flush();
+      expect(dials).toEqual(['127.0.0.1', '127.0.0.1', '127.0.0.1', '127.0.0.1']);
+    } finally {
+      restore();
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not dial lanes that were still waiting on DNS when the client closes', async () => {
+    const dials: string[] = [];
+    const restore = tapConnect(dials);
+    const pooled = createPooledFetch({
+      origin: 'https://parked.example',
+      http2: true,
+      rejectUnauthorized: false,
+      lookup: () => undefined,
+    });
+    try {
+      expect(dials).toEqual([]);
+      await pooled.close();
+      await flush();
+      expect(dials).toEqual([]);
+    } finally {
+      restore();
     }
   });
 
@@ -756,6 +848,19 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/** Count `tls.connect` calls, then put the original back. */
+function tapConnect(dials: string[]): () => void {
+  const original = tls.connect;
+  const connect = original as unknown as (options: tls.ConnectionOptions) => tls.TLSSocket;
+  tls.connect = ((options: tls.ConnectionOptions) => {
+    dials.push(typeof options.host === 'string' ? options.host : '');
+    return connect(options);
+  }) as typeof tls.connect;
+  return () => {
+    tls.connect = original;
+  };
+}
+
 /** An address book over scripted answers, each delivered asynchronously. */
 function scriptedBook(answers: unknown[]) {
   const calls: string[] = [];
@@ -778,7 +883,15 @@ describe('address book', () => {
   it('returns an IPv4 literal without a lookup', async () => {
     const { addresses, calls } = scriptedBook([]);
     await expect(addresses.resolveIpv4('10.0.0.7')).resolves.toBe('10.0.0.7');
+    expect(addresses.cachedIpv4('10.0.0.7')).toEqual(['10.0.0.7']);
     expect(calls).toEqual([]);
+  });
+
+  it('reports a cached answer without a promise', async () => {
+    const { addresses } = scriptedBook([['10.1.0.1', '10.1.0.2']]);
+    expect(addresses.cachedIpv4('api.test')).toBeUndefined();
+    await addresses.resolveIpv4All('api.test');
+    expect(addresses.cachedIpv4('api.test')).toEqual(['10.1.0.1', '10.1.0.2']);
   });
 
   it('reuses a fresh answer', async () => {
