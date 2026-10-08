@@ -5,6 +5,16 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.32] - 2026-10-08
+### Changed
+- Thin per-request dispatch pipeline: a request that finds an already-open
+  HTTP/2 lane now goes straight to the stream write — the pool keeps a
+  resolved-session handle per lane so the common path skips the async
+  session machinery entirely. The retry envelope is a single loop instead
+  of nested per-attempt functions, the request URL is parsed once in `send`
+  and carried through `WireRequest`, non-form bodies no longer copy the
+  header object, and `reply.read()` resolves through a promise chain rather
+  than an async wrapper. Burst latency drops correspondingly.
 ## [0.1.31] - 2026-10-08
 ### Changed
 - Renamed `warmup()` to `connect()` (the old name remains as a deprecated

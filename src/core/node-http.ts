@@ -345,6 +345,12 @@ interface H2Session {
 /** A session that is either connecting or ready. */
 interface SessionEntry {
   ready: Promise<H2Session>;
+  /**
+   * The resolved session, set once `ready` settles. A dispatch that finds it
+   * skips the whole `await` chain — bursts measure per-request cost, and
+   * resolved-promise hops are where that cost hides.
+   */
+  handle?: H2Session;
   /** Requests currently dispatched on this lane — the spread signal. */
   inflight: number;
 }
@@ -739,6 +745,7 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
         handle.session.once('error', () => {
           dropH2(handle.session, handle.socket);
         });
+        created.handle = handle;
         return handle;
       }),
     };
@@ -821,6 +828,31 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     }
   };
 
+  /**
+   * The warm path of {@link sessionFor}: a lane whose session already
+   * resolved and is still live is returned synchronously, so a dispatch
+   * inside a burst never pays the `await` chain the cold path needs.
+   * `null` means the pool must still grow or a lane is mid-handshake, and
+   * the caller falls back to `sessionFor` — which also owns burst
+   * detection, so depth-triggered growth stays in one place.
+   */
+  const pickReadyLane = (origin: string): { entry: SessionEntry; handle: H2Session } | null => {
+    const lanes = pool.sessions.get(origin);
+    if (lanes === undefined) return null;
+    let lane: SessionEntry | undefined;
+    for (const entry of lanes.entries) {
+      const handle = entry.handle;
+      if (handle === undefined || handle.session.closed || handle.session.destroyed) continue;
+      if (lane === undefined || entry.inflight < lane.inflight) lane = entry;
+    }
+    if (lane === undefined) return null;
+    // Burst depth is only honoured while the pool is full: below H2_LANES a
+    // saturating request must walk the slow path so the missing lanes open.
+    if (lane.inflight >= H2_LANE_DEPTH && lanes.entries.length < H2_LANES) return null;
+    lane.inflight += 1;
+    return { entry: lane, handle: lane.handle as H2Session };
+  };
+
   // A burst must share one init: checking `h1` after the await would give
   // every concurrent caller its own agent pair and its own sockets.
   const h1Agents = (): Promise<{ agents: NodeH1Agents; node: NodeLibs }> => {
@@ -843,35 +875,75 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     return address;
   };
 
-  const dispatch: Dispatch = async (request) => {
-    if (closed) throw closedError();
-    const url = new URL(request.url);
+  const dispatch: Dispatch = (request) => {
+    if (closed) return Promise.reject(closedError());
+    const url = request.parsedUrl ?? new URL(request.url);
     if (http2Wanted && url.protocol === 'https:' && !pool.h1Only.has(url.origin)) {
-      try {
-        const { entry, handle } = await sessionFor(url.origin, url);
+      // Warm path: an already-open lane goes straight to the stream write.
+      // Returning the dispatch promise rather than `await`ing it keeps the
+      // resolved-promise hops a burst would otherwise pay per request.
+      const picked = pickReadyLane(url.origin);
+      if (picked !== null) {
         // Counted until the request's h2 stream closes, so a lane holding a
         // long-lived body (attach, logs) is not reported idle.
         let released = false;
         const release = (): void => {
           if (released) return;
           released = true;
-          entry.inflight -= 1;
+          picked.entry.inflight -= 1;
         };
-        try {
-          if (closed) throw closedError();
-          return await h2Dispatch(handle, url, request, release);
-        } catch (error) {
+        if (closed) {
           release();
-          throw error;
+          return Promise.reject(closedError());
         }
-      } catch (error) {
+        return h2Dispatch(picked.handle, url, request, release).catch((error) => {
+          release();
+          if (closed) throw closedError();
+          throw error;
+        });
+      }
+      return dispatchH2(url, request);
+    }
+    return h1Agents().then(({ agents, node }) => {
+      if (closed) throw closedError();
+      return h1Dispatch(
+        node,
+        agents,
+        { resolve: h1Address, demote: pool.addresses.demote },
+        { rejectUnauthorized },
+        request,
+      );
+    });
+  };
+
+  /**
+   * The lane-opening half of `dispatch`: a request that found no ready lane
+   * still takes the full session path — burst growth, handshake waiting,
+   * and the handshake-only HTTP/1.1 fallback all live here.
+   */
+  const dispatchH2 = async (url: URL, request: WireRequest): Promise<WireResponse> => {
+    try {
+      const { entry, handle } = await sessionFor(url.origin, url);
+      let released = false;
+      const release = (): void => {
+        if (released) return;
+        released = true;
+        entry.inflight -= 1;
+      };
+      try {
         if (closed) throw closedError();
-        // Only the handshake falls back to HTTP/1.1. A failure after the
-        // session is up must not replay the request (POST create is not
-        // idempotent).
-        if (!isHttp2HandshakeFailure(error) || !isReplayableRequest(request)) {
-          throw error;
-        }
+        return await h2Dispatch(handle, url, request, release);
+      } catch (error) {
+        release();
+        throw error;
+      }
+    } catch (error) {
+      if (closed) throw closedError();
+      // Only the handshake falls back to HTTP/1.1. A failure after the
+      // session is up must not replay the request (POST create is not
+      // idempotent).
+      if (!isHttp2HandshakeFailure(error) || !isReplayableRequest(request)) {
+        throw error;
       }
     }
     const { agents, node } = await h1Agents();
@@ -1483,14 +1555,16 @@ function encodeRequestBody(request: WireRequest): {
   body: OutgoingBody;
   headers: Record<string, string>;
 } {
-  const headers = { ...request.headers };
   if (request.form) {
+    const headers = { ...request.headers };
     const multipart = encodeMultipart(request.form);
     headers['content-type'] = multipart.contentType;
     headers['content-length'] = String(multipart.length);
     return { body: multipart, headers };
   }
-  return { body: request.body, headers };
+  // Nothing downstream mutates the headers of a non-form request, so the
+  // transport's object is carried through rather than copied per request.
+  return { body: request.body, headers: request.headers };
 }
 
 /**

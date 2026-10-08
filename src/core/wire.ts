@@ -23,6 +23,11 @@ export interface HeaderSource {
 export interface WireRequest {
   /** Absolute URL. */
   url: string;
+  /**
+   * `url` already parsed, when the producer had it. Dispatching is the only
+   * consumer that needs the parts, so carrying it skips a parse per request.
+   */
+  parsedUrl?: URL;
   /** Upper-case method. */
   method: string;
   /**

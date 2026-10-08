@@ -300,10 +300,10 @@ export class Transport {
   }
 
   /** True when an absolute URL points anywhere other than the API's origin. */
-  private isForeign(url: string): boolean {
+  private isForeign(url: string, parsed?: URL): boolean {
     try {
       this.baseOrigin ??= new URL(this.config.baseUrl).origin;
-      return new URL(url).origin !== this.baseOrigin;
+      return (parsed ?? new URL(url)).origin !== this.baseOrigin;
     } catch {
       return true;
     }
@@ -315,6 +315,14 @@ export class Transport {
     const service = spec.service ?? DEFAULT_SERVICE;
     const path = spec.query ? withQuery(spec.path, spec.query) : spec.path;
     const url = buildUrl(path, service, this.config.baseUrl);
+    // Parsed once here: `isForeign` needs the origin and dispatch needs the
+    // parts — parsing inside each of them would repeat the work per request.
+    let parsedUrl: URL | undefined;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      // A malformed URL surfaces inside dispatch with the same error either way.
+    }
 
     const maxRetries = options.maxRetries ?? this.config.maxRetries;
     const timeout = options.timeout ?? this.config.timeout;
@@ -323,7 +331,7 @@ export class Transport {
     const headers: Record<string, string> = { ...this.config.defaultHeaders };
     // The API key belongs to the API. A call to another origin that needs a
     // credential passes its own `authorization` header on the request.
-    if (isAbsoluteUrl(path) && this.isForeign(url)) delete headers['authorization'];
+    if (isAbsoluteUrl(path) && this.isForeign(url, parsedUrl)) delete headers['authorization'];
     if (spec.body !== undefined && !spec.form) headers['content-type'] = 'application/json';
     if (stream) {
       // Gzip (the default Accept-Encoding on Node fetch) can hold SSE frames
@@ -347,6 +355,7 @@ export class Transport {
     try {
       const reply = await this.attemptLoop({
         url,
+        parsedUrl,
         method,
         headers,
         body,
@@ -368,6 +377,7 @@ export class Transport {
 
   private async attemptLoop(args: {
     url: string;
+    parsedUrl: URL | undefined;
     method: string;
     headers: Record<string, string>;
     body: string | undefined;
@@ -377,7 +387,18 @@ export class Transport {
     maxRetries: number;
     userSignal: AbortSignal | undefined;
   }): Promise<Reply> {
-    const { url, method, headers, body, form, stream, timeout, maxRetries, userSignal } = args;
+    const {
+      url,
+      parsedUrl,
+      method,
+      headers,
+      body,
+      form,
+      stream,
+      timeout,
+      maxRetries,
+      userSignal,
+    } = args;
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -385,29 +406,104 @@ export class Transport {
         throw new GravixLayerAbortError('Request aborted.', { cause: userSignal.reason });
       }
 
+      const controller = new AbortController();
+      let timedOut = false;
+      let released = false;
+
+      const timer =
+        timeout > 0
+          ? setTimeout(() => {
+              timedOut = true;
+              controller.abort();
+            }, timeout)
+          : undefined;
+
+      const onUserAbort = () => controller.abort();
+      userSignal?.addEventListener('abort', onUserAbort, { once: true });
+
+      const release = () => {
+        if (released) return;
+        released = true;
+        if (timer !== undefined) clearTimeout(timer);
+        userSignal?.removeEventListener('abort', onUserAbort);
+      };
+
+      const failure = (error: unknown): GravixLayerError => {
+        if (error instanceof GravixLayerError) return error;
+        if (userSignal?.aborted) {
+          return new GravixLayerAbortError('Request aborted.', { cause: userSignal.reason });
+        }
+        if (timedOut) {
+          return new GravixLayerTimeoutError(`Request timed out after ${timeout}ms.`, {
+            cause: error,
+          });
+        }
+        return new GravixLayerConnectionError(
+          error instanceof Error ? error.message : String(error),
+          {
+            cause: error,
+          },
+        );
+      };
+
+      const wire: WireRequest = {
+        url,
+        parsedUrl,
+        method,
+        headers,
+        body,
+        form,
+        signal: controller.signal,
+        stream,
+      };
+
       let reply: Reply;
       try {
-        reply = await this.fetchOnce({
-          url,
-          method,
-          headers,
-          body,
-          form,
-          stream,
-          timeout,
-          userSignal,
-        });
+        const wireReply = await this.config.dispatch(wire);
+
+        let liveStream: ReadableStream<Uint8Array> | null = null;
+        if (stream && SUCCESS_STATUS.has(wireReply.status) && wireReply.body) {
+          // Headers arrived, so the timeout has done its job. Teardown is
+          // deferred until the body is drained or cancelled, which keeps the
+          // caller's abort signal wired to the live stream.
+          if (timer !== undefined) clearTimeout(timer);
+          liveStream = withStreamCleanup(wireReply.body, release, failure);
+        }
+
+        reply = {
+          status: wireReply.status,
+          statusText: wireReply.statusText,
+          headers: wireReply.headers,
+          stream: liveStream,
+          read: () =>
+            wireReply.bytes().then(
+              (bytes) => {
+                release();
+                return bytes;
+              },
+              (error) => {
+                release();
+                throw failure(error);
+              },
+            ),
+          discard: () => {
+            release();
+            wireReply.cancel();
+          },
+        };
       } catch (error) {
+        release();
+        const wrapped = failure(error);
         // A caller-initiated abort is final; a timeout or socket failure is not.
         // Programmer errors (closed client, bad arguments) must not be retried.
-        if (error instanceof GravixLayerAbortError) throw error;
-        if (error instanceof GravixLayerInvalidArgumentError) throw error;
-        lastError = error;
+        if (wrapped instanceof GravixLayerAbortError) throw wrapped;
+        if (wrapped instanceof GravixLayerInvalidArgumentError) throw wrapped;
+        lastError = wrapped;
         if (REPLAYABLE_METHOD.has(method) && attempt < maxRetries) {
           await backoffSleep(backoffMs(attempt), userSignal);
           continue;
         }
-        throw error;
+        throw wrapped;
       }
 
       const { status } = reply;
@@ -429,107 +525,6 @@ export class Transport {
     }
 
     throw new GravixLayerError('Failed to complete request.', { cause: lastError });
-  }
-
-  /** One attempt, including timeout wiring and error normalization. */
-  private async fetchOnce(args: {
-    url: string;
-    method: string;
-    headers: Record<string, string>;
-    body: string | undefined;
-    form: FormData | undefined;
-    stream: boolean;
-    timeout: number;
-    userSignal: AbortSignal | undefined;
-  }): Promise<Reply> {
-    const { url, method, headers, body, form, stream, timeout, userSignal } = args;
-
-    const controller = new AbortController();
-    let timedOut = false;
-    let released = false;
-
-    const timer =
-      timeout > 0
-        ? setTimeout(() => {
-            timedOut = true;
-            controller.abort();
-          }, timeout)
-        : undefined;
-
-    const onUserAbort = () => controller.abort();
-    userSignal?.addEventListener('abort', onUserAbort, { once: true });
-
-    const release = () => {
-      if (released) return;
-      released = true;
-      if (timer !== undefined) clearTimeout(timer);
-      userSignal?.removeEventListener('abort', onUserAbort);
-    };
-
-    const failure = (error: unknown): GravixLayerError => {
-      if (error instanceof GravixLayerError) return error;
-      if (userSignal?.aborted) {
-        return new GravixLayerAbortError('Request aborted.', { cause: userSignal.reason });
-      }
-      if (timedOut) {
-        return new GravixLayerTimeoutError(`Request timed out after ${timeout}ms.`, {
-          cause: error,
-        });
-      }
-      return new GravixLayerConnectionError(
-        error instanceof Error ? error.message : String(error),
-        {
-          cause: error,
-        },
-      );
-    };
-
-    const wire: WireRequest = {
-      url,
-      method,
-      headers,
-      body,
-      form,
-      signal: controller.signal,
-      stream,
-    };
-
-    let wireReply: WireResponse;
-    try {
-      wireReply = await this.config.dispatch(wire);
-    } catch (error) {
-      release();
-      throw failure(error);
-    }
-
-    let liveStream: ReadableStream<Uint8Array> | null = null;
-    if (stream && SUCCESS_STATUS.has(wireReply.status) && wireReply.body) {
-      // Headers arrived, so the timeout has done its job. Teardown is
-      // deferred until the body is drained or cancelled, which keeps the
-      // caller's abort signal wired to the live stream.
-      if (timer !== undefined) clearTimeout(timer);
-      liveStream = withStreamCleanup(wireReply.body, release, failure);
-    }
-
-    return {
-      status: wireReply.status,
-      statusText: wireReply.statusText,
-      headers: wireReply.headers,
-      stream: liveStream,
-      read: async () => {
-        try {
-          return await wireReply.bytes();
-        } catch (error) {
-          throw failure(error);
-        } finally {
-          release();
-        }
-      },
-      discard: () => {
-        release();
-        wireReply.cancel();
-      },
-    };
   }
 }
 
