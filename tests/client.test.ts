@@ -148,10 +148,10 @@ describe('request headers', () => {
   });
 });
 
-describe('warmup', () => {
+describe('connect', () => {
   it('issues one minimal list request', async () => {
     const { client, http } = testClient([jsonResponse({ runtimes: [], total: 0 })]);
-    await client.warmup();
+    await client.connect();
 
     expect(http.requests).toHaveLength(1);
     expect(http.query().get('limit')).toBe('1');
@@ -160,7 +160,7 @@ describe('warmup', () => {
 
   it('surfaces an authentication failure', async () => {
     const { client } = testClient([new Response('nope', { status: 401 })]);
-    await expect(client.warmup()).rejects.toThrow('Authentication failed.');
+    await expect(client.connect()).rejects.toThrow('Authentication failed.');
   });
 });
 

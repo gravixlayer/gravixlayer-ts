@@ -756,17 +756,20 @@ export function createNativeNodeFetch(options: NativeNodeFetchOptions = {}): Nat
     return created;
   };
 
-  // The first lane's connect starts with the lookup the constructor already
-  // fired, so the first request finds a session mid-handshake instead of
-  // starting from nothing. One lane, not the pool: a client that never
-  // bursts never needs more than the connection it already pays for.
+  // Every lane's connect starts with the lookup the constructor already
+  // fired, so the handshakes run in parallel and a burst lands on sessions
+  // that are already open instead of queueing inside `sessionFor` while
+  // lanes dial. Idle lanes are unref'd and cost a quiet client nothing but
+  // a few sockets.
   if (
     warmOrigin !== undefined &&
     http2Wanted &&
     warmOrigin.protocol === 'https:' &&
     (pool.sessions.get(warmOrigin.origin)?.entries.length ?? 0) === 0
   ) {
-    openLane(warmOrigin.origin, warmOrigin);
+    while ((pool.sessions.get(warmOrigin.origin)?.entries.length ?? 0) < H2_LANES) {
+      openLane(warmOrigin.origin, warmOrigin);
+    }
   }
 
   /**

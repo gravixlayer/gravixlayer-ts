@@ -254,7 +254,7 @@ export class GravixLayer implements ClientContext {
   /**
    * Open connections to the API ahead of the first real request.
    *
-   * Loads native HTTP bindings, opens the pooled HTTP/2 sessions, then sends
+   * Loads native HTTP bindings, opens every pooled HTTP/2 session, then sends
    * one small authenticated request so TCP, TLS, and the pooled connections
    * are already ready when latency matters. Most useful right before issuing
    * several requests at once.
@@ -262,7 +262,7 @@ export class GravixLayer implements ClientContext {
    * Throws the same errors any request would, which makes it a cheap way to
    * verify credentials at startup.
    */
-  async warmup(options: RequestOptions = {}): Promise<void> {
+  async connect(options: RequestOptions = {}): Promise<void> {
     await this.transport.preconnect();
     await this.transport.requestVoid({
       method: 'GET',
@@ -270,6 +270,13 @@ export class GravixLayer implements ClientContext {
       service: SERVICES.agents,
       options,
     });
+  }
+
+  /**
+   * @deprecated Use {@link connect} — same behavior, clearer name.
+   */
+  async warmup(options: RequestOptions = {}): Promise<void> {
+    return this.connect(options);
   }
 
   /**

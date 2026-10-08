@@ -40,7 +40,7 @@ try {
 // 2. A bad key is reported as an authentication error, not a generic failure.
 try {
   const misconfigured = new GravixLayer({ apiKey: 'not-a-real-key' });
-  await misconfigured.warmup();
+  await misconfigured.connect();
 } catch (error) {
   if (error instanceof GravixLayerAuthenticationError) {
     console.log(`Auth       : ${error.message} (status ${error.status})`);

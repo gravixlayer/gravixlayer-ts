@@ -5,6 +5,12 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Renamed `warmup()` to `connect()` (the old name remains as a deprecated
+  alias). The constructor now opens every pooled HTTP/2 session eagerly —
+  handshakes run in parallel alongside the DNS prefetch — so a burst of
+  requests lands on warm connections instead of queueing inside the first
+  measured calls while lanes dial.
 ## [0.1.30] - 2026-10-06
   The constructor now fires the first lane's handshake alongside the DNS
   prefetch, so a create called right after `new GravixLayer()` finds a

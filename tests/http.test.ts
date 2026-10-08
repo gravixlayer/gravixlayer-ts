@@ -214,7 +214,7 @@ describe('pooled fetch', () => {
     }
   });
 
-  it('opens the first HTTP/2 lane while the client constructs', async () => {
+  it('opens the HTTP/2 session pool while the client constructs', async () => {
     const certs = selfSignedCerts();
     let sessions = 0;
     const server = createSecureServer(certs);
@@ -240,12 +240,12 @@ describe('pooled fetch', () => {
     });
 
     try {
-      // No request yet: the constructor already fired the lane's handshake.
-      await vi.waitFor(() => expect(sessions).toBe(1));
+      // No request yet: the constructor already opened the whole lane pool.
+      await vi.waitFor(() => expect(sessions).toBe(4));
       const response = await pooled.fetch(`https://ctor.test:${port}/`, {});
       expect(response.status).toBe(200);
       await response.body?.cancel().catch(() => undefined);
-      expect(sessions).toBe(1);
+      expect(sessions).toBe(4);
     } finally {
       await pooled.close();
       await closeServer(server);

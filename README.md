@@ -65,8 +65,8 @@ const client = new GravixLayer({
 Construct the client once and reuse it. On Node, the SDK keeps pooled
 connections to the API, and the HTTP/2 session is shared between client
 instances in the same process — a second client never pays a second handshake.
-Connections open lazily on the first request; call `await client.warmup()` if
-you want the connection and credentials verified before a request that matters.
+Pooled connections open with the client; call `await client.connect()` if you
+want the pool open and credentials verified before a request that matters.
 Call `await client.close()` when a short-lived process is done so keep-alive
 sockets are destroyed and the process can exit.
 

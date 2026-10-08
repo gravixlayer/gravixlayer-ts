@@ -245,7 +245,7 @@ export class Transport {
   /**
    * Warm the connection to the API so the next request does not pay for it.
    *
-   * Does not send an application request. Credential checks stay on `warmup()`.
+   * Does not send an application request. Credential checks stay on `connect()`.
    */
   async preconnect(): Promise<void> {
     let origin: string | undefined;
