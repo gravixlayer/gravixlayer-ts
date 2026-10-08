@@ -5,6 +5,7 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.31] - 2026-10-08
 ### Changed
 - Renamed `warmup()` to `connect()` (the old name remains as a deprecated
   alias). The constructor now opens every pooled HTTP/2 session eagerly —
