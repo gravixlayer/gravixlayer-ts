@@ -5,7 +5,7 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-## [0.1.32] - 2026-10-08
+## [0.1.33] - 2026-10-08
 ### Fixed
 - A burst of requests no longer waits while HTTP/2 lanes take turns
   connecting. All of an origin's lanes now call `tls.connect` in one turn —
@@ -14,6 +14,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dialing only after the previous lane's connect returned. The TLS stack is
   initialized while the module loads, so that one-time cost is not part of
   the first burst.
+## [0.1.32] - 2026-10-08
 ### Changed
 - Thin per-request dispatch pipeline: a request that finds an already-open
   HTTP/2 lane now goes straight to the stream write — the pool keeps a
