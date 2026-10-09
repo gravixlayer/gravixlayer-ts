@@ -5,6 +5,7 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.35] - 2026-10-09
 ### Fixed
 - A buffered HTTP/2 body is sent with its headers. The lane thread ends that
   stream before it returns to its event loop, so a JSON POST no longer waits
