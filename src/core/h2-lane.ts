@@ -6,7 +6,9 @@
  * server flight is already sitting in the kernel — the later lanes wait on
  * the earlier lanes' certificate checks. Each lane here owns a thread, so
  * those checks run together. A dial is a post to that thread, not a place in
- * a queue, and a request does not take a lock to use its lane.
+ * a queue, and a request does not take a lock to use its lane. A buffered
+ * body travels with its headers, so the thread finishes that stream before
+ * it returns to the event loop.
  *
  * The thread is started while this module loads, in parallel with the rest
  * of the SDK's startup, so the first burst does not pay for creating it.
@@ -308,8 +310,9 @@ port.on('message', (msg) => {
     return;
   }
   let req;
+  const hasBody = msg.body && msg.body.byteLength > 0;
   try {
-    req = session.request(msg.headers, { endStream: msg.endStream === true });
+    req = session.request(msg.headers, { endStream: msg.endStream === true && !hasBody });
   } catch (error) {
     port.postMessage({
       t: 'error',
@@ -331,9 +334,12 @@ port.on('message', (msg) => {
     port.postMessage({ t: 'response', gen, id: msg.id, headers: plain });
   });
   req.on('data', (chunk) => {
-    const copy = new Uint8Array(chunk.byteLength);
-    copy.set(chunk);
-    port.postMessage({ t: 'data', gen, id: msg.id, chunk: copy }, [copy.buffer]);
+    // The chunk aliases the session read buffer. Transferring that buffer
+    // detaches bytes the session still reads, so the slice is copied into a
+    // buffer this message owns. One copy; the receiver does not copy it again.
+    const view = new Uint8Array(chunk.byteLength);
+    view.set(chunk);
+    port.postMessage({ t: 'data', gen, id: msg.id, chunk: view }, [view.buffer]);
   });
   req.on('end', () => port.postMessage({ t: 'end', gen, id: msg.id }));
   req.on('error', (error) => {
@@ -349,6 +355,18 @@ port.on('message', (msg) => {
     streams.delete(msg.id);
     port.postMessage({ t: 'close', gen, id: msg.id });
   });
+  if (hasBody) {
+    const view = msg.body;
+    // View of the transferred buffer, not a second copy. end() reads it
+    // before this turn yields, so the server gets the body and END_STREAM
+    // without a trip back to the main thread.
+    const buf = Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+    try {
+      req.end(buf);
+    } catch (error) {
+      req.destroy(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
 });
 if (workerData && workerData.ready) {
   const view = new Int32Array(workerData.ready);
@@ -494,7 +512,10 @@ export interface LaneSocket {
  * HTTP/2 session owned by a lane thread.
  *
  * Dispatch talks to it the way it talks to a session on the main thread.
- * `request` posts the headers; the body and the response cross as messages.
+ * A buffered body is posted with the headers. A streamed body still crosses
+ * as writes, and those wait for acknowledgement so a large upload applies
+ * backpressure. Response slices are copied once: they alias the session's
+ * read buffer, and moving that buffer detaches memory the session still reads.
  */
 export interface LaneSession {
   closed: boolean;
@@ -502,6 +523,14 @@ export interface LaneSession {
   request(
     headers: Record<string, HeaderValue | undefined>,
     options?: { endStream?: boolean },
+  ): DuplexLike;
+  /**
+   * Open a stream and, when `body` is present, end it in the same turn the
+   * headers are sent. `undefined` ends the stream with no body.
+   */
+  requestWithBody(
+    headers: Record<string, HeaderValue | undefined>,
+    body: Uint8Array | undefined,
   ): DuplexLike;
   ping(callback: (error: Error | null) => void): boolean;
   close(): void;
@@ -586,6 +615,26 @@ export function laneHandshakeThreads(): readonly number[] {
  */
 export function useLaneThreads(on: boolean): void {
   enabled = on;
+}
+
+/**
+ * A buffer this message can take.
+ *
+ * A view that covers its whole `ArrayBuffer` is moved to the lane thread.
+ * Anything else is a slice of a buffer something else still reads — the
+ * session pool, or a caller — so those bytes are copied first.
+ */
+function exclusiveBytes(chunk: Uint8Array): Uint8Array {
+  if (
+    chunk.byteOffset === 0 &&
+    chunk.byteLength === chunk.buffer.byteLength &&
+    chunk.buffer instanceof ArrayBuffer
+  ) {
+    return chunk;
+  }
+  const copy = new Uint8Array(chunk.byteLength);
+  copy.set(chunk);
+  return copy;
 }
 
 class LaneThread {
@@ -887,7 +936,11 @@ class LaneThread {
     callback(message.error ? new Error(message.error) : null);
   }
 
-  openStream(headers: Record<string, HeaderValue | undefined>, endStream: boolean): DuplexLike {
+  openStream(
+    headers: Record<string, HeaderValue | undefined>,
+    endStream: boolean,
+    body?: Uint8Array,
+  ): DuplexLike {
     const id = this.nextId;
     this.nextId += 1;
     this.streamCount += 1;
@@ -911,6 +964,8 @@ class LaneThread {
           cb();
           return;
         }
+        // Copy before the acknowledgement. The caller may reuse this buffer
+        // once `cb` runs, and the chunk is often a slice of a shared one.
         const copy = new Uint8Array(chunk.byteLength);
         copy.set(chunk);
         writes.push(cb);
@@ -1005,8 +1060,19 @@ class LaneThread {
       const value = headers[key];
       if (value !== undefined) wireHeaders[key] = value;
     }
-    this.post({ t: 'request', gen: this.gen, id, headers: wireHeaders, endStream });
-    if (endStream) stream.end();
+    const carried = body !== undefined && body.byteLength > 0 ? exclusiveBytes(body) : undefined;
+    if (carried !== undefined) {
+      // Headers and body in one message. The thread calls request() and end()
+      // before it handles anything else, so END_STREAM is not gated on a
+      // write acknowledgement coming back to this thread.
+      this.post(
+        { t: 'request', gen: this.gen, id, headers: wireHeaders, endStream: false, body: carried },
+        [carried.buffer as ArrayBuffer],
+      );
+    } else {
+      this.post({ t: 'request', gen: this.gen, id, headers: wireHeaders, endStream });
+      if (endStream) stream.end();
+    }
     return stream;
   }
 
@@ -1108,6 +1174,14 @@ class LaneBound implements LaneSession {
     options?: { endStream?: boolean },
   ): DuplexLike {
     return this.thread.openStream(headers, options?.endStream === true);
+  }
+
+  requestWithBody(
+    headers: Record<string, HeaderValue | undefined>,
+    body: Uint8Array | undefined,
+  ): DuplexLike {
+    const endStream = body === undefined || body.byteLength === 0;
+    return this.thread.openStream(headers, endStream, body);
   }
 
   ping(callback: (error: Error | null) => void): boolean {

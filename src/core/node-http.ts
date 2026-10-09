@@ -1592,7 +1592,19 @@ function h2Dispatch(
       reject(signal.reason ?? new Error('aborted'));
       return;
     }
-    const req = session.request(h2Headers, { endStream: body === undefined });
+    // A lane thread ends a buffered body in the same turn it sends the headers.
+    // The in-process session has no such method and keeps the duplex write.
+    const lane = session as Http2Session & {
+      requestWithBody?(
+        headers: Http2Headers,
+        body: Uint8Array | undefined,
+      ): ReturnType<Http2Session['request']>;
+    };
+    const carried = typeof lane.requestWithBody === 'function' ? bufferedLaneBody(body) : null;
+    const req =
+      carried !== null && lane.requestWithBody !== undefined
+        ? lane.requestWithBody(h2Headers, carried)
+        : session.request(h2Headers, { endStream: body === undefined });
     req.once('close', onDone);
     const onAbort = () => {
       const reason = signal?.reason ?? new Error('aborted');
@@ -1657,8 +1669,26 @@ function h2Dispatch(
         },
       });
     });
-    sendBody(req, body);
+    if (carried === null) sendBody(req, body);
   });
+}
+
+/**
+ * Bytes a lane thread can end with the headers.
+ *
+ * `null` is a body that still has to stream (a multipart upload). A string is
+ * encoded once and that buffer is handed over. A `Uint8Array` is copied so
+ * the caller's buffer stays usable if this attempt fails before it is sent.
+ */
+function bufferedLaneBody(body: OutgoingBody): Uint8Array | undefined | null {
+  if (body === undefined) return undefined;
+  if (typeof body === 'string') return utf8Encode(body);
+  if (body instanceof Uint8Array) {
+    const copy = new Uint8Array(body.byteLength);
+    copy.set(body);
+    return copy;
+  }
+  return null;
 }
 
 function h1Dispatch(
@@ -2006,7 +2036,7 @@ function isEmptyBody(status: number, method: string): boolean {
  */
 function readNodeBody(
   stream: {
-    on(event: 'data', listener: (chunk: Buffer | string) => void): void;
+    on(event: 'data', listener: (chunk: Uint8Array | string) => void): void;
     once(event: 'end', listener: () => void): void;
     once(event: 'error', listener: (error: Error) => void): void;
     once(event: 'close', listener: () => void): void;
@@ -2016,7 +2046,7 @@ function readNodeBody(
   },
 ): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
+    const chunks: Uint8Array[] = [];
     let ended = false;
     const earlyClose = () => {
       // A reset mid-body must not leave the read waiting on an 'end' that
@@ -2024,12 +2054,19 @@ function readNodeBody(
       if (!ended) reject(new Error('The response stream closed before the body completed.'));
     };
     stream.on('data', (chunk) => {
-      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+      chunks.push(typeof chunk === 'string' ? utf8Encode(chunk) : chunk);
     });
     stream.once('end', () => {
       ended = true;
       if (chunks.length === 0) {
         resolve(EMPTY_BYTES);
+        return;
+      }
+      // One chunk is already a single buffer. Concatenating it would copy
+      // those bytes again, which is the whole body of a small JSON response.
+      if (chunks.length === 1) {
+        const only = chunks[0] as Uint8Array;
+        resolve(new Uint8Array(only.buffer, only.byteOffset, only.byteLength));
         return;
       }
       const buffer = Buffer.concat(chunks);

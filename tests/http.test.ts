@@ -1519,6 +1519,52 @@ describe('multipart bodies', () => {
     }
   });
 
+  it('sends a buffered POST body with the headers and returns every response byte', async () => {
+    const certs = selfSignedCerts();
+    const bodies: Buffer[] = [];
+    const payload = Buffer.alloc(256 * 1024 + 17);
+    for (let i = 0; i < payload.length; i += 1) payload[i] = i & 0xff;
+    const server = createSecureServer(certs);
+    server.on('stream', (stream) => {
+      const chunks: Buffer[] = [];
+      stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      stream.on('end', () => {
+        bodies.push(Buffer.concat(chunks));
+        stream.respond({ ':status': 200, 'content-type': 'application/octet-stream' });
+        stream.end(payload);
+      });
+    });
+    await listen(server);
+    const port = (server.address() as AddressInfo).port;
+    const pooled = createPooledFetch({ http2: true, rejectUnauthorized: false });
+    const owned = Uint8Array.from([9, 8, 7, 6, 5]);
+
+    try {
+      const json = await pooled.fetch(`https://127.0.0.1:${port}/create`, {
+        method: 'POST',
+        body: '{"template":"base-small"}',
+        headers: { 'content-type': 'application/json' },
+      });
+      expect(json.status).toBe(200);
+      const downloaded = new Uint8Array(await json.arrayBuffer());
+      expect(Buffer.from(downloaded).equals(payload)).toBe(true);
+      expect(bodies[0]?.toString()).toBe('{"template":"base-small"}');
+
+      const binary = await pooled.fetch(`https://127.0.0.1:${port}/bytes`, {
+        method: 'POST',
+        body: owned,
+      });
+      expect(binary.status).toBe(200);
+      await binary.arrayBuffer();
+      expect(bodies[1]?.equals(Buffer.from([9, 8, 7, 6, 5]))).toBe(true);
+      expect(owned[0]).toBe(9);
+    } finally {
+      await pooled.close();
+      await closeServer(server);
+      rmSync(certs.dir, { recursive: true, force: true });
+    }
+  });
+
   it('stops writing a file part once the request is aborted', async () => {
     let received = 0;
     const server = createHttpServer((req) => {

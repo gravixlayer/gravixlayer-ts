@@ -5,6 +5,12 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- A buffered HTTP/2 body is sent with its headers. The lane thread ends that
+  stream before it returns to its event loop, so a JSON POST no longer waits
+  for a write acknowledgement to come back before the server can read the
+  body. Response slices are copied once out of the session read buffer, which
+  stays on the lane thread, and a one-chunk body is not copied a second time.
 ## [0.1.34] - 2026-10-08
 ### Fixed
 - HTTP/2 lane handshakes no longer share one thread. A burst's later lanes
