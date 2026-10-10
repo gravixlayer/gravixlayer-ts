@@ -406,8 +406,8 @@ export class TemplateBuilder {
    * {@link TemplateBuilder.waitForPort} for a host-side TCP probe.
    * Timeouts below 300 seconds are raised to 300.
    */
-  readyCmd(command: string | TcpPortCheck, timeoutSeconds = DEFAULT_READY_TIMEOUT_SECS): this {
-    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 1) {
+  readyCmd(command: string | TcpPortCheck, timeout = DEFAULT_READY_TIMEOUT_SECS): this {
+    if (!Number.isFinite(timeout) || timeout < 1) {
       throw new GravixLayerInvalidArgumentError('Ready timeout must be at least 1 second.');
     }
     if (command instanceof TcpPortCheck) {
@@ -417,7 +417,7 @@ export class TemplateBuilder {
       this._readyCmd = command;
       this._readyPort = undefined;
     }
-    this._readyTimeoutSeconds = timeoutSeconds;
+    this._readyTimeoutSeconds = timeout;
     return this;
   }
 

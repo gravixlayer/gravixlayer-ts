@@ -272,25 +272,25 @@ describe('git', () => {
     expect(result.stdout).toBe('done');
   });
 
-  it('sends timeoutSeconds as timeout_seconds on remote operations', async () => {
+  it('sends timeout as timeout_seconds on remote operations', async () => {
     const { client, http } = testClient([jsonResponse(OK)]);
 
     await client.runtime.git.clone(RUNTIME_ID, 'https://example.test/repo.git', '/workspace/repo', {
-      timeoutSeconds: 45,
+      timeout: 45,
     });
     expect(http.jsonBody()).toEqual(expect.objectContaining({ timeout_seconds: 45 }));
 
-    await client.runtime.git.pull(RUNTIME_ID, '/workspace/repo', { timeoutSeconds: 20 });
+    await client.runtime.git.pull(RUNTIME_ID, '/workspace/repo', { timeout: 20 });
     expect(http.jsonBody()).toEqual(expect.objectContaining({ timeout_seconds: 20 }));
 
-    await client.runtime.git.push(RUNTIME_ID, '/workspace/repo', { timeoutSeconds: 15 });
+    await client.runtime.git.push(RUNTIME_ID, '/workspace/repo', { timeout: 15 });
     expect(http.jsonBody()).toEqual(expect.objectContaining({ timeout_seconds: 15 }));
 
-    await client.runtime.git.fetch(RUNTIME_ID, '/workspace/repo', { timeoutSeconds: 30 });
+    await client.runtime.git.fetch(RUNTIME_ID, '/workspace/repo', { timeout: 30 });
     expect(http.jsonBody()).toEqual(expect.objectContaining({ timeout_seconds: 30 }));
   });
 
-  it('omits timeout_seconds when timeoutSeconds is unset', async () => {
+  it('omits timeout_seconds when timeout is unset', async () => {
     const { client, http } = testClient([jsonResponse(OK)]);
     await client.runtime.git.clone(RUNTIME_ID, 'https://example.test/repo.git', '/workspace/repo');
     expect(http.jsonBody()).not.toHaveProperty('timeout_seconds');
@@ -573,7 +573,7 @@ describe('published services', () => {
 
     const handle = await client.runtime.service.connect(RUNTIME_ID, 8000);
     const error = await expectRejection(
-      handle.get('/health', { timeout: 5 }),
+      handle.get('/health', { requestTimeoutMs: 5 }),
       GravixLayerTimeoutError,
     );
 

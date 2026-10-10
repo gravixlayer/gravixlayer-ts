@@ -21,7 +21,7 @@ console.log('--- await using ---');
 {
   await using sandbox = await client.runtime.create({
     template: TEMPLATE,
-    timeoutSeconds: 300,
+    timeout: 300,
   });
 
   console.log(`Runtime    : ${sandbox.runtimeId}`);
@@ -36,7 +36,7 @@ console.log('--- await using ---');
 console.log('Runtime terminated on the way out of the block.');
 
 console.log('\n--- try/finally ---');
-const sandbox = await client.runtime.create({ template: TEMPLATE, timeoutSeconds: 300 });
+const sandbox = await client.runtime.create({ template: TEMPLATE, timeout: 300 });
 try {
   const version = await sandbox.runCmd('python --version');
   console.log(`Python     : ${version.stdout.trim()}`);

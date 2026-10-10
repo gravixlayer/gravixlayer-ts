@@ -585,7 +585,7 @@ describe('fork', () => {
     const { client, http } = testClient([jsonResponse(FORK_RESP)]);
     await client.runtime.fork(RUNTIME_ID, {
       count: 5,
-      timeoutSeconds: 600,
+      timeout: 600,
       persistSnapshot: true,
       name: 'kept-ckpt',
       envVars: { A: 'b' },
@@ -622,7 +622,7 @@ describe('fork', () => {
     const { client, http } = testClient([jsonResponse(resp)]);
     const res = await client.snapshots.fork('ckpt-1', {
       count: 10,
-      timeoutSeconds: 300,
+      timeout: 300,
       envVars: { X: '1' },
     });
     expect(http.last().url).toContain('/v1/agents/snapshots/ckpt-1/fork');

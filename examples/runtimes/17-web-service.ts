@@ -59,7 +59,7 @@ try {
   sandbox = await client.runtime.create({
     template: TEMPLATE,
     networkPolicyIds: [policy.id],
-    timeoutSeconds: 600,
+    timeout: 600,
   });
   console.log(`Runtime    : ${sandbox.runtimeId}`);
 
@@ -67,7 +67,7 @@ try {
   await sandbox.file.write(`${APP_DIR}/main.py`, APP);
 
   const install = await sandbox.runCmd('pip install fastapi uvicorn --quiet', {
-    timeoutSeconds: 240,
+    timeout: 240,
   });
   if (install.exitCode !== 0) throw new Error(install.stderr || install.stdout);
 

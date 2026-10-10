@@ -20,7 +20,7 @@ const client = new GravixLayer();
 
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
-const sandbox = await client.runtime.create({ template: TEMPLATE, timeoutSeconds: 1800 });
+const sandbox = await client.runtime.create({ template: TEMPLATE, timeout: 1800 });
 console.log(`1. Created : ${sandbox.runtimeId} (${sandbox.status})`);
 
 // Put some state in the interpreter and on disk.

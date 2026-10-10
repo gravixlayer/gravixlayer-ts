@@ -94,6 +94,19 @@ export function assertPositiveInt(value: number, label: string): number {
   return value;
 }
 
+/**
+ * `timeoutSeconds` used to name product-duration option fields; a stale
+ * caller gets a loud error rather than silently losing the duration it asked
+ * for. `what` describes the duration (e.g. `lifetime`, `guest deadline`).
+ */
+export function rejectRemovedTimeoutSeconds(options: object, what: string): void {
+  if ((options as Record<string, unknown>)['timeoutSeconds'] !== undefined) {
+    throw new GravixLayerInvalidArgumentError(
+      `\`timeoutSeconds\` was removed — pass the ${what} in seconds as \`timeout\`.`,
+    );
+  }
+}
+
 /** Assert that a value is one of an allowed set, returning the normalized form. */
 export function assertOneOf<T extends string>(
   value: string,

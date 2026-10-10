@@ -37,7 +37,7 @@ try {
   sandbox = await client.runtime.create({
     template: TEMPLATE,
     networkPolicyIds: [policy.id],
-    timeoutSeconds: 600,
+    timeout: 600,
   });
   console.log(`Runtime    : ${sandbox.runtimeId}`);
   console.log(`Cloning    : ${CLONE_URL} -> ${REPO}\n`);

@@ -29,7 +29,7 @@ try {
   sandbox = await client.runtime.create({
     template: TEMPLATE,
     networkPolicyIds: [policy.id],
-    timeoutSeconds: 600,
+    timeout: 600,
   });
   console.log(`Runtime    : ${sandbox.runtimeId}`);
 
@@ -50,7 +50,7 @@ try {
   //    commands a longer timeout than the default.
   const install = await sandbox.runCmd('pip', {
     args: ['install', 'requests', '--quiet'],
-    timeoutSeconds: 180,
+    timeout: 180,
   });
   console.log(`\npip install: exit=${install.exitCode}`);
 

@@ -7,6 +7,7 @@ import {
   GravixLayerConnectionError,
   GravixLayerError,
   GravixLayerInvalidArgumentError,
+  GravixLayerTimeoutError,
 } from '../src/index.js';
 import {
   collect,
@@ -42,7 +43,7 @@ describe('create', () => {
       template: 'node-20',
       cloud: 'gcp',
       region: 'europe-west1',
-      timeoutSeconds: 600,
+      timeout: 600,
       envVars: { NODE_ENV: 'production' },
       metadata: { owner: 'billing' },
       internetAccess: false,
@@ -63,6 +64,115 @@ describe('create', () => {
       providers: ['prov-1'],
       network_policy_ids: ['pol-1'],
     });
+  });
+
+  it('sends timeout as the sandbox lifetime in seconds', async () => {
+    const { client, http } = testClient([jsonResponse(runtimePayload())]);
+    await client.runtime.create({ timeout: 30 });
+
+    expect(http.jsonBody()).toEqual({
+      cloud: 'aws',
+      region: 'us-east-1',
+      template: 'base-small',
+      timeout: 30,
+    });
+  });
+
+  it('rejects the removed timeoutSeconds field rather than dropping the lifetime', async () => {
+    const { client, http } = testClient([jsonResponse(runtimePayload())]);
+    await expectRejection(
+      client.runtime.create({ timeoutSeconds: 45 } as never),
+      GravixLayerInvalidArgumentError,
+    );
+    expect(http.requests).toHaveLength(0);
+  });
+
+  it('rejects the removed timeoutSeconds field on every duration surface', async () => {
+    const { client, http } = testClient([jsonResponse({})]);
+    const stale = { timeoutSeconds: 45 } as never;
+
+    await expectRejection(
+      client.runtime.fork(RUNTIME_ID, stale),
+      GravixLayerInvalidArgumentError,
+    );
+    await expectRejection(
+      client.snapshots.fork('snap-1', stale),
+      GravixLayerInvalidArgumentError,
+    );
+    await expectRejection(
+      client.runtime.runCmd(RUNTIME_ID, 'ls', stale),
+      GravixLayerInvalidArgumentError,
+    );
+    await expectRejection(
+      client.runtime.runCode(RUNTIME_ID, 'x = 1', stale),
+      GravixLayerInvalidArgumentError,
+    );
+    await expectRejection(
+      client.runtime.git.clone(RUNTIME_ID, 'https://example.test/r.git', '/w/r', stale),
+      GravixLayerInvalidArgumentError,
+    );
+    expect(http.requests).toHaveLength(0);
+  });
+
+  it('uses requestTimeoutMs as the HTTP deadline and keeps timeout off that timer', async () => {
+    const { client } = testClient([], {
+      timeout: 0,
+      fetch: (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          });
+        }),
+    });
+
+    const error = await expectRejection(
+      client.runtime.create({ timeout: 600, requestTimeoutMs: 20 }),
+      GravixLayerTimeoutError,
+    );
+    expect(error.message).toContain('20ms');
+  });
+
+  it('applies the client timeout to create', async () => {
+    vi.useFakeTimers();
+    try {
+      const { client } = testClient([], {
+        fetch: (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => {
+              reject(new DOMException('The operation was aborted.', 'AbortError'));
+            });
+          }),
+      });
+
+      const pending = client.runtime.create({ template: 'base-small' });
+      const assertion = expectRejection(pending, GravixLayerTimeoutError);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect((await assertion).message).toContain('60000ms');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an explicit client timeout on create', async () => {
+    vi.useFakeTimers();
+    try {
+      const { client } = testClient([], {
+        timeout: 5_000,
+        fetch: (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => {
+              reject(new DOMException('The operation was aborted.', 'AbortError'));
+            });
+          }),
+      });
+
+      const pending = client.runtime.create({ template: 'base-small' });
+      const assertion = expectRejection(pending, GravixLayerTimeoutError);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect((await assertion).message).toContain('5000ms');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('sends a snapshot instead of a template', async () => {
@@ -91,8 +201,9 @@ describe('create', () => {
 
   it('rejects a non-positive timeout before sending anything', async () => {
     const { client, http } = testClient([jsonResponse(runtimePayload())]);
+    await expectRejection(client.runtime.create({ timeout: 0 }), GravixLayerInvalidArgumentError);
     await expectRejection(
-      client.runtime.create({ timeoutSeconds: 0 }),
+      client.runtime.create({ requestTimeoutMs: -1 }),
       GravixLayerInvalidArgumentError,
     );
     expect(http.requests).toHaveLength(0);
@@ -267,7 +378,7 @@ describe('commands', () => {
   it('converts the command timeout to milliseconds', async () => {
     const { client, http } = testClient([jsonResponse({ stdout: '', exit_code: 0 })]);
     await client.runtime.runCmd(RUNTIME_ID, 'sleep 1', {
-      timeoutSeconds: 30,
+      timeout: 30,
       args: ['--flag'],
       workingDir: '/tmp',
       environment: { A: '1' },
@@ -497,12 +608,12 @@ describe('commands', () => {
     ]);
     await client.runtime.runCmd(RUNTIME_ID, 'sleep', {
       background: true,
-      timeoutSeconds: 0,
+      timeout: 0,
     });
     expect(http.jsonBody()).toEqual({ command: 'sleep', background: true, timeout: 0 });
     await expect(
-      client.runtime.runCmd(RUNTIME_ID, 'sleep', { timeoutSeconds: -1 }),
-    ).rejects.toThrow('timeoutSeconds must be a non-negative integer.');
+      client.runtime.runCmd(RUNTIME_ID, 'sleep', { timeout: -1 }),
+    ).rejects.toThrow('timeout must be a non-negative integer.');
   });
 
   it('uses the server duration and deadline flag on a live stream', async () => {
@@ -797,7 +908,7 @@ describe('code', () => {
       language: 'javascript',
       contextId: 'ctx-1',
       environment: { A: '1' },
-      timeoutSeconds: 45,
+      timeout: 45,
     });
 
     expect(http.jsonBody()).toEqual({

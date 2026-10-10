@@ -15,7 +15,7 @@ import { AGENT_BUILD_PHASE_LABELS, BuildProgress, stderrIsTty } from '../core/pr
 import { sleep } from '../core/time.js';
 import type { RequestOptions } from '../core/transport.js';
 import { buildListEndpoint, pathSegment, SERVICES, type QueryValue } from '../core/url.js';
-import { assertNonEmpty } from '../core/validate.js';
+import { assertNonEmpty, rejectRemovedTimeoutSeconds } from '../core/validate.js';
 import {
   isTerminalAgentBuildStatus,
   normalizeFramework,
@@ -146,7 +146,7 @@ export interface ListAgentTemplatesOptions extends RequestOptions {
 function requestOptions(options: RequestOptions): RequestOptions {
   const out: RequestOptions = {};
   if (options.signal) out.signal = options.signal;
-  if (options.timeout !== undefined) out.timeout = options.timeout;
+  if (options.requestTimeoutMs !== undefined) out.requestTimeoutMs = options.requestTimeoutMs;
   if (options.maxRetries !== undefined) out.maxRetries = options.maxRetries;
   if (options.headers) out.headers = options.headers;
   return out;
@@ -343,7 +343,8 @@ export class Agents extends APIResource {
     if (options.mcpPort !== undefined) deployConfig.mcpPort = options.mcpPort;
     if (options.protocols !== undefined) deployConfig.protocols = options.protocols;
     if (options.isPublic !== undefined) deployConfig.isPublic = options.isPublic;
-    if (options.timeoutSeconds !== undefined) deployConfig.timeoutSeconds = options.timeoutSeconds;
+    rejectRemovedTimeoutSeconds(options, 'agent timeout');
+    if (options.timeout !== undefined) deployConfig.timeout = options.timeout;
     if (options.agentCard !== undefined) deployConfig.agentCard = options.agentCard;
 
     return parseAgentDeployResponse(

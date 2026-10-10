@@ -79,7 +79,7 @@ until you stop it, or until a timeout you set expires.
 const sandbox = await client.runtime.create({
   template: 'base-small',
   envVars: { APP_ENV: 'staging' },
-  timeoutSeconds: 600,
+  timeout: 600,
 });
 ```
 

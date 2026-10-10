@@ -106,7 +106,7 @@ export interface BuildAndWaitOptions extends BuildTemplateOptions {
 function requestOptions(options: RequestOptions): RequestOptions {
   const out: RequestOptions = {};
   if (options.signal) out.signal = options.signal;
-  if (options.timeout !== undefined) out.timeout = options.timeout;
+  if (options.requestTimeoutMs !== undefined) out.requestTimeoutMs = options.requestTimeoutMs;
   if (options.maxRetries !== undefined) out.maxRetries = options.maxRetries;
   if (options.headers) out.headers = options.headers;
   return out;

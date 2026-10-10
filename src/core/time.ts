@@ -3,28 +3,28 @@
 /**
  * Extra time the HTTP request waits after a guest command's own deadline.
  *
- * The server kills the process at `timeoutSeconds`; the client has to outlast
- * that plus the round trip that carries the result, otherwise a command that
- * ran to completion looks like a transport timeout.
+ * The server kills the process at the guest deadline; the client has to
+ * outlast that plus the round trip that carries the result, otherwise a
+ * command that ran to completion looks like a transport timeout.
  */
 export const GUEST_DEADLINE_MARGIN_MS = 30_000;
 
 /**
  * HTTP timeout for an operation that already has a guest-side deadline.
  *
- * An explicit per-request `timeout` always wins. When only the guest deadline
+ * An explicit `requestTimeoutMs` always wins. When only the guest deadline
  * is set, the transport waits that long plus {@link GUEST_DEADLINE_MARGIN_MS}.
  * `undefined` and `0` mean "use the client default". Zero is the server's
  * own default, not a zero-length deadline.
  */
 export function timeoutForGuestDeadline(
-  timeoutSeconds: number | undefined,
-  explicitTimeout: number | undefined,
+  timeout: number | undefined,
+  requestTimeoutMs: number | undefined,
 ): number | undefined {
-  if (explicitTimeout !== undefined) return explicitTimeout;
+  if (requestTimeoutMs !== undefined) return requestTimeoutMs;
   // Zero is the server default (omitted), not a zero-length guest deadline.
-  if (timeoutSeconds === undefined || timeoutSeconds === 0) return undefined;
-  return timeoutSeconds * 1000 + GUEST_DEADLINE_MARGIN_MS;
+  if (timeout === undefined || timeout === 0) return undefined;
+  return timeout * 1000 + GUEST_DEADLINE_MARGIN_MS;
 }
 
 /**

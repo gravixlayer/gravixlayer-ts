@@ -19,7 +19,7 @@ import {
 import { collect, jsonResponse, runtimePayload, RUNTIME_ID, testClient } from './helpers.js';
 
 /** Passed through on every call so the assertions see a concrete value. */
-const OPTIONS = { timeout: 1234 };
+const OPTIONS = { requestTimeoutMs: 1234 };
 
 /** Whatever a stubbed resource method resolves to. */
 const SENTINEL = { ok: true };

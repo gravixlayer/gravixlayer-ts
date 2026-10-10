@@ -325,7 +325,7 @@ export interface AgentDeployConfig {
   /** Environment variables available to the agent. */
   environment?: Record<string, string>;
   /** Seconds before the agent is automatically stopped. Omit to run indefinitely. */
-  timeoutSeconds?: number;
+  timeout?: number;
   /** Public description served at the agent-card URL. */
   agentCard?: AgentCard;
 }
@@ -345,7 +345,7 @@ export function serializeAgentDeploy(
     protocols: config.protocols?.length ? config.protocols : undefined,
     is_public: config.isPublic ? true : undefined,
     environment: Object.keys(config.environment ?? {}).length ? config.environment : undefined,
-    timeout: config.timeoutSeconds || undefined,
+    timeout: config.timeout || undefined,
   }) as Record<string, unknown>;
 
   if (config.agentCard) body['agent_card'] = serializeAgentCard(config.agentCard);

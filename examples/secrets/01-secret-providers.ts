@@ -67,7 +67,7 @@ try {
   sandbox = await client.runtime.create({
     template: TEMPLATE,
     providers: [provider.id],
-    timeoutSeconds: 600,
+    timeout: 600,
   });
   console.log(`\nRuntime    : ${sandbox.runtimeId}`);
 

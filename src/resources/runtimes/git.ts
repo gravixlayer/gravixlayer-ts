@@ -9,7 +9,12 @@
 import { asRecord } from '../../core/parse.js';
 import type { RequestOptions } from '../../core/transport.js';
 import { SERVICES } from '../../core/url.js';
-import { assertNonEmpty, assertPath, assertRuntimeId } from '../../core/validate.js';
+import {
+  assertNonEmpty,
+  assertPath,
+  assertRuntimeId,
+  rejectRemovedTimeoutSeconds,
+} from '../../core/validate.js';
 import { parseGitOperationResult, type GitOperationResult } from '../../types/runtime.js';
 import { APIResource } from '../resource.js';
 
@@ -25,7 +30,7 @@ export interface GitCloneOptions extends RequestOptions {
   /** Token for a private repository. */
   authToken?: string;
   /** Server-side deadline for the clone, in seconds. */
-  timeoutSeconds?: number;
+  timeout?: number;
 }
 
 /** Options for {@link RuntimeGit.pull} and {@link RuntimeGit.fetch}. */
@@ -37,7 +42,7 @@ export interface GitFetchOptions extends RequestOptions {
   /** Token for a private repository. */
   authToken?: string;
   /** Server-side deadline for the remote operation, in seconds. */
-  timeoutSeconds?: number;
+  timeout?: number;
 }
 
 /** Options for {@link RuntimeGit.push}. */
@@ -53,7 +58,7 @@ export interface GitPushOptions extends RequestOptions {
   /** Token authentication, which takes precedence over username and password. */
   authToken?: string;
   /** Server-side deadline for the push, in seconds. */
-  timeoutSeconds?: number;
+  timeout?: number;
 }
 
 /** Options for {@link RuntimeGit.commit}. */
@@ -70,7 +75,7 @@ export interface GitCommitOptions extends RequestOptions {
 function requestOptions(options: RequestOptions): RequestOptions {
   const out: RequestOptions = {};
   if (options.signal) out.signal = options.signal;
-  if (options.timeout !== undefined) out.timeout = options.timeout;
+  if (options.requestTimeoutMs !== undefined) out.requestTimeoutMs = options.requestTimeoutMs;
   if (options.maxRetries !== undefined) out.maxRetries = options.maxRetries;
   if (options.headers) out.headers = options.headers;
   return out;
@@ -92,7 +97,7 @@ export class RuntimeGit extends APIResource {
     if (options.branch !== undefined) body['branch'] = options.branch;
     if (options.depth !== undefined) body['depth'] = options.depth;
     if (options.authToken !== undefined) body['auth_token'] = options.authToken;
-    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
+    if (options.timeout !== undefined) body['timeout_seconds'] = options.timeout;
 
     return this.run(runtimeId, 'clone', body, options);
   }
@@ -147,7 +152,7 @@ export class RuntimeGit extends APIResource {
     if (options.remote !== undefined) body['remote'] = options.remote;
     if (options.branch !== undefined) body['branch'] = options.branch;
     if (options.authToken !== undefined) body['auth_token'] = options.authToken;
-    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
+    if (options.timeout !== undefined) body['timeout_seconds'] = options.timeout;
 
     return this.run(runtimeId, 'pull', body, options);
   }
@@ -163,7 +168,7 @@ export class RuntimeGit extends APIResource {
     const body: Record<string, unknown> = { repository_path: repositoryPath };
     if (options.remote !== undefined) body['remote'] = options.remote;
     if (options.authToken !== undefined) body['auth_token'] = options.authToken;
-    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
+    if (options.timeout !== undefined) body['timeout_seconds'] = options.timeout;
 
     return this.run(runtimeId, 'fetch', body, options);
   }
@@ -182,7 +187,7 @@ export class RuntimeGit extends APIResource {
     if (options.username !== undefined) body['username'] = options.username;
     if (options.password !== undefined) body['password'] = options.password;
     if (options.authToken !== undefined) body['auth_token'] = options.authToken;
-    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
+    if (options.timeout !== undefined) body['timeout_seconds'] = options.timeout;
 
     return this.run(runtimeId, 'push', body, options);
   }
@@ -267,6 +272,7 @@ export class RuntimeGit extends APIResource {
     options: RequestOptions,
   ): Promise<GitOperationResult> {
     assertRuntimeId(runtimeId);
+    rejectRemovedTimeoutSeconds(options, 'server-side deadline');
 
     return parseGitOperationResult(
       asRecord(

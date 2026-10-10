@@ -32,7 +32,7 @@ const NAME = `demo-egress-${Date.now()}`;
 async function canReach(sandbox: Runtime, host: string, port = 443): Promise<boolean> {
   const probe = await sandbox.runCmd('python', {
     args: ['-c', `import socket; socket.create_connection(('${host}', ${port}), 5)`],
-    timeoutSeconds: 30,
+    timeout: 30,
   });
   return probe.exitCode === 0;
 }
@@ -84,7 +84,7 @@ try {
   sandbox = await client.runtime.create({
     template: TEMPLATE,
     networkPolicyIds: [policy.id],
-    timeoutSeconds: 600,
+    timeout: 600,
   });
   console.log(`\nRuntime    : ${sandbox.runtimeId}`);
 

@@ -12,7 +12,12 @@
 import { asRecord, num } from '../core/parse.js';
 import type { RequestOptions } from '../core/transport.js';
 import { buildListEndpoint, encodePathSegment, SERVICES, type QueryValue } from '../core/url.js';
-import { assertNonEmpty, assertOneOf, assertRuntimeId } from '../core/validate.js';
+import {
+  assertNonEmpty,
+  assertOneOf,
+  assertRuntimeId,
+  rejectRemovedTimeoutSeconds,
+} from '../core/validate.js';
 import {
   parseForkResponse,
   parseSnapshot,
@@ -70,7 +75,7 @@ export interface ForkSnapshotOptions extends RequestOptions {
   /** Number of children to start (1–100). Defaults to 1. */
   count?: number;
   /** Timeout applied to each child, in seconds. */
-  timeoutSeconds?: number;
+  timeout?: number;
   /** Environment variables applied to every child. */
   envVars?: Record<string, string>;
   /** Metadata merged onto every child. */
@@ -81,7 +86,7 @@ export interface ForkSnapshotOptions extends RequestOptions {
 function requestOptions(options: RequestOptions): RequestOptions {
   const out: RequestOptions = {};
   if (options.signal) out.signal = options.signal;
-  if (options.timeout !== undefined) out.timeout = options.timeout;
+  if (options.requestTimeoutMs !== undefined) out.requestTimeoutMs = options.requestTimeoutMs;
   if (options.maxRetries !== undefined) out.maxRetries = options.maxRetries;
   if (options.headers) out.headers = options.headers;
   return out;
@@ -120,7 +125,7 @@ export class Snapshots extends APIResource {
     if (options.description !== undefined) body['description'] = options.description;
 
     const transport = requestOptions(options);
-    if (transport.timeout === undefined) transport.timeout = SNAPSHOT_CREATE_TIMEOUT_MS;
+    if (transport.requestTimeoutMs === undefined) transport.requestTimeoutMs = SNAPSHOT_CREATE_TIMEOUT_MS;
 
     return parseSnapshot(
       asRecord(
@@ -247,14 +252,15 @@ export class Snapshots extends APIResource {
    */
   async fork(snapshot: string, options: ForkSnapshotOptions = {}): Promise<ForkResponse> {
     const path = `${snapshotPath(snapshot)}/fork`;
+    rejectRemovedTimeoutSeconds(options, 'child timeout');
 
     const body: Record<string, unknown> = { count: options.count ?? 1 };
-    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
+    if (options.timeout !== undefined) body['timeout_seconds'] = options.timeout;
     if (options.envVars !== undefined) body['env_vars'] = options.envVars;
     if (options.metadata !== undefined) body['metadata'] = options.metadata;
 
     const transport = requestOptions(options);
-    if (transport.timeout === undefined) transport.timeout = FORK_TIMEOUT_MS;
+    if (transport.requestTimeoutMs === undefined) transport.requestTimeoutMs = FORK_TIMEOUT_MS;
 
     return parseForkResponse(
       asRecord(

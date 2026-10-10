@@ -17,7 +17,7 @@ const client = new GravixLayer();
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
 // Expire after two minutes unless something extends it.
-const sandbox = await client.runtime.create({ template: TEMPLATE, timeoutSeconds: 120 });
+const sandbox = await client.runtime.create({ template: TEMPLATE, timeout: 120 });
 console.log(`Runtime    : ${sandbox.runtimeId}`);
 console.log(`Expires at : ${sandbox.timeoutAt}`);
 

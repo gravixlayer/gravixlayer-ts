@@ -5,7 +5,7 @@
  * keeps running after that call returns. `wait` reads its output until it
  * exits. `kill` stops it. A later call can attach again with the pid.
  *
- * `timeoutSeconds: 0` sets no deadline on a background command.
+ * `timeout: 0` sets no deadline on a background command.
  *
  * Run:
  *   export GRAVIXLAYER_API_KEY="your-api-key"
@@ -23,7 +23,7 @@ console.log(`Runtime    : ${sandbox.runtimeId}`);
 // 1. Start it and return immediately. The command keeps running.
 const handle = await sandbox.runCmd("sh -lc 'echo started; sleep 2; echo finished'", {
   background: true,
-  timeoutSeconds: 0,
+  timeout: 0,
 });
 console.log(`pid        : ${handle.pid}`);
 
@@ -46,7 +46,7 @@ const again = await sandbox.command.connect(handle.pid);
 console.log(`reattach   : ${again.stdout.trim()}`);
 
 // 5. Stop a command that is still running.
-const server = await sandbox.runCmd('sleep 30', { background: true, timeoutSeconds: 0 });
+const server = await sandbox.runCmd('sleep 30', { background: true, timeout: 0 });
 await server.kill();
 console.log(`stopped    : ${(await server.refresh()).status}`);
 

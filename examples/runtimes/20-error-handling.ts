@@ -63,7 +63,7 @@ try {
 // 4. A per-call timeout overrides the client's, which is useful for one slow
 //    operation among many fast ones.
 try {
-  await client.runtime.list({ timeout: 1 });
+  await client.runtime.list({ requestTimeoutMs: 1 });
 } catch (error) {
   if (error instanceof GravixLayerTimeoutError) {
     console.log(`Timed out  : ${error.message}`);

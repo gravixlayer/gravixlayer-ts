@@ -14,7 +14,12 @@ import { iterSSEJson } from '../../core/sse.js';
 import { timeoutForGuestDeadline } from '../../core/time.js';
 import type { RequestOptions } from '../../core/transport.js';
 import { buildListEndpoint, pathSegment, SERVICES } from '../../core/url.js';
-import { assertNonEmpty, assertPositiveInt, assertRuntimeId } from '../../core/validate.js';
+import {
+  assertNonEmpty,
+  assertPositiveInt,
+  assertRuntimeId,
+  rejectRemovedTimeoutSeconds,
+} from '../../core/validate.js';
 import {
   parseCodeRunResponse,
   parseCommandInfo,
@@ -77,8 +82,12 @@ export interface CreateRuntimeOptions extends RequestOptions {
   cloud?: string;
   /** Region to place the runtime in. Defaults to the client's region. */
   region?: string;
-  /** Seconds before the runtime is automatically stopped. */
-  timeoutSeconds?: number;
+  /**
+   * Seconds before the runtime is automatically stopped.
+   *
+   * This is the sandbox lifetime, sent as `timeout` on the create body.
+   */
+  timeout?: number;
   /** Environment variables available to every process in the guest. */
   envVars?: Record<string, string>;
   /** Labels attached to the runtime, returned on every read. */
@@ -111,7 +120,7 @@ export interface ForkRuntimeOptions extends RequestOptions {
   /** Number of children to start (1–100). Defaults to 1. */
   count?: number;
   /** Timeout applied to each child, in seconds. The parent is unaffected. */
-  timeoutSeconds?: number;
+  timeout?: number;
   /**
    * Keep the fork's capture as a named snapshot for later reuse. When false,
    * the capture is cleaned up once every child has started.
@@ -153,7 +162,7 @@ export interface RunCommandOptions extends CommandFollowOptions {
    * Seconds before the command is killed. `0` uses the server default: 300
    * seconds in the foreground, and no deadline in the background.
    */
-  timeoutSeconds?: number;
+  timeout?: number;
   /** Start the command and return as soon as it is running. */
   background?: boolean;
 }
@@ -179,7 +188,7 @@ export interface RunCodeOptions extends RequestOptions, CodeCallbacks {
   /** Environment variables for this execution only. */
   environment?: Record<string, string>;
   /** Seconds before the execution is killed. */
-  timeoutSeconds?: number;
+  timeout?: number;
 }
 
 /** An event from a streaming command execution. */
@@ -205,11 +214,23 @@ export interface CreateContextOptions extends RequestOptions {
   cwd?: string;
 }
 
+/** Sandbox lifetime in seconds for the create body. */
+function sandboxLifetimeSeconds(options: CreateRuntimeOptions): number | undefined {
+  rejectRemovedTimeoutSeconds(options, 'lifetime');
+  if (options.timeout !== undefined) return assertPositiveInt(options.timeout, 'timeout');
+  return undefined;
+}
+
 /** Strip operation-specific fields, leaving only per-request transport options. */
 function requestOptions(options: RequestOptions): RequestOptions {
+  if (options.requestTimeoutMs !== undefined && options.requestTimeoutMs < 0) {
+    throw new GravixLayerInvalidArgumentError(
+      '`requestTimeoutMs` must be 0 or more milliseconds, where 0 disables the timeout.',
+    );
+  }
   const out: RequestOptions = {};
   if (options.signal) out.signal = options.signal;
-  if (options.timeout !== undefined) out.timeout = options.timeout;
+  if (options.requestTimeoutMs !== undefined) out.requestTimeoutMs = options.requestTimeoutMs;
   if (options.maxRetries !== undefined) out.maxRetries = options.maxRetries;
   if (options.headers) out.headers = options.headers;
   return out;
@@ -230,10 +251,13 @@ function nonNegativeInt(value: number, label: string): number {
  * is kept open for that deadline plus a round-trip margin so the transport
  * cannot kill a command the server is still running.
  */
-function executionOptions(options: RequestOptions & { timeoutSeconds?: number }): RequestOptions {
+function executionOptions(
+  options: RequestOptions & { timeout?: number },
+): RequestOptions {
+  rejectRemovedTimeoutSeconds(options, 'guest deadline');
   const out = requestOptions(options);
-  const timeout = timeoutForGuestDeadline(options.timeoutSeconds, out.timeout);
-  if (timeout !== undefined) out.timeout = timeout;
+  const requestTimeoutMs = timeoutForGuestDeadline(options.timeout, out.requestTimeoutMs);
+  if (requestTimeoutMs !== undefined) out.requestTimeoutMs = requestTimeoutMs;
   return out;
 }
 
@@ -429,9 +453,8 @@ export class Runtimes extends APIResource {
     } else {
       body['template'] = options.template ?? DEFAULT_TEMPLATE;
     }
-    if (options.timeoutSeconds !== undefined) {
-      body['timeout'] = assertPositiveInt(options.timeoutSeconds, 'timeoutSeconds');
-    }
+    const lifetime = sandboxLifetimeSeconds(options);
+    if (lifetime !== undefined) body['timeout'] = lifetime;
     if (options.envVars !== undefined) body['env_vars'] = options.envVars;
     if (options.metadata !== undefined) body['metadata'] = options.metadata;
     if (options.internetAccess !== undefined) body['internet_access'] = options.internetAccess;
@@ -442,10 +465,10 @@ export class Runtimes extends APIResource {
     }
 
     // Restoring a snapshot boots a guest, which needs a longer budget than the
-    // default. An explicit per-call timeout still wins.
+    // default. An explicit requestTimeoutMs still wins.
     const transportOptions = requestOptions(options);
-    if (options.snapshot && transportOptions.timeout === undefined) {
-      transportOptions.timeout = SNAPSHOT_RESTORE_TIMEOUT_MS;
+    if (options.snapshot && transportOptions.requestTimeoutMs === undefined) {
+      transportOptions.requestTimeoutMs = SNAPSHOT_RESTORE_TIMEOUT_MS;
     }
 
     const data = asRecord(
@@ -541,11 +564,11 @@ export class Runtimes extends APIResource {
   /** Change how long a runtime may keep running before it is stopped. */
   async setTimeout(
     runtimeId: string,
-    timeoutSeconds: number,
+    timeout: number,
     options: RequestOptions = {},
   ): Promise<RuntimeTimeoutResponse> {
     assertRuntimeId(runtimeId);
-    assertPositiveInt(timeoutSeconds, 'timeoutSeconds');
+    assertPositiveInt(timeout, 'timeout');
 
     return parseRuntimeTimeoutResponse(
       asRecord(
@@ -553,7 +576,7 @@ export class Runtimes extends APIResource {
           method: 'POST',
           path: `runtime/${runtimeId}/timeout`,
           service: SERVICES.agents,
-          body: { timeout: timeoutSeconds },
+          body: { timeout },
           options,
         }),
       ),
@@ -614,15 +637,16 @@ export class Runtimes extends APIResource {
   async fork(runtimeId: string, options: ForkRuntimeOptions = {}): Promise<ForkResponse> {
     assertRuntimeId(runtimeId);
 
+    rejectRemovedTimeoutSeconds(options, 'child timeout');
     const body: Record<string, unknown> = { count: options.count ?? 1 };
-    if (options.timeoutSeconds !== undefined) body['timeout_seconds'] = options.timeoutSeconds;
+    if (options.timeout !== undefined) body['timeout_seconds'] = options.timeout;
     if (options.persistSnapshot) body['persist_snapshot'] = true;
     if (options.name !== undefined) body['name'] = options.name;
     if (options.envVars !== undefined) body['env_vars'] = options.envVars;
     if (options.metadata !== undefined) body['metadata'] = options.metadata;
 
-    const transport: RequestOptions = { ...options };
-    if (transport.timeout === undefined) transport.timeout = FORK_TIMEOUT_MS;
+    const transport = requestOptions(options);
+    if (transport.requestTimeoutMs === undefined) transport.requestTimeoutMs = FORK_TIMEOUT_MS;
 
     return parseForkResponse(
       asRecord(
@@ -809,9 +833,9 @@ export class Runtimes extends APIResource {
     if (options.args !== undefined) body['args'] = options.args;
     if (options.workingDir !== undefined) body['working_dir'] = options.workingDir;
     if (options.environment !== undefined) body['environment'] = options.environment;
-    if (options.timeoutSeconds !== undefined) {
+    if (options.timeout !== undefined) {
       // The command endpoint takes milliseconds. Zero is the server default.
-      body['timeout'] = nonNegativeInt(options.timeoutSeconds, 'timeoutSeconds') * 1000;
+      body['timeout'] = nonNegativeInt(options.timeout, 'timeout') * 1000;
     }
     if (options.background) body['background'] = true;
     return body;
@@ -1004,9 +1028,9 @@ export class Runtimes extends APIResource {
     const body: Record<string, unknown> = { code, language: options.language ?? 'python' };
     if (options.contextId !== undefined) body['context_id'] = options.contextId;
     if (options.environment !== undefined) body['environment'] = options.environment;
-    if (options.timeoutSeconds !== undefined) {
+    if (options.timeout !== undefined) {
       // The code endpoint takes seconds.
-      body['timeout'] = assertPositiveInt(options.timeoutSeconds, 'timeoutSeconds');
+      body['timeout'] = assertPositiveInt(options.timeout, 'timeout');
     }
     return body;
   }

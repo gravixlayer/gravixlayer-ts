@@ -62,7 +62,7 @@ export class RuntimeService extends APIResource {
 
     const requestOptions: RequestOptions = {};
     if (options.signal) requestOptions.signal = options.signal;
-    if (options.timeout !== undefined) requestOptions.timeout = options.timeout;
+    if (options.requestTimeoutMs !== undefined) requestOptions.requestTimeoutMs = options.requestTimeoutMs;
     if (options.maxRetries !== undefined) requestOptions.maxRetries = options.maxRetries;
     if (options.headers) requestOptions.headers = options.headers;
 
@@ -130,8 +130,8 @@ export class RuntimeService extends APIResource {
 /** Per-request options for calls made through a {@link ServiceHandle}. */
 export interface ServiceRequestInit extends Omit<RequestInit, 'signal'> {
   signal?: AbortSignal;
-  /** Timeout in milliseconds. Defaults to 60 seconds. */
-  timeout?: number;
+  /** HTTP deadline in milliseconds. Defaults to 60 seconds. */
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -170,7 +170,7 @@ export class ServiceHandle {
    * SDK's error types.
    */
   async request(method: string, path = '/', init: ServiceRequestInit = {}): Promise<Response> {
-    const { timeout = DEFAULT_SERVICE_TIMEOUT_MS, signal, headers, ...rest } = init;
+    const { requestTimeoutMs = DEFAULT_SERVICE_TIMEOUT_MS, signal, headers, ...rest } = init;
 
     const merged = new Headers(headers);
     if (this.service.token && !this.service.isPublic) {
@@ -180,11 +180,11 @@ export class ServiceHandle {
     const controller = new AbortController();
     let timedOut = false;
     const timer =
-      timeout > 0
+      requestTimeoutMs > 0
         ? setTimeout(() => {
             timedOut = true;
             controller.abort();
-          }, timeout)
+          }, requestTimeoutMs)
         : undefined;
     const onAbort = () => controller.abort();
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -214,7 +214,7 @@ export class ServiceHandle {
         throw new GravixLayerAbortError('Request aborted.', { cause: signal.reason });
       }
       if (timedOut) {
-        throw new GravixLayerTimeoutError(`Request timed out after ${timeout}ms.`, {
+        throw new GravixLayerTimeoutError(`Request timed out after ${requestTimeoutMs}ms.`, {
           cause: error,
         });
       }

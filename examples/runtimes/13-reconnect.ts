@@ -17,7 +17,7 @@ const client = new GravixLayer();
 const TEMPLATE = process.env['GRAVIXLAYER_TEMPLATE'] ?? 'base-small';
 
 // Stand in for an earlier session: create a sandbox and keep only its id.
-let sandbox = await client.runtime.create({ template: TEMPLATE, timeoutSeconds: 600 });
+let sandbox = await client.runtime.create({ template: TEMPLATE, timeout: 600 });
 const savedId = sandbox.runtimeId;
 await sandbox.runCode('marker = "written before reconnecting"');
 console.log(`Created    : ${savedId}`);

@@ -5,6 +5,23 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.36] - 2026-10-10
+### Changed
+- `timeout` is now the product duration in seconds everywhere, matching the
+  API and the Python SDK. `runtime.create({ timeout })` is the sandbox
+  lifetime; `runCmd`/`runCode`/`streamCmd`, `git` operations, `fork`,
+  `snapshots.fork`, `agents.deploy`, `setTimeout`, and `readyCmd` all take
+  their duration in seconds under that one name.
+- `timeoutSeconds` was removed from every option surface and now throws —
+  pass the duration in seconds as `timeout`.
+- The per-call HTTP deadline is `requestTimeoutMs` in milliseconds on every
+  method (`0` disables it; the client `timeout` stays the default). Any
+  `timeout` previously passed as an HTTP deadline — for example
+  `create({ timeout: 60000 })` or `kill({ timeout: 5000 })` — moves to
+  `requestTimeoutMs`.
+- A snapshot restore still uses the 180-second HTTP budget when
+  `requestTimeoutMs` is not set; other creates keep the client timeout.
+
 ## [0.1.35] - 2026-10-09
 ### Fixed
 - A buffered HTTP/2 body is sent with its headers. The lane thread ends that

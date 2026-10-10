@@ -46,8 +46,11 @@ const MAX_RETRY_AFTER_MS = 60_000;
 export interface RequestOptions {
   /** Abort the request. Aborting raises {@link GravixLayerAbortError}. */
   signal?: AbortSignal;
-  /** Timeout in milliseconds, overriding the client default. `0` disables it. */
-  timeout?: number;
+  /**
+   * HTTP deadline for this request in milliseconds, overriding the client
+   * default. `0` disables it.
+   */
+  requestTimeoutMs?: number;
   /** Retry budget for this request, overriding the client default. */
   maxRetries?: number;
   /** Extra headers merged over the client defaults. */
@@ -325,7 +328,7 @@ export class Transport {
     }
 
     const maxRetries = options.maxRetries ?? this.config.maxRetries;
-    const timeout = options.timeout ?? this.config.timeout;
+    const timeout = options.requestTimeoutMs ?? this.config.timeout;
     const userSignal = options.signal;
 
     const headers: Record<string, string> = { ...this.config.defaultHeaders };

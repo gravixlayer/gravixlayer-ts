@@ -283,10 +283,10 @@ export class Runtime {
 
   /** Change how long the runtime may keep running. */
   async setTimeout(
-    timeoutSeconds: number,
+    timeout: number,
     options: RequestOptions = {},
   ): Promise<RuntimeTimeoutResponse> {
-    return this.runtimes.setTimeout(this.requireAlive(), timeoutSeconds, options);
+    return this.runtimes.setTimeout(this.requireAlive(), timeout, options);
   }
 
   /** Sample current CPU, memory, disk, and network usage. */
