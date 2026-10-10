@@ -91,14 +91,8 @@ describe('create', () => {
     const { client, http } = testClient([jsonResponse({})]);
     const stale = { timeoutSeconds: 45 } as never;
 
-    await expectRejection(
-      client.runtime.fork(RUNTIME_ID, stale),
-      GravixLayerInvalidArgumentError,
-    );
-    await expectRejection(
-      client.snapshots.fork('snap-1', stale),
-      GravixLayerInvalidArgumentError,
-    );
+    await expectRejection(client.runtime.fork(RUNTIME_ID, stale), GravixLayerInvalidArgumentError);
+    await expectRejection(client.snapshots.fork('snap-1', stale), GravixLayerInvalidArgumentError);
     await expectRejection(
       client.runtime.runCmd(RUNTIME_ID, 'ls', stale),
       GravixLayerInvalidArgumentError,
@@ -611,9 +605,9 @@ describe('commands', () => {
       timeout: 0,
     });
     expect(http.jsonBody()).toEqual({ command: 'sleep', background: true, timeout: 0 });
-    await expect(
-      client.runtime.runCmd(RUNTIME_ID, 'sleep', { timeout: -1 }),
-    ).rejects.toThrow('timeout must be a non-negative integer.');
+    await expect(client.runtime.runCmd(RUNTIME_ID, 'sleep', { timeout: -1 })).rejects.toThrow(
+      'timeout must be a non-negative integer.',
+    );
   });
 
   it('uses the server duration and deadline flag on a live stream', async () => {

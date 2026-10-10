@@ -251,9 +251,7 @@ function nonNegativeInt(value: number, label: string): number {
  * is kept open for that deadline plus a round-trip margin so the transport
  * cannot kill a command the server is still running.
  */
-function executionOptions(
-  options: RequestOptions & { timeout?: number },
-): RequestOptions {
+function executionOptions(options: RequestOptions & { timeout?: number }): RequestOptions {
   rejectRemovedTimeoutSeconds(options, 'guest deadline');
   const out = requestOptions(options);
   const requestTimeoutMs = timeoutForGuestDeadline(options.timeout, out.requestTimeoutMs);

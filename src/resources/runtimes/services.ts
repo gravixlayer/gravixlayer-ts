@@ -62,7 +62,8 @@ export class RuntimeService extends APIResource {
 
     const requestOptions: RequestOptions = {};
     if (options.signal) requestOptions.signal = options.signal;
-    if (options.requestTimeoutMs !== undefined) requestOptions.requestTimeoutMs = options.requestTimeoutMs;
+    if (options.requestTimeoutMs !== undefined)
+      requestOptions.requestTimeoutMs = options.requestTimeoutMs;
     if (options.maxRetries !== undefined) requestOptions.maxRetries = options.maxRetries;
     if (options.headers) requestOptions.headers = options.headers;
 

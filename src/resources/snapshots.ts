@@ -125,7 +125,8 @@ export class Snapshots extends APIResource {
     if (options.description !== undefined) body['description'] = options.description;
 
     const transport = requestOptions(options);
-    if (transport.requestTimeoutMs === undefined) transport.requestTimeoutMs = SNAPSHOT_CREATE_TIMEOUT_MS;
+    if (transport.requestTimeoutMs === undefined)
+      transport.requestTimeoutMs = SNAPSHOT_CREATE_TIMEOUT_MS;
 
     return parseSnapshot(
       asRecord(

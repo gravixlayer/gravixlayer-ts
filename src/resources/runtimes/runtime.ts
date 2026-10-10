@@ -282,10 +282,7 @@ export class Runtime {
   }
 
   /** Change how long the runtime may keep running. */
-  async setTimeout(
-    timeout: number,
-    options: RequestOptions = {},
-  ): Promise<RuntimeTimeoutResponse> {
+  async setTimeout(timeout: number, options: RequestOptions = {}): Promise<RuntimeTimeoutResponse> {
     return this.runtimes.setTimeout(this.requireAlive(), timeout, options);
   }
 
