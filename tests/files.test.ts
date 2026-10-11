@@ -86,7 +86,16 @@ describe('read and write', () => {
     const result = await client.runtime.file.delete(RUNTIME_ID, '/a.txt');
 
     expect(http.last().url).toContain('/files/delete');
+    expect(http.jsonBody()).toEqual({ path: '/a.txt', recursive: false });
     expect(result.path).toBe('/a.txt');
+  });
+
+  it('deletes a directory recursively', async () => {
+    const { client, http } = testClient([jsonResponse({ message: 'deleted' })]);
+    const result = await client.runtime.file.delete(RUNTIME_ID, '/a', { recursive: true });
+
+    expect(http.jsonBody()).toEqual({ path: '/a', recursive: true });
+    expect(result.path).toBe('/a');
   });
 
   it('lists a directory, defaulting to the guest home', async () => {

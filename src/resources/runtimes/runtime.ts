@@ -45,6 +45,7 @@ import type {
   ChownOptions,
   CopyOptions,
   CreateDirectoryOptions,
+  DeleteOptions,
   FindOptions,
   MoveOptions,
   ReplaceOptions,
@@ -432,7 +433,7 @@ export class BoundFile {
   }
 
   /** Delete a file or directory. */
-  async delete(path: string, options?: RequestOptions): Promise<FileDeleteResponse> {
+  async delete(path: string, options?: DeleteOptions): Promise<FileDeleteResponse> {
     return this.runtimes.file.delete(this.id(), path, options);
   }
 

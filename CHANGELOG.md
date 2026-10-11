@@ -5,6 +5,12 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.37] - 2026-10-10
+### Added
+- `runtime.file.delete(runtimeId, path, { recursive: true })` and the
+  bound `rt.delete(path, { recursive: true })` remove a non-empty
+  directory tree (`DeleteOptions.recursive`, default `false`).
+
 ## [0.1.36] - 2026-10-10
 ### Changed
 - `timeout` is now the product duration in seconds everywhere, matching the

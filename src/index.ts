@@ -86,6 +86,7 @@ export {
   type ChownOptions,
   type CopyOptions,
   type CreateDirectoryOptions,
+  type DeleteOptions,
   type FindOptions,
   type MoveOptions,
   type ReplaceOptions,

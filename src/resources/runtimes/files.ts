@@ -91,6 +91,12 @@ export interface CopyOptions extends RequestOptions {
   overwrite?: boolean;
 }
 
+/** Options for {@link RuntimeFile.delete}. */
+export interface DeleteOptions extends RequestOptions {
+  /** Delete directories and their contents. Defaults to `false`. */
+  recursive?: boolean;
+}
+
 /** Options for {@link RuntimeFile.move}. */
 export interface MoveOptions extends RequestOptions {
   /** Replace the destination if it exists. Defaults to `false`. */
@@ -243,7 +249,7 @@ export class RuntimeFile extends APIResource {
   async delete(
     runtimeId: string,
     path: string,
-    options: RequestOptions = {},
+    options: DeleteOptions = {},
   ): Promise<FileDeleteResponse> {
     assertRuntimeId(runtimeId);
     assertPath(path);
@@ -253,7 +259,7 @@ export class RuntimeFile extends APIResource {
         method: 'POST',
         path: `runtime/${runtimeId}/files/delete`,
         service: SERVICES.agents,
-        body: { path },
+        body: { path, recursive: options.recursive ?? false },
         options,
       }),
     );
