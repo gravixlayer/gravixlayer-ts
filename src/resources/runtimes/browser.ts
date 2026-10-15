@@ -236,8 +236,7 @@ export class RuntimeBrowser extends APIResource {
   /** Open a browser. Headed by default — the window is on the runtime's display. */
   async open(runtimeId: string, options: BrowserOpenOptions = {}): Promise<BrowserInfo> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, profileDir, engine, headless, ...rest } =
-      options;
+    const { signal, requestTimeoutMs, maxRetries, profileDir, engine, headless, ...rest } = options;
     return parseInfo(
       asRecord(
         await this.http.request({
@@ -285,7 +284,11 @@ export class RuntimeBrowser extends APIResource {
   }
 
   /** Browser status (`{browser_id, state, targets}`). */
-  async status(runtimeId: string, browserId: string, options: RequestOptions = {}): Promise<BrowserInfo> {
+  async status(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions = {},
+  ): Promise<BrowserInfo> {
     assertRuntimeId(runtimeId);
     return parseInfo(
       asRecord(
@@ -364,8 +367,17 @@ export class RuntimeBrowser extends APIResource {
     options: BrowserScreenshotOptions = {},
   ): Promise<{ data: string; format: string; width: number; height: number }> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, targetId, format, fullPage, element, waitStableMs, timeoutMs } =
-      options;
+    const {
+      signal,
+      requestTimeoutMs,
+      maxRetries,
+      targetId,
+      format,
+      fullPage,
+      element,
+      waitStableMs,
+      timeoutMs,
+    } = options;
     const r = asRecord(
       await this.http.request({
         method: 'POST',
@@ -403,8 +415,16 @@ export class RuntimeBrowser extends APIResource {
     } = {},
   ): Promise<BrowserSnapshot> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, targetId, viewportOnly, diff, filterRole, filterName } =
-      options;
+    const {
+      signal,
+      requestTimeoutMs,
+      maxRetries,
+      targetId,
+      viewportOnly,
+      diff,
+      filterRole,
+      filterName,
+    } = options;
     const r = asRecord(
       await this.http.request({
         method: 'POST',
@@ -491,8 +511,16 @@ export class RuntimeBrowser extends APIResource {
     body: Record<string, unknown>,
     options: ActionOptions,
   ): Promise<ActionResult> {
-    const { signal, requestTimeoutMs, maxRetries, targetId, settle, settleTimeoutMs, force, targetTimeoutMs } =
-      options;
+    const {
+      signal,
+      requestTimeoutMs,
+      maxRetries,
+      targetId,
+      settle,
+      settleTimeoutMs,
+      force,
+      targetTimeoutMs,
+    } = options;
     return parseAction(
       asRecord(
         await this.http.request({
@@ -523,9 +551,13 @@ export class RuntimeBrowser extends APIResource {
   ): Promise<ActionResult> {
     assertRuntimeId(runtimeId);
     const { button, clickCount, ...rest } = options;
-    return this.act(runtimeId, browserId, 'click',
+    return this.act(
+      runtimeId,
+      browserId,
+      'click',
       { target: normTarget(target), button: button ?? 'left', click_count: clickCount ?? 1 },
-      rest);
+      rest,
+    );
   }
 
   /** Double-click an element. */
@@ -537,9 +569,13 @@ export class RuntimeBrowser extends APIResource {
   ): Promise<ActionResult> {
     assertRuntimeId(runtimeId);
     const { button, ...rest } = options;
-    return this.act(runtimeId, browserId, 'dblclick',
+    return this.act(
+      runtimeId,
+      browserId,
+      'dblclick',
       { target: normTarget(target), button: button ?? 'left' },
-      rest);
+      rest,
+    );
   }
 
   /** Move the pointer onto an element (triggers :hover / tooltips). */
@@ -563,9 +599,16 @@ export class RuntimeBrowser extends APIResource {
   ): Promise<ActionResult> {
     assertRuntimeId(runtimeId);
     const { text, secretRef, ...rest } = options;
-    return this.act(runtimeId, browserId, 'fill',
-      { target: normTarget(target), ...(secretRef ? { secret_ref: secretRef } : { text: text ?? '' }) },
-      rest);
+    return this.act(
+      runtimeId,
+      browserId,
+      'fill',
+      {
+        target: normTarget(target),
+        ...(secretRef ? { secret_ref: secretRef } : { text: text ?? '' }),
+      },
+      rest,
+    );
   }
 
   /** Type text into an element. */
@@ -578,9 +621,13 @@ export class RuntimeBrowser extends APIResource {
   ): Promise<ActionResult> {
     assertRuntimeId(runtimeId);
     const { delayMs, ...rest } = options;
-    return this.act(runtimeId, browserId, 'type',
+    return this.act(
+      runtimeId,
+      browserId,
+      'type',
       { target: normTarget(target), text, delay_ms: delayMs },
-      rest);
+      rest,
+    );
   }
 
   /** Press a named key. */
@@ -592,9 +639,7 @@ export class RuntimeBrowser extends APIResource {
   ): Promise<ActionResult> {
     assertRuntimeId(runtimeId);
     const { target, ...rest } = options;
-    return this.act(runtimeId, browserId, 'press',
-      { key, target: normTarget(target) },
-      rest);
+    return this.act(runtimeId, browserId, 'press', { key, target: normTarget(target) }, rest);
   }
 
   /** Press a chord. */
@@ -616,9 +661,13 @@ export class RuntimeBrowser extends APIResource {
   ): Promise<ActionResult> {
     assertRuntimeId(runtimeId);
     const { target, dx, dy, ...rest } = options;
-    return this.act(runtimeId, browserId, 'scroll',
+    return this.act(
+      runtimeId,
+      browserId,
+      'scroll',
       { target: normTarget(target), dx: dx ?? 0, dy: dy ?? 0 },
-      rest);
+      rest,
+    );
   }
 
   // -- dialogs / downloads / pdf / view ---------------------------------------------------------------

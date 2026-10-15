@@ -58,9 +58,7 @@ describe('storage buckets', () => {
   });
 
   it('scopes a list to a project', async () => {
-    const { client, http } = testClient([
-      jsonResponse({ buckets: [BUCKET], total: 1 }),
-    ]);
+    const { client, http } = testClient([jsonResponse({ buckets: [BUCKET], total: 1 })]);
     const result = await client.storage.buckets.list({ projectId: 'proj-1' });
 
     expect(http.query().get('project_id')).toBe('proj-1');
@@ -149,9 +147,24 @@ describe('bucket links', () => {
       ],
       [
         'oidc on s3_compatible',
-        { provider: 's3_compatible', endpoint: 'https://x', authMode: 'oidc', roleArn: 'r', externalId: 'e' },
+        {
+          provider: 's3_compatible',
+          endpoint: 'https://x',
+          authMode: 'oidc',
+          roleArn: 'r',
+          externalId: 'e',
+        },
       ],
-      ['bad prefix', { provider: 's3', secretProviderId: 'p', accessKeySecret: 'a', secretKeySecret: 's', prefix: '/abs' }],
+      [
+        'bad prefix',
+        {
+          provider: 's3',
+          secretProviderId: 'p',
+          accessKeySecret: 'a',
+          secretKeySecret: 's',
+          prefix: '/abs',
+        },
+      ],
     ];
     for (const [label, options] of bad) {
       await expectRejection(
@@ -238,18 +251,21 @@ describe('buildMountSpec', () => {
       ['missing url', { kind: 'git', path: '/m' }],
       ['relative path', { kind: 'bucket', path: 'rel', bucket: 'a' }],
       ['root path', { kind: 'bucket', path: '/', bucket: 'a' }],
-      [
-        'half creds',
-        { kind: 'git', path: '/m', url: 'https://x/y.git', credentialProvider: 'p' },
-      ],
+      ['half creds', { kind: 'git', path: '/m', url: 'https://x/y.git', credentialProvider: 'p' }],
       ['bad mode', { kind: 'bucket', path: '/m', bucket: 'a', mode: 'rw+' }],
       ['bad depth', { kind: 'git', path: '/m', url: 'https://x/y.git', depth: -1 }],
       ['trailing slash', { kind: 'bucket', path: '/m/', bucket: 'a' }],
       ['double slash', { kind: 'bucket', path: '/m//x', bucket: 'a' }],
       ['overflow depth', { kind: 'git', path: '/m', url: 'https://x/y.git', depth: 4294967296 }],
-      ['bucket mount with url', { kind: 'bucket', path: '/m', bucket: 'a', url: 'https://x/y.git' }],
+      [
+        'bucket mount with url',
+        { kind: 'bucket', path: '/m', bucket: 'a', url: 'https://x/y.git' },
+      ],
       ['git mount with bucket', { kind: 'git', path: '/m', url: 'https://x/y.git', bucket: 'a' }],
-      ['unknown key', { kind: 'bucket', path: '/m', bucket: 'a', credentialProviders: 'p' } as MountInput],
+      [
+        'unknown key',
+        { kind: 'bucket', path: '/m', bucket: 'a', credentialProviders: 'p' } as MountInput,
+      ],
       ['typo key', { kind: 'bucket', path: '/m', bucket: 'a', typoKey: 'x' } as MountInput],
     ];
     for (const [label, input] of bad) {
@@ -291,9 +307,7 @@ describe('runtime mounts', () => {
   it('detaches by attachment id', async () => {
     const { client, http } = testClient([jsonResponse({ detached: true })]);
     expect(await client.storage.mounts.detach(RUNTIME_ID, 'att-1')).toBe(true);
-    expect(http.last().url).toContain(
-      `/v1/agents/runtime/${RUNTIME_ID}/mounts/att-1`,
-    );
+    expect(http.last().url).toContain(`/v1/agents/runtime/${RUNTIME_ID}/mounts/att-1`);
     expect(http.last().method).toBe('DELETE');
   });
 
@@ -328,7 +342,9 @@ describe('runtime mounts', () => {
 
 describe('runtime create with mounts', () => {
   it('sends mounts on the create body', async () => {
-    const { client, http } = testClient([jsonResponse({ runtime_id: RUNTIME_ID, status: 'running' })]);
+    const { client, http } = testClient([
+      jsonResponse({ runtime_id: RUNTIME_ID, status: 'running' }),
+    ]);
     await client.runtime.create({
       mounts: [
         { kind: 'bucket', path: '/mnt/data', mode: 'rw', bucket: 'bkt-1' },

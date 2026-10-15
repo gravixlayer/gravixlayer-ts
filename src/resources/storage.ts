@@ -19,12 +19,7 @@
 import { GravixLayerInvalidArgumentError } from '../core/errors.js';
 import { asRecord, bool, num, parseList } from '../core/parse.js';
 import type { RequestOptions } from '../core/transport.js';
-import {
-  pathSegment,
-  SERVICES,
-  withQuery,
-  type QueryValue,
-} from '../core/url.js';
+import { pathSegment, SERVICES, withQuery, type QueryValue } from '../core/url.js';
 import { assertNonEmpty, assertOneOf, assertPath, assertRuntimeId } from '../core/validate.js';
 import {
   LINK_PROVIDERS,
@@ -97,10 +92,18 @@ export interface MountInput {
 }
 
 const MOUNT_INPUT_KEYS = new Set([
-  'kind', 'path', 'mode', 'required',
-  'bucket', 'link',
-  'url', 'ref', 'depth', 'refreshSeconds',
-  'credentialProvider', 'credentialSecret',
+  'kind',
+  'path',
+  'mode',
+  'required',
+  'bucket',
+  'link',
+  'url',
+  'ref',
+  'depth',
+  'refreshSeconds',
+  'credentialProvider',
+  'credentialSecret',
 ]);
 
 /** Validate a mount request and emit the wire body. */
@@ -115,12 +118,7 @@ export function buildMountSpec(input: MountInput): Record<string, unknown> {
   }
   const kind = assertOneOf(input.kind, ['bucket', 'git'], 'mount.kind');
   const path = assertPath(input.path, 'mount.path');
-  if (
-    !path.startsWith('/') ||
-    path === '/' ||
-    path.endsWith('/') ||
-    path.includes('//')
-  ) {
+  if (!path.startsWith('/') || path === '/' || path.endsWith('/') || path.includes('//')) {
     throw new GravixLayerInvalidArgumentError(
       `mount.path must be a normalized absolute path below the guest root; received ${JSON.stringify(input.path)}.`,
     );
@@ -188,9 +186,7 @@ export function buildMountSpec(input: MountInput): Record<string, unknown> {
     }
     body['refresh_seconds'] = input.refreshSeconds;
   }
-  if (
-    (input.credentialProvider === undefined) !== (input.credentialSecret === undefined)
-  ) {
+  if ((input.credentialProvider === undefined) !== (input.credentialSecret === undefined)) {
     throw new GravixLayerInvalidArgumentError(
       'git credentials need both `credentialProvider` and `credentialSecret`.',
     );
@@ -317,12 +313,12 @@ export class BucketLinks extends APIResource {
    * Create a link. Credentials are referenced by secret-provider key names —
    * secret material never passes through the API.
    */
-  async create(name: string, bucket: string, options: CreateBucketLinkOptions = {}): Promise<BucketLink> {
-    const provider = assertOneOf(
-      options.provider ?? 's3',
-      LINK_PROVIDERS,
-      'provider',
-    );
+  async create(
+    name: string,
+    bucket: string,
+    options: CreateBucketLinkOptions = {},
+  ): Promise<BucketLink> {
+    const provider = assertOneOf(options.provider ?? 's3', LINK_PROVIDERS, 'provider');
     const authMode = assertOneOf(options.authMode ?? 'static', ['static', 'oidc'], 'authMode');
 
     const body: Record<string, unknown> = {
@@ -375,10 +371,8 @@ export class BucketLinks extends APIResource {
     if (options.pathStyle !== undefined) body['path_style'] = options.pathStyle;
     if (options.secretProviderId !== undefined)
       body['secret_provider_id'] = options.secretProviderId;
-    if (options.accessKeySecret !== undefined)
-      body['access_key_secret'] = options.accessKeySecret;
-    if (options.secretKeySecret !== undefined)
-      body['secret_key_secret'] = options.secretKeySecret;
+    if (options.accessKeySecret !== undefined) body['access_key_secret'] = options.accessKeySecret;
+    if (options.secretKeySecret !== undefined) body['secret_key_secret'] = options.secretKeySecret;
     if (options.sessionTokenSecret !== undefined)
       body['session_token_secret'] = options.sessionTokenSecret;
     if (options.roleArn !== undefined) body['role_arn'] = options.roleArn;

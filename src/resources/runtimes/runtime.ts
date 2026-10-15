@@ -759,7 +759,6 @@ if (ASYNC_DISPOSE !== REGISTERED_ASYNC_DISPOSE) {
   });
 }
 
-
 /** `sandbox.display`: the pixel plane with the runtime id applied. */
 export class BoundDisplay {
   constructor(
@@ -779,7 +778,12 @@ export class BoundDisplay {
   async screenshot(options?: Parameters<RuntimeDisplay['screenshot']>[1]) {
     return this.runtimes.display.screenshot(this.id(), options);
   }
-  async click(x: number, y: number, button?: 'left' | 'right' | 'middle', options?: RequestOptions) {
+  async click(
+    x: number,
+    y: number,
+    button?: 'left' | 'right' | 'middle',
+    options?: RequestOptions,
+  ) {
     return this.runtimes.display.click(this.id(), x, y, button, options);
   }
   async move(x: number, y: number, options?: RequestOptions) {
@@ -850,10 +854,19 @@ export class BoundBrowser {
   async status(browserId: string, options?: RequestOptions) {
     return this.runtimes.browser.status(this.id(), browserId, options);
   }
-  async navigate(browserId: string, url: string, options?: Parameters<RuntimeBrowser['navigate']>[3]) {
+  async navigate(
+    browserId: string,
+    url: string,
+    options?: Parameters<RuntimeBrowser['navigate']>[3],
+  ) {
     return this.runtimes.browser.navigate(this.id(), browserId, url, options);
   }
-  async command(browserId: string, verb: 'back' | 'forward' | 'reload' | 'activate', targetId?: string, options?: RequestOptions) {
+  async command(
+    browserId: string,
+    verb: 'back' | 'forward' | 'reload' | 'activate',
+    targetId?: string,
+    options?: RequestOptions,
+  ) {
     return this.runtimes.browser.command(this.id(), browserId, verb, targetId, options);
   }
   async screenshot(browserId: string, options?: Parameters<RuntimeBrowser['screenshot']>[2]) {
@@ -862,28 +875,57 @@ export class BoundBrowser {
   async snapshot(browserId: string, options?: Parameters<RuntimeBrowser['snapshot']>[2]) {
     return this.runtimes.browser.snapshot(this.id(), browserId, options);
   }
-  async evaluate(browserId: string, expression: string, options?: Parameters<RuntimeBrowser['evaluate']>[3]) {
+  async evaluate(
+    browserId: string,
+    expression: string,
+    options?: Parameters<RuntimeBrowser['evaluate']>[3],
+  ) {
     return this.runtimes.browser.evaluate(this.id(), browserId, expression, options);
   }
-  async click(browserId: string, target: Parameters<RuntimeBrowser['click']>[2], options?: Parameters<RuntimeBrowser['click']>[3]) {
+  async click(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['click']>[2],
+    options?: Parameters<RuntimeBrowser['click']>[3],
+  ) {
     return this.runtimes.browser.click(this.id(), browserId, target, options);
   }
-  async dblclick(browserId: string, target: Parameters<RuntimeBrowser['dblclick']>[2], options?: Parameters<RuntimeBrowser['dblclick']>[3]) {
+  async dblclick(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['dblclick']>[2],
+    options?: Parameters<RuntimeBrowser['dblclick']>[3],
+  ) {
     return this.runtimes.browser.dblclick(this.id(), browserId, target, options);
   }
-  async hover(browserId: string, target: Parameters<RuntimeBrowser['hover']>[2], options?: Parameters<RuntimeBrowser['hover']>[3]) {
+  async hover(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['hover']>[2],
+    options?: Parameters<RuntimeBrowser['hover']>[3],
+  ) {
     return this.runtimes.browser.hover(this.id(), browserId, target, options);
   }
-  async fill(browserId: string, target: Parameters<RuntimeBrowser['fill']>[2], options?: Parameters<RuntimeBrowser['fill']>[3]) {
+  async fill(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['fill']>[2],
+    options?: Parameters<RuntimeBrowser['fill']>[3],
+  ) {
     return this.runtimes.browser.fill(this.id(), browserId, target, options);
   }
-  async type(browserId: string, target: Parameters<RuntimeBrowser['type']>[2], text: string, options?: Parameters<RuntimeBrowser['type']>[4]) {
+  async type(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['type']>[2],
+    text: string,
+    options?: Parameters<RuntimeBrowser['type']>[4],
+  ) {
     return this.runtimes.browser.type(this.id(), browserId, target, text, options);
   }
   async press(browserId: string, key: string, options?: Parameters<RuntimeBrowser['press']>[3]) {
     return this.runtimes.browser.press(this.id(), browserId, key, options);
   }
-  async hotkey(browserId: string, keys: string[], options?: Parameters<RuntimeBrowser['hotkey']>[3]) {
+  async hotkey(
+    browserId: string,
+    keys: string[],
+    options?: Parameters<RuntimeBrowser['hotkey']>[3],
+  ) {
     return this.runtimes.browser.hotkey(this.id(), browserId, keys, options);
   }
   async scroll(browserId: string, options?: Parameters<RuntimeBrowser['scroll']>[2]) {
@@ -898,7 +940,11 @@ export class BoundBrowser {
   async downloads(browserId: string, options?: Parameters<RuntimeBrowser['downloads']>[2]) {
     return this.runtimes.browser.downloads(this.id(), browserId, options);
   }
-  async download(browserId: string, downloadId: string, options?: Parameters<RuntimeBrowser['download']>[3]) {
+  async download(
+    browserId: string,
+    downloadId: string,
+    options?: Parameters<RuntimeBrowser['download']>[3],
+  ) {
     return this.runtimes.browser.download(this.id(), browserId, downloadId, options);
   }
   async pdf(browserId: string, targetId: string, options?: Parameters<RuntimeBrowser['pdf']>[3]) {

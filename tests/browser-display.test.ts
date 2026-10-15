@@ -210,7 +210,11 @@ describe('browser plane', () => {
 
   it('view() returns the service record with a watch url', async () => {
     const { client, http } = testClient([
-      jsonResponse({ url: 'https://s.service.example', browser_url: 'https://s.service.example/auth', port: 9871 }),
+      jsonResponse({
+        url: 'https://s.service.example',
+        browser_url: 'https://s.service.example/auth',
+        port: 9871,
+      }),
     ]);
     const v = await client.runtime.browser.view(RUNTIME_ID, BID);
     expect(http.last().url).toContain(`browser/${BID}/view`);
@@ -245,11 +249,11 @@ it('sends world/targetTimeoutMs/metaOnly/marginsIn', async () => {
 
 it('activate + goto evicts a dead default browser', async () => {
   const { client, http } = testClient([
-    jsonResponse({ browser_id: 'b1' }),           // open
-    jsonResponse({ error: 'gone' }, 404),         // navigate b1 → dead
-    jsonResponse({ browser_id: 'b2' }),           // reopen
+    jsonResponse({ browser_id: 'b1' }), // open
+    jsonResponse({ error: 'gone' }, 404), // navigate b1 → dead
+    jsonResponse({ browser_id: 'b2' }), // reopen
     jsonResponse({ url: 'https://x', navigated: true }), // navigate b2
-    jsonResponse({ target_id: 't9' }),            // activate
+    jsonResponse({ target_id: 't9' }), // activate
   ]);
   const nav = await client.runtime.browser.goto(RUNTIME_ID, 'https://x');
   expect(nav.navigated).toBe(true);

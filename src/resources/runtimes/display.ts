@@ -79,10 +79,7 @@ function parseShot(v: unknown): DisplayScreenshot {
 /** `client.runtime.display` — the pixel plane. */
 export class RuntimeDisplay extends APIResource {
   /** Enable the display; idempotent. */
-  async enable(
-    runtimeId: string,
-    options: DisplayEnableOptions = {},
-  ): Promise<DisplayStatus> {
+  async enable(runtimeId: string, options: DisplayEnableOptions = {}): Promise<DisplayStatus> {
     assertRuntimeId(runtimeId);
     const { signal, requestTimeoutMs, maxRetries, ...rest } = options;
     return parseStatus(
