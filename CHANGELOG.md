@@ -5,6 +5,43 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.1.39] - 2026-10-15
+### Added
+- `client.storage` — storage mounts end to end: `storage.buckets`
+  (`create`/`list`/`get`/`delete` managed buckets),
+  `storage.links` (`create`/`list`/`get`/`verify`/`delete` for S3 and
+  S3-compatible buckets; static secret references or `oidc` role
+  assumption — credential material never crosses the SDK), and
+  `storage.mounts` (`attach`/`list`/`detach` on a running runtime).
+  `sandbox.mounts` is bound on every runtime handle, and
+  `runtime.create({ mounts })` attaches bucket, link, and git mounts at
+  boot. `MountInput` validation runs locally — bad paths, mixed
+  bucket/link targets, non-https endpoints or git URLs fail before the
+  request leaves the process.
+
+## [0.1.38] - 2026-10-14
+### Added
+- `client.runtime.display` — the pixel plane: `enable`/`disable`/`status`,
+  `screenshot` (`waitStableMs`, region, format), `click`/`move`/`scroll`,
+  `type`/`press`/`hotkey`, `waitStable`, `view` (returns a watch URL — the
+  route composes the services tunnel). Drives the runtime's screen
+  for surfaces the DOM cannot address — dialogs, canvas, native windows.
+- `client.runtime.browser` — the semantic plane: `open`/`close`/`list`/
+  `status`, `navigate` (+`back`/`forward`/`reload` via `command`),
+  `snapshot` (element digest with `ref` targets), `evaluate`, element
+  actions `click`/`fill`/`type`/`press`/`hotkey`/`scroll` with actionability
+  and post-action settle, `dialog`, `downloads` (+`waitName`)/`download`,
+  per-target `pdf`, `view`. `goto(url)` auto-opens the default
+  browser on first use; `dblclick`/`hover` join `click` in the actions set. Actions accept a `ref` from `snapshot()`, a
+  `{by, value}` selector, or `{x, y}` coords; `fill` takes `secretRef` so a
+  stored secret types without crossing the client. `runtime.display` and
+  `runtime.browser` are bound on every sandbox handle.
+### Fixed
+- Error messages now carry the HTTP status when the API returns an
+  empty or unparseable error body — `Request failed (HTTP 404).`
+  instead of a bare `Request failed.` — so a routing mistake (for
+  example a base URL that already ends in `/v1`) is diagnosable.
+
 ## [0.1.37] - 2026-10-10
 ### Added
 - `runtime.file.delete(runtimeId, path, { recursive: true })` and the

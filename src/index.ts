@@ -310,3 +310,30 @@ export {
   type NetworkPolicyRuleList,
   type SuccessResponse,
 } from './types/network-policies.js';
+
+// ---------------------------------------------------------------------------
+// Storage mounts
+// ---------------------------------------------------------------------------
+
+export {
+  BucketLinks,
+  buildMountSpec,
+  RuntimeMounts,
+  Storage,
+  StorageBuckets,
+  type CreateBucketLinkOptions,
+  type CreateBucketOptions,
+  type MountInput,
+  type StorageScopedOptions,
+} from './resources/storage.js';
+
+export {
+  LINK_PROVIDERS,
+  MountMode,
+  type BucketLink,
+  type BucketLinkList,
+  type RuntimeMount,
+  type RuntimeMountList,
+  type StorageBucket,
+  type StorageBucketList,
+} from './types/storage.js';

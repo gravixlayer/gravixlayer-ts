@@ -113,6 +113,13 @@ describe('error mapping', () => {
     expect(error.message).toBe('upstream exploded');
   });
 
+  it('reports the status when the body is empty', async () => {
+    const { client } = testClient([new Response('', { status: 404 })]);
+    const error = await expectRejection(client.runtime.list(), GravixLayerBadRequestError);
+    expect(error.message).toBe('Request failed (HTTP 404).');
+    expect(error.status).toBe(404);
+  });
+
   it('reads a nested message field', async () => {
     const { client } = testClient([
       jsonResponse({ error: { message: 'quota exceeded', code: 7 } }, 400),

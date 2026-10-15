@@ -11,6 +11,8 @@ import type { BinaryLike } from '../../core/binary.js';
 import { GravixLayerInvalidArgumentError } from '../../core/errors.js';
 import type { RequestOptions } from '../../core/transport.js';
 import type { FileMode } from '../../core/uploads.js';
+import type { RuntimeMount, RuntimeMountList } from '../../types/storage.js';
+import type { MountInput } from '../storage.js';
 import {
   Execution,
   type CommandInfo,
@@ -61,6 +63,8 @@ import type {
   GitFetchOptions,
   GitPushOptions,
 } from './git.js';
+import type { RuntimeBrowser } from './browser.js';
+import type { RuntimeDisplay } from './display.js';
 import type { CreatePtyOptions, PtyHandle, PtyStreamEvent } from './pty.js';
 import type { ForkRuntimeOptions } from './runtimes.js';
 import type { ForkResponse } from '../../types/snapshots.js';
@@ -115,6 +119,12 @@ export class Runtime {
   readonly pty: BoundPty;
   /** Nested git API, already bound to this runtime. */
   readonly git: BoundGit;
+  /** Display plane: screenshots, mouse, keyboard, view. */
+  readonly display: BoundDisplay;
+  /** Browser plane: open/navigate/snapshot/actions. */
+  readonly browser: BoundBrowser;
+  /** Storage mounts attached to this runtime. */
+  readonly mounts: BoundMounts;
   /** Background commands on this runtime. */
   readonly command: BoundCommands;
 
@@ -133,6 +143,9 @@ export class Runtime {
     this.pty = new BoundPty(runtimes, resolve);
     this.git = new BoundGit(runtimes, resolve);
     this.command = new BoundCommands(runtimes, resolve);
+    this.display = new BoundDisplay(runtimes, resolve);
+    this.browser = new BoundBrowser(runtimes, resolve);
+    this.mounts = new BoundMounts(runtimes, resolve);
   }
 
   // -------------------------------------------------------------------------
@@ -744,4 +757,154 @@ if (ASYNC_DISPOSE !== REGISTERED_ASYNC_DISPOSE) {
     configurable: true,
     writable: true,
   });
+}
+
+
+/** `sandbox.display`: the pixel plane with the runtime id applied. */
+export class BoundDisplay {
+  constructor(
+    private readonly runtimes: Runtimes,
+    private readonly id: ResolveId,
+  ) {}
+
+  async enable(options?: Parameters<RuntimeDisplay['enable']>[1]) {
+    return this.runtimes.display.enable(this.id(), options);
+  }
+  async disable(options?: RequestOptions) {
+    return this.runtimes.display.disable(this.id(), options);
+  }
+  async status(options?: RequestOptions) {
+    return this.runtimes.display.status(this.id(), options);
+  }
+  async screenshot(options?: Parameters<RuntimeDisplay['screenshot']>[1]) {
+    return this.runtimes.display.screenshot(this.id(), options);
+  }
+  async click(x: number, y: number, button?: 'left' | 'right' | 'middle', options?: RequestOptions) {
+    return this.runtimes.display.click(this.id(), x, y, button, options);
+  }
+  async move(x: number, y: number, options?: RequestOptions) {
+    return this.runtimes.display.move(this.id(), x, y, options);
+  }
+  async scroll(dx: number, dy: number, options?: Parameters<RuntimeDisplay['scroll']>[3]) {
+    return this.runtimes.display.scroll(this.id(), dx, dy, options);
+  }
+  async type(text: string, options?: Parameters<RuntimeDisplay['type']>[2]) {
+    return this.runtimes.display.type(this.id(), text, options);
+  }
+  async press(key: string, options?: RequestOptions) {
+    return this.runtimes.display.press(this.id(), key, options);
+  }
+  async hotkey(keys: string[], options?: RequestOptions) {
+    return this.runtimes.display.hotkey(this.id(), keys, options);
+  }
+  async waitStable(stableMs?: number, timeoutMs?: number, options?: RequestOptions) {
+    return this.runtimes.display.waitStable(this.id(), stableMs, timeoutMs, options);
+  }
+  async view(options?: Parameters<RuntimeDisplay['view']>[1]) {
+    return this.runtimes.display.view(this.id(), options);
+  }
+}
+
+/** `sandbox.mounts`: storage mounts bound to this runtime. */
+export class BoundMounts {
+  constructor(
+    private readonly runtimes: Runtimes,
+    private readonly id: ResolveId,
+  ) {}
+
+  /** Attach a bucket, link, or git repository at a guest path. */
+  async attach(mount: MountInput, options?: RequestOptions): Promise<RuntimeMount> {
+    return this.runtimes.mounts.attach(this.id(), mount, options);
+  }
+
+  /** List this runtime's mounts and their states. */
+  async list(options?: RequestOptions): Promise<RuntimeMountList> {
+    return this.runtimes.mounts.list(this.id(), options);
+  }
+
+  /** Detach a mount by attachment id. */
+  async detach(attachmentId: string, options?: RequestOptions): Promise<boolean> {
+    return this.runtimes.mounts.detach(this.id(), attachmentId, options);
+  }
+}
+
+/** `sandbox.browser`: the semantic plane with the runtime id applied. */
+export class BoundBrowser {
+  constructor(
+    private readonly runtimes: Runtimes,
+    private readonly id: ResolveId,
+  ) {}
+
+  async open(options?: Parameters<RuntimeBrowser['open']>[1]) {
+    return this.runtimes.browser.open(this.id(), options);
+  }
+  async goto(url: string, options?: Parameters<RuntimeBrowser['goto']>[2]) {
+    return this.runtimes.browser.goto(this.id(), url, options);
+  }
+  async close(browserId: string, options?: RequestOptions) {
+    return this.runtimes.browser.close(this.id(), browserId, options);
+  }
+  async list(options?: RequestOptions) {
+    return this.runtimes.browser.list(this.id(), options);
+  }
+  async status(browserId: string, options?: RequestOptions) {
+    return this.runtimes.browser.status(this.id(), browserId, options);
+  }
+  async navigate(browserId: string, url: string, options?: Parameters<RuntimeBrowser['navigate']>[3]) {
+    return this.runtimes.browser.navigate(this.id(), browserId, url, options);
+  }
+  async command(browserId: string, verb: 'back' | 'forward' | 'reload' | 'activate', targetId?: string, options?: RequestOptions) {
+    return this.runtimes.browser.command(this.id(), browserId, verb, targetId, options);
+  }
+  async screenshot(browserId: string, options?: Parameters<RuntimeBrowser['screenshot']>[2]) {
+    return this.runtimes.browser.screenshot(this.id(), browserId, options);
+  }
+  async snapshot(browserId: string, options?: Parameters<RuntimeBrowser['snapshot']>[2]) {
+    return this.runtimes.browser.snapshot(this.id(), browserId, options);
+  }
+  async evaluate(browserId: string, expression: string, options?: Parameters<RuntimeBrowser['evaluate']>[3]) {
+    return this.runtimes.browser.evaluate(this.id(), browserId, expression, options);
+  }
+  async click(browserId: string, target: Parameters<RuntimeBrowser['click']>[2], options?: Parameters<RuntimeBrowser['click']>[3]) {
+    return this.runtimes.browser.click(this.id(), browserId, target, options);
+  }
+  async dblclick(browserId: string, target: Parameters<RuntimeBrowser['dblclick']>[2], options?: Parameters<RuntimeBrowser['dblclick']>[3]) {
+    return this.runtimes.browser.dblclick(this.id(), browserId, target, options);
+  }
+  async hover(browserId: string, target: Parameters<RuntimeBrowser['hover']>[2], options?: Parameters<RuntimeBrowser['hover']>[3]) {
+    return this.runtimes.browser.hover(this.id(), browserId, target, options);
+  }
+  async fill(browserId: string, target: Parameters<RuntimeBrowser['fill']>[2], options?: Parameters<RuntimeBrowser['fill']>[3]) {
+    return this.runtimes.browser.fill(this.id(), browserId, target, options);
+  }
+  async type(browserId: string, target: Parameters<RuntimeBrowser['type']>[2], text: string, options?: Parameters<RuntimeBrowser['type']>[4]) {
+    return this.runtimes.browser.type(this.id(), browserId, target, text, options);
+  }
+  async press(browserId: string, key: string, options?: Parameters<RuntimeBrowser['press']>[3]) {
+    return this.runtimes.browser.press(this.id(), browserId, key, options);
+  }
+  async hotkey(browserId: string, keys: string[], options?: Parameters<RuntimeBrowser['hotkey']>[3]) {
+    return this.runtimes.browser.hotkey(this.id(), browserId, keys, options);
+  }
+  async scroll(browserId: string, options?: Parameters<RuntimeBrowser['scroll']>[2]) {
+    return this.runtimes.browser.scroll(this.id(), browserId, options);
+  }
+  async dialog(browserId: string, options?: Parameters<RuntimeBrowser['dialog']>[2]) {
+    return this.runtimes.browser.dialog(this.id(), browserId, options);
+  }
+  async targets(browserId: string, options?: Parameters<RuntimeBrowser['targets']>[2]) {
+    return this.runtimes.browser.targets(this.id(), browserId, options);
+  }
+  async downloads(browserId: string, options?: Parameters<RuntimeBrowser['downloads']>[2]) {
+    return this.runtimes.browser.downloads(this.id(), browserId, options);
+  }
+  async download(browserId: string, downloadId: string, options?: Parameters<RuntimeBrowser['download']>[3]) {
+    return this.runtimes.browser.download(this.id(), browserId, downloadId, options);
+  }
+  async pdf(browserId: string, targetId: string, options?: Parameters<RuntimeBrowser['pdf']>[3]) {
+    return this.runtimes.browser.pdf(this.id(), browserId, targetId, options);
+  }
+  async view(browserId: string, options?: Parameters<RuntimeBrowser['view']>[2]) {
+    return this.runtimes.browser.view(this.id(), browserId, options);
+  }
 }

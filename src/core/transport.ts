@@ -548,7 +548,13 @@ async function errorFromReply(reply: Reply): Promise<GravixLayerError> {
     parsed = undefined;
   }
 
-  return errorFromStatus(reply.status, formatErrorMessage(text, parsed), {
+  let message = formatErrorMessage(text, parsed);
+  if (message === 'Request failed.') {
+    // Empty/unparseable bodies (e.g. a 404 from a wrong route prefix) must
+    // still tell the caller what status came back.
+    message = `Request failed (HTTP ${reply.status}).`;
+  }
+  return errorFromStatus(reply.status, message, {
     headers: headersToObject(reply.headers),
     body: parsed ?? text,
   });

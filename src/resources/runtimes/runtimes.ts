@@ -48,8 +48,11 @@ import {
   type SSHStatus,
 } from '../../types/runtime.js';
 import { parseForkResponse, type ForkResponse } from '../../types/snapshots.js';
+import { buildMountSpec, RuntimeMounts, type MountInput } from '../storage.js';
 import { parseTemplateInfo, type TemplateListResponse } from '../../types/templates.js';
 import { APIResource, type ClientContext } from '../resource.js';
+import { RuntimeBrowser } from './browser.js';
+import { RuntimeDisplay } from './display.js';
 import { RuntimeFile } from './files.js';
 import { RuntimeGit } from './git.js';
 import { RuntimePty } from './pty.js';
@@ -105,6 +108,11 @@ export interface CreateRuntimeOptions extends RequestOptions {
   providers?: string[];
   /** Network policies to attach. The account default is always applied. */
   networkPolicyIds?: string[];
+  /**
+   * Storage mounts to attach at boot — buckets, bucket links, or git
+   * repositories. At most 8; paths must be absolute and non-nesting.
+   */
+  mounts?: MountInput[];
 }
 
 /** Options for {@link Runtimes.list}. */
@@ -400,15 +408,24 @@ export class Runtimes extends APIResource {
   readonly templates: RuntimeTemplates;
   /** Background commands started with `runCmd(..., { background: true })`. */
   readonly command: RuntimeCommands;
+  /** Pixel-level control of the runtime's display. */
+  readonly display: RuntimeDisplay;
+  /** Semantic control of the runtime's browser. */
+  readonly browser: RuntimeBrowser;
+  /** Storage mounts on a running runtime. */
+  readonly mounts: RuntimeMounts;
 
   constructor(context: ClientContext) {
     super(context);
     this.file = new RuntimeFile(context);
     this.pty = new RuntimePty(context);
+    this.display = new RuntimeDisplay(context);
+    this.browser = new RuntimeBrowser(context);
     this.git = new RuntimeGit(context);
     this.service = new RuntimeService(context);
     this.templates = new RuntimeTemplates(context);
     this.command = new RuntimeCommands(this);
+    this.mounts = new RuntimeMounts(context);
   }
 
   // -------------------------------------------------------------------------
@@ -460,6 +477,14 @@ export class Runtimes extends APIResource {
     if (options.providers !== undefined) body['providers'] = options.providers;
     if (options.networkPolicyIds !== undefined) {
       body['network_policy_ids'] = options.networkPolicyIds;
+    }
+    if (options.mounts !== undefined) {
+      if (options.mounts.length > 8) {
+        throw new GravixLayerInvalidArgumentError(
+          `At most 8 mounts per runtime; received ${options.mounts.length}.`,
+        );
+      }
+      body['mounts'] = options.mounts.map(buildMountSpec);
     }
 
     // Restoring a snapshot boots a guest, which needs a longer budget than the

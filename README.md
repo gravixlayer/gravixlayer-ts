@@ -215,6 +215,45 @@ const sandbox = await client.runtime.create({
 Attaching several policies applies the most restrictive of them, so adding one
 can only narrow access.
 
+## Storage mounts
+
+Managed buckets, links to buckets you already own, and git repositories can
+mount into a sandbox at boot or while it runs:
+
+```ts
+const bucket = await client.storage.buckets.create('datasets');
+
+const sandbox = await client.runtime.create({
+  mounts: [
+    { kind: 'bucket', path: '/mnt/data', mode: 'rw', bucket: bucket.id },
+    { kind: 'git', path: '/mnt/repo', url: 'https://example.com/org/repo.git' },
+  ],
+});
+
+// Hot-attach, inspect, detach on a running sandbox.
+const mount = await sandbox.mounts.attach({
+  kind: 'bucket',
+  path: '/mnt/more',
+  link: 'byo-data', // a bucket link id or name
+});
+console.log(mount.state, mount.provenance);
+await sandbox.mounts.detach(mount.id);
+```
+
+Bring your own bucket with a *link* — credentials live in a secret provider
+and are referenced by name, never passed through the SDK:
+
+```ts
+const link = await client.storage.links.create('byo-data', 'acme-data', {
+  provider: 's3_compatible',
+  endpoint: 'https://objects.example.com',
+  pathStyle: true,
+  secretProviderId: provider.id,
+  accessKeySecret: 'AWS_ACCESS_KEY_ID',
+  secretKeySecret: 'AWS_SECRET_ACCESS_KEY',
+});
+```
+
 ## Secrets
 
 ```ts

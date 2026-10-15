@@ -17,6 +17,7 @@ import { buildListEndpoint, SERVICES } from './core/url.js';
 import { Agents } from './resources/agents.js';
 import { Identity } from './resources/identity.js';
 import { NetworkPolicies } from './resources/network-policies.js';
+import { Storage } from './resources/storage.js';
 import type { ClientContext } from './resources/resource.js';
 import { Runtimes } from './resources/runtimes/runtimes.js';
 import { Snapshots } from './resources/snapshots.js';
@@ -137,6 +138,8 @@ export class GravixLayer implements ClientContext {
   readonly identity: Identity;
   /** Rules governing what a runtime may reach on the network. */
   readonly networkPolicies: NetworkPolicies;
+  /** Buckets, bucket links, and runtime mounts. */
+  readonly storage: Storage;
 
   /** The configured HTTP engine. Shared by every resource. */
   readonly transport: Transport;
@@ -249,6 +252,7 @@ export class GravixLayer implements ClientContext {
     this.agents = new Agents(this);
     this.identity = new Identity(this);
     this.networkPolicies = new NetworkPolicies(this);
+    this.storage = new Storage(this);
   }
 
   /**
