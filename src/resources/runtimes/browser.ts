@@ -878,8 +878,7 @@ export class RuntimeBrowser extends APIResource {
     // `vt=` on the WS upgrade carries the minted role — compose it so a
     // shared URL can never arrive un-tokened. Headed feeds require it;
     // headless feeds assert the role when present (absent = control).
-    const viewToken =
-      typeof r.view_token === 'string' && r.view_token ? r.view_token : undefined;
+    const viewToken = typeof r.view_token === 'string' && r.view_token ? r.view_token : undefined;
     return {
       url: str(r, 'url'),
       browserUrl,

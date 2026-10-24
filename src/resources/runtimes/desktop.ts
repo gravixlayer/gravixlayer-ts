@@ -6,7 +6,7 @@
  * On runtimes without a desktop image the calls return not-found errors.
  */
 
-import { asRecord, bool, num, str } from '../../core/parse.js';
+import { asRecord, bool, str } from '../../core/parse.js';
 import type { RequestOptions } from '../../core/transport.js';
 import { SERVICES } from '../../core/url.js';
 import { assertRuntimeId } from '../../core/validate.js';

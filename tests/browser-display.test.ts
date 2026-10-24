@@ -409,7 +409,12 @@ describe('desktop session plane', () => {
 
   it('component() sends the lifecycle op and parses the post state', async () => {
     const { client, http } = testClient([
-      jsonResponse({ name: 'session', unit: 'gnome.service', state: 'active', sub_state: 'running' }),
+      jsonResponse({
+        name: 'session',
+        unit: 'gnome.service',
+        state: 'active',
+        sub_state: 'running',
+      }),
     ]);
     const c = await client.runtime.desktop.component(RUNTIME_ID, 'session', 'restart');
     expect(c.state).toBe('active');
@@ -639,9 +644,7 @@ describe('browser plane', () => {
   });
 
   it('caller ids are percent-encoded in the route path', async () => {
-    const { client, http } = testClient([
-      jsonResponse({ entry: { id: 'd?9' } }),
-    ]);
+    const { client, http } = testClient([jsonResponse({ entry: { id: 'd?9' } })]);
     await client.runtime.browser.download(RUNTIME_ID, 'b/1', 'd?9');
     expect(http.last().url).toContain('browser/b%2F1/downloads/d%3F9');
   });

@@ -473,7 +473,8 @@ export class RuntimeDisplay extends APIResource {
     options: ClickOptions = {},
   ): Promise<void> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, clickCount, coordinateSpace, modifiers } = options;
+    const { signal, requestTimeoutMs, maxRetries, clickCount, coordinateSpace, modifiers } =
+      options;
     await this.http.request({
       method: 'POST',
       path: `runtime/${runtimeId}/display/mouse/click`,
@@ -561,12 +562,7 @@ export class RuntimeDisplay extends APIResource {
   }
 
   /** Move the pointer — `coordinateSpace` maps screenshot pixels back. */
-  async move(
-    runtimeId: string,
-    x: number,
-    y: number,
-    options: PointerOptions = {},
-  ): Promise<void> {
+  async move(runtimeId: string, x: number, y: number, options: PointerOptions = {}): Promise<void> {
     assertRuntimeId(runtimeId);
     const { signal, requestTimeoutMs, maxRetries, coordinateSpace } = options;
     await this.http.request({
@@ -654,11 +650,7 @@ export class RuntimeDisplay extends APIResource {
   }
 
   /** Own the display clipboard — subsequent pastes yield `text`. */
-  async setClipboard(
-    runtimeId: string,
-    text: string,
-    options: RequestOptions = {},
-  ): Promise<void> {
+  async setClipboard(runtimeId: string, text: string, options: RequestOptions = {}): Promise<void> {
     assertRuntimeId(runtimeId);
     await this.http.request({
       method: 'POST',
@@ -727,8 +719,7 @@ export class RuntimeDisplay extends APIResource {
       }),
     );
     const browserUrl = str(r, 'browser_url');
-    const viewToken =
-      typeof r.view_token === 'string' && r.view_token ? r.view_token : undefined;
+    const viewToken = typeof r.view_token === 'string' && r.view_token ? r.view_token : undefined;
     // The guest WS enforces the minted role via `?vt=` — compose it into
     // the share URL so callers can never hand out an un-tokened link.
     const watchUrl =

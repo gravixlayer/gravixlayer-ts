@@ -30,7 +30,10 @@ function loadEnvFile(path: string): void {
     const [k, ...rest] = t.split('=');
     const key = (k ?? '').trim();
     if (key && !(key in process.env)) {
-      process.env[key] = rest.join('=').trim().replace(/^["']|["']$/g, '');
+      process.env[key] = rest
+        .join('=')
+        .trim()
+        .replace(/^["']|["']$/g, '');
     }
   }
 }
@@ -64,17 +67,28 @@ const MOUNT_GIT = '/mnt/repo';
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 type CmdResult = { exitCode: number; stdout: string; stderr: string };
-type Sandbox = { runCmd: (c: string, o?: object) => Promise<{
-  exitCode: number; stdout: string; stderr: string;
-}> };
+type Sandbox = {
+  runCmd: (
+    c: string,
+    o?: object,
+  ) => Promise<{
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+  }>;
+};
 
 async function sh(sandbox: Sandbox, cmd: string): Promise<CmdResult> {
   const res = await sandbox.runCmd('sh', { args: ['-c', cmd], timeout: 60 });
   return { exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr };
 }
 
-async function waitStatus(client: GravixLayer, id: string, want = 'running',
-                          timeoutS = 240): Promise<string> {
+async function waitStatus(
+  client: GravixLayer,
+  id: string,
+  want = 'running',
+  timeoutS = 240,
+): Promise<string> {
   const deadline = Date.now() + timeoutS * 1000;
   while (Date.now() < deadline) {
     const st = (await client.runtime.get(id)).status;
@@ -87,8 +101,13 @@ async function waitStatus(client: GravixLayer, id: string, want = 'running',
   throw new Error(`runtime ${id} not ${want} within ${timeoutS}s`);
 }
 
-async function waitAttachment(client: GravixLayer, id: string, path: string,
-                              want = 'attached', timeoutS = 180) {
+async function waitAttachment(
+  client: GravixLayer,
+  id: string,
+  path: string,
+  want = 'attached',
+  timeoutS = 180,
+) {
   const deadline = Date.now() + timeoutS * 1000;
   while (Date.now() < deadline) {
     const { mounts } = await client.storage.mounts.list(id);
@@ -166,10 +185,7 @@ e2e('storage mounts e2e', () => {
     expect(r.stdout).toContain(`hello-${RUN_ID}`);
 
     // credential hygiene — nothing sensitive in the guest environment
-    const env = await sh(
-      sandbox,
-      "env; cat /proc/*/environ 2>/dev/null | tr '\\0' '\\n'; true",
-    );
+    const env = await sh(sandbox, "env; cat /proc/*/environ 2>/dev/null | tr '\\0' '\\n'; true");
     if (AWS_KEY) expect(env.stdout).not.toContain(AWS_KEY);
     if (AWS_SECRET) expect(env.stdout).not.toContain(AWS_SECRET);
 
@@ -221,7 +237,8 @@ e2e('storage mounts e2e', () => {
     await waitStatus(client, sandbox.runtimeId);
     await waitAttachment(client, sandbox.runtimeId, MOUNT_LINK);
     const r = await sh(
-      sandbox, `echo link-${RUN_ID} > ${MOUNT_LINK}/via-link.txt && sync && cat ${MOUNT_LINK}/via-link.txt`,
+      sandbox,
+      `echo link-${RUN_ID} > ${MOUNT_LINK}/via-link.txt && sync && cat ${MOUNT_LINK}/via-link.txt`,
     );
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain(`link-${RUN_ID}`);
@@ -234,8 +251,10 @@ e2e('storage mounts e2e', () => {
       mounts: [
         { kind: 'git', path: MOUNT_GIT, url: PUBLIC_REPO, depth: 1 },
         {
-          kind: 'git', path: '/mnt/bad',
-          url: 'https://invalid.invalid/nope.git', required: false,
+          kind: 'git',
+          path: '/mnt/bad',
+          url: 'https://invalid.invalid/nope.git',
+          required: false,
         },
       ],
     });
@@ -261,17 +280,20 @@ e2e('storage mounts e2e', () => {
     providerIds.push(provider.id);
     const sandbox = await client.runtime.create({
       template: TEMPLATE,
-      mounts: [{
-        kind: 'git', path: '/mnt/priv', url: PRIVATE_REPO,
-        credentialProvider: provider.id, credentialSecret: 'GIT_TOKEN',
-      }],
+      mounts: [
+        {
+          kind: 'git',
+          path: '/mnt/priv',
+          url: PRIVATE_REPO,
+          credentialProvider: provider.id,
+          credentialSecret: 'GIT_TOKEN',
+        },
+      ],
     });
     runtimeIds.push(sandbox.runtimeId);
     await waitStatus(client, sandbox.runtimeId);
     await waitAttachment(client, sandbox.runtimeId, '/mnt/priv');
-    const env = await sh(
-      sandbox, "env; cat /proc/*/environ 2>/dev/null | tr '\\0' '\\n'; true",
-    );
+    const env = await sh(sandbox, "env; cat /proc/*/environ 2>/dev/null | tr '\\0' '\\n'; true");
     if (GIT_TOKEN) expect(env.stdout).not.toContain(GIT_TOKEN);
   }, 600_000);
 
