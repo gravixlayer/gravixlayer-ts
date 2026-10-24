@@ -5,6 +5,95 @@ All notable changes to this package are documented here. The format follows
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.1.40] - 2026-10-24
+
+### Added
+- `display.enable({ mode, display })` — `'auto' | 'spawn' | 'attach'`:
+  attach to the image's session display or spawn a virtual one.
+- `display.info()` (live geometry, dpi, attached state),
+  `display.position()` (live pointer coordinates) and `display.keys()`
+  (the key names `press`/`hotkey` accept).
+- `display.screenshot({ format: 'webp', maxWidth, maxHeight, cursor })` —
+  aspect-fit bounds, pointer compositing, and the reply's `scale` factor
+  for coordinate mapping.
+- Pointer actions: `click({ clickCount, modifiers, coordinateSpace })`,
+  `down()`, `up()`, `drag(toX, toY, { from, steps, durationMs })`,
+  `scroll({ modifiers })`.
+- Keyboard: `press({ modifiers })`, `hotkey({ modifiers })`, and
+  `type({ mode: 'paste' })` — clipboard-staged typing for large blocks.
+- `display.getClipboard()` / `display.setClipboard(text)`.
+- `display.view({ role: 'watch' })` mints a view-only link and returns
+  `viewToken` plus `watchUrl` — the `browserUrl` with `&vt=` already
+  composed, ready to open; `display.stopView()` frees the view port.
+- `runtime.desktop` — `status()`, `component(name, op)`, and
+  `logs(name, { cursor, max, priority })` journal paging on
+  desktop-template runtimes.
+- `display.act({ actions, settleMs, timeoutMs, observe })` — one agent
+  step in a single call: ordered inputs, settle, and the observation shot;
+  replies `{ settled, rev, screenshot }`.
+- Frame revisions: `DisplayScreenshot.rev`/`unchanged` and
+  `screenshot({ ifRev })` skip encode+transfer when the frame is
+  unchanged; `waitStable` replies carry `rev`.
+- `display.resize(w, h)` live-resizes and returns the new geometry;
+  `display.view({ windowId })` streams one window's pixels.
+- Windows and apps: `display.windows({ windowClass })`,
+  `display.windowOp(id, op, { at, size })`, `display.apps()`,
+  `display.launchApp(app, { uri, waitWindow, timeoutMs })`, and
+  `display.open(target, { waitWindow })`.
+- `display.getClipboardImage()` / `setClipboardImage(pngBase64)` — PNG
+  payloads alongside the text clipboard.
+- `browser.view()` returns `watchUrl` (and `viewToken` when one applies):
+  headed browsers stream through the token-gated display view, so the
+  ready-to-open link composes `&vt=` in; headless screencasts return the
+  bare `browserUrl` unchanged.
+- `browser.view({ role: 'watch' })` mints a view-only link — the
+  `viewToken`/`watchUrl` capability sees frames but can never inject
+  input, matching `display.view`.
+
+### Changed
+- `create({ agentId })` throws an explicit deprecation error instead of
+  sending the removed field — the API rejects `agent_id` outright;
+  per-runtime MCP policy attaches via the `mcp` spec.
+- `browser.navigate({ waitUntil })` accepts `'commit'` instead of the
+  invalid `'none'` — `commit | domcontentloaded | load | networkidle`
+  matches the server's real wait modes.
+- `browser.evaluate` returns the expression's parsed JSON `value`
+  (`unknown`) — objects and arrays previously read as `''`, and scalars
+  lost their type to stringification.
+- `browser.dialog` defaults `autoDismiss` to `false` — `true` restores the
+  auto-dismiss policy and dismisses the open dialog, so the old default
+  could never answer one. Matches the Python SDK.
+- `browser.screenshot` accepts `quality` (JPEG only, 0–100).
+
+### Fixed
+- `runtime.browser` percent-encodes `browserId`, `targetId`, and
+  `downloadId` in route paths — an id containing `/`, `?`, or `#`
+  previously corrupted the route.
+- `display.scroll` sends `x`/`y` only when given — the server positions the
+  pointer before the wheel, and `x: 0`/`y: 0` are now distinguishable from
+  unset (previously both serialized as `0`).
+- `display.view` and `browser.view` accept `rotateToken` to mint a fresh
+  auth token for the watch URL (invalidates the previous one); docstrings
+  now correctly say only `browserUrl` carries the token.
+- `WindowOp` accepts `'fullscreen'`/`'unfullscreen'` — the server supports
+  both ops but the union type rejected them.
+
+### Templates
+- **`base-browser`** (`examples/templates/dockerfiles/base-browser.Dockerfile`) —
+  the desktop-less browser template for `browser.*` / `display.*` usage.
+- **`base-desktop`** (`examples/templates/dockerfiles/base-desktop.Dockerfile`) —
+  a full Ubuntu 22.04 GNOME 42 desktop on a virtual display, up at boot.
+  Ships Firefox ESR, Chromium, VS Code, LibreOffice and the core desktop
+  apps, with accessibility on. Display, geometry and user are in
+  `/etc/gravixlayer/desktop.json`.
+
+### Tests
+- `tests/storage.e2e.test.ts` — opt-in live suite for `client.storage`:
+  managed buckets, static-credential bucket links, git mounts,
+  pause/resume + kill-detach lifecycle, read-only enforcement, and guest
+  credential hygiene. Runs only with `GRAVIXLAYER_E2E=1` plus an API key;
+  reads `~/.config/gravix-test/aws.env` for test credentials.
 ## [0.1.39] - 2026-10-15
 ### Added
 - `client.storage` — storage mounts end to end: `storage.buckets`

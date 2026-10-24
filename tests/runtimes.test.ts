@@ -47,7 +47,6 @@ describe('create', () => {
       envVars: { NODE_ENV: 'production' },
       metadata: { owner: 'billing' },
       internetAccess: false,
-      agentId: 'agent-1',
       providers: ['prov-1'],
       networkPolicyIds: ['pol-1'],
     });
@@ -60,10 +59,18 @@ describe('create', () => {
       env_vars: { NODE_ENV: 'production' },
       metadata: { owner: 'billing' },
       internet_access: false,
-      agent_id: 'agent-1',
       providers: ['prov-1'],
       network_policy_ids: ['pol-1'],
     });
+  });
+
+  it('rejects the removed agentId field rather than sending a dead field', async () => {
+    const { client, http } = testClient([jsonResponse(runtimePayload())]);
+    await expectRejection(
+      client.runtime.create({ agentId: 'agent-1' }),
+      GravixLayerInvalidArgumentError,
+    );
+    expect(http.requests).toHaveLength(0);
   });
 
   it('sends timeout as the sandbox lifetime in seconds', async () => {

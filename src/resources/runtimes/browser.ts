@@ -15,6 +15,12 @@ import { SERVICES } from '../../core/url.js';
 import { assertRuntimeId } from '../../core/validate.js';
 import { APIResource } from '../resource.js';
 
+/** Percent-encode one URL path segment — caller-supplied ids (browser,
+ * target, download) must never carry `/`, `?` or `#` into a path. */
+function seg(id: string): string {
+  return encodeURIComponent(id);
+}
+
 /** One page/frame in the browser. */
 export interface BrowserTargetInfo {
   readonly targetId: string;
@@ -64,6 +70,9 @@ export interface ActionResult {
   readonly navigated: boolean;
   readonly settled: boolean;
   readonly url: string;
+  /** @deprecated Actionability failures are `409` errors naming the failed
+   * check; this field stays on the wire for compatibility and is always
+   * empty on success. */
   readonly reason: string;
 }
 
@@ -108,8 +117,8 @@ export interface BrowserOpenOptions extends RequestOptions {
 /** Options for {@link RuntimeBrowser.navigate}. */
 export interface NavigateOptions extends RequestOptions {
   targetId?: string;
-  /** `load` (default), `domcontentloaded`, `networkidle`, `none`. */
-  waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' | 'none';
+  /** `load` (default), `domcontentloaded`, `commit`, `networkidle`. */
+  waitUntil?: 'load' | 'domcontentloaded' | 'commit' | 'networkidle';
   timeoutMs?: number;
 }
 
@@ -121,6 +130,8 @@ export interface BrowserScreenshotOptions extends RequestOptions {
   fullPage?: boolean;
   /** Clip to an element's box. */
   element?: ElementTarget;
+  /** JPEG quality 0–100 — ignored for PNG. */
+  quality?: number;
   /** Block until pixel-stable before capturing. */
   waitStableMs?: number;
   timeoutMs?: number;
@@ -263,7 +274,7 @@ export class RuntimeBrowser extends APIResource {
     }
     await this.http.request({
       method: 'POST',
-      path: `runtime/${runtimeId}/browser/${browserId}/close`,
+      path: `runtime/${runtimeId}/browser/${seg(browserId)}/close`,
       service: SERVICES.agents,
       options,
     });
@@ -294,7 +305,7 @@ export class RuntimeBrowser extends APIResource {
       asRecord(
         await this.http.request({
           method: 'GET',
-          path: `runtime/${runtimeId}/browser/${browserId}/status`,
+          path: `runtime/${runtimeId}/browser/${seg(browserId)}/status`,
           service: SERVICES.agents,
           options,
         }),
@@ -316,7 +327,7 @@ export class RuntimeBrowser extends APIResource {
     const r = asRecord(
       await this.http.request({
         method: 'POST',
-        path: `runtime/${runtimeId}/browser/${browserId}/navigate`,
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/navigate`,
         service: SERVICES.agents,
         body: {
           target_id: targetId ?? '',
@@ -349,7 +360,7 @@ export class RuntimeBrowser extends APIResource {
       asRecord(
         await this.http.request({
           method: 'POST',
-          path: `runtime/${runtimeId}/browser/${browserId}/${verb}`,
+          path: `runtime/${runtimeId}/browser/${seg(browserId)}/${seg(verb)}`,
           service: SERVICES.agents,
           body: { target_id: targetId, verb },
           options,
@@ -375,18 +386,20 @@ export class RuntimeBrowser extends APIResource {
       format,
       fullPage,
       element,
+      quality,
       waitStableMs,
       timeoutMs,
     } = options;
     const r = asRecord(
       await this.http.request({
         method: 'POST',
-        path: `runtime/${runtimeId}/browser/${browserId}/screenshot`,
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/screenshot`,
         service: SERVICES.agents,
         body: {
           target_id: targetId ?? '',
           format: format ?? 'png',
           full_page: fullPage ?? false,
+          quality,
           element: normTarget(element),
           wait_stable_ms: waitStableMs,
           timeout_ms: timeoutMs,
@@ -428,7 +441,7 @@ export class RuntimeBrowser extends APIResource {
     const r = asRecord(
       await this.http.request({
         method: 'POST',
-        path: `runtime/${runtimeId}/browser/${browserId}/snapshot`,
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/snapshot`,
         service: SERVICES.agents,
         body: {
           target_id: targetId ?? '',
@@ -480,14 +493,14 @@ export class RuntimeBrowser extends APIResource {
       /** `isolated` (default) or `main` — the JavaScript world to run in. */
       world?: 'isolated' | 'main';
     } = {},
-  ): Promise<{ value: string; error: string; isError: boolean }> {
+  ): Promise<{ value: unknown; error: string; isError: boolean }> {
     assertRuntimeId(runtimeId);
     const { signal, requestTimeoutMs, maxRetries, targetId, awaitPromise, timeoutMs, world } =
       options;
     const r = asRecord(
       await this.http.request({
         method: 'POST',
-        path: `runtime/${runtimeId}/browser/${browserId}/evaluate`,
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/evaluate`,
         service: SERVICES.agents,
         body: {
           target_id: targetId ?? '',
@@ -499,7 +512,8 @@ export class RuntimeBrowser extends APIResource {
         options: { signal, requestTimeoutMs, maxRetries },
       }),
     );
-    return { value: str(r, 'value'), error: str(r, 'error'), isError: bool(r, 'is_error') };
+    // `value` arrives as parsed JSON — numbers/objects/booleans pass through.
+    return { value: r['value'], error: str(r, 'error'), isError: bool(r, 'is_error') };
   }
 
   // -- actions ---------------------------------------------------------------
@@ -525,7 +539,7 @@ export class RuntimeBrowser extends APIResource {
       asRecord(
         await this.http.request({
           method: 'POST',
-          path: `runtime/${runtimeId}/browser/${browserId}/actions/${verb}`,
+          path: `runtime/${runtimeId}/browser/${seg(browserId)}/actions/${seg(verb)}`,
           service: SERVICES.agents,
           body: {
             ...body,
@@ -672,7 +686,9 @@ export class RuntimeBrowser extends APIResource {
 
   // -- dialogs / downloads / pdf / view ---------------------------------------------------------------
 
-  /** Handle a pending alert/confirm/prompt — auto-dismiss is the default. */
+  /** Answer a pending alert/confirm/prompt (`promptText` fills prompt
+   *  dialogs). `autoDismiss: true` instead restores auto-dismiss policy and
+   *  clears any pending dialog. */
   async dialog(
     runtimeId: string,
     browserId: string,
@@ -688,13 +704,13 @@ export class RuntimeBrowser extends APIResource {
       options;
     await this.http.request({
       method: 'POST',
-      path: `runtime/${runtimeId}/browser/${browserId}/dialog`,
+      path: `runtime/${runtimeId}/browser/${seg(browserId)}/dialog`,
       service: SERVICES.agents,
       body: {
         target_id: targetId ?? '',
         accept: accept ?? true,
         prompt_text: promptText ?? '',
-        auto_dismiss: autoDismiss ?? true,
+        auto_dismiss: autoDismiss ?? false,
       },
       options: { signal, requestTimeoutMs, maxRetries },
     });
@@ -711,7 +727,7 @@ export class RuntimeBrowser extends APIResource {
     const r = asRecord(
       await this.http.request({
         method: 'POST',
-        path: `runtime/${runtimeId}/browser/${browserId}/targets`,
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/targets`,
         service: SERVICES.agents,
         body: { url: url ?? '', activate: activate ?? true },
         options: { signal, requestTimeoutMs, maxRetries },
@@ -734,7 +750,7 @@ export class RuntimeBrowser extends APIResource {
     const r = asRecord(
       await this.http.request({
         method: 'POST',
-        path: `runtime/${runtimeId}/browser/${browserId}/downloads`,
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/downloads`,
         service: SERVICES.agents,
         body: { wait_name: waitName ?? '', timeout_ms: timeoutMs ?? 0 },
         options: { signal, requestTimeoutMs, maxRetries },
@@ -755,7 +771,7 @@ export class RuntimeBrowser extends APIResource {
     const r = asRecord(
       await this.http.request({
         method: 'GET',
-        path: `runtime/${runtimeId}/browser/${browserId}/downloads/${downloadId}${metaOnly ? '?meta_only=true' : ''}`,
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/downloads/${seg(downloadId)}${metaOnly ? '?meta_only=true' : ''}`,
         service: SERVICES.agents,
         options: rest,
       }),
@@ -795,7 +811,7 @@ export class RuntimeBrowser extends APIResource {
     const r = asRecord(
       await this.http.request({
         method: 'POST',
-        path: `runtime/${runtimeId}/browser/${browserId}/targets/${targetId}/pdf`,
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/targets/${seg(targetId)}/pdf`,
         service: SERVICES.agents,
         body: {
           landscape: landscape ?? false,
@@ -814,27 +830,64 @@ export class RuntimeBrowser extends APIResource {
     return { data: str(r, 'data'), format: str(r, 'format') };
   }
 
-  /** Live view endpoint — headed streams the display socket, headless the page screencast. */
+  /**
+   * Live view endpoint — headed streams the display socket, headless the page
+   * screencast. `browserUrl` carries the auth token; it is minted on the first
+   * call for a port, so a repeat call returns a token-less URL unless
+   * `rotateToken` is set (fresh token — invalidates the previous URL).
+   * `role: 'watch'` mints a view-only link: `viewToken`/`watchUrl` carry a
+   * `vt=` capability that sees frames but can never inject input. Headed
+   * browsers ride the display's token-gated feed, where `vt=` is required.
+   */
   async view(
     runtimeId: string,
     browserId: string,
-    options: RequestOptions & { targetId?: string; fps?: number; quality?: number } = {},
-  ): Promise<{ url: string; browserUrl: string; port: number; expiresAt?: string }> {
+    options: RequestOptions & {
+      targetId?: string;
+      fps?: number;
+      quality?: number;
+      role?: 'control' | 'watch';
+      rotateToken?: boolean;
+    } = {},
+  ): Promise<{
+    url: string;
+    browserUrl: string;
+    /** `browserUrl` with the role token composed in — ready to open. */
+    watchUrl: string;
+    port: number;
+    viewToken?: string;
+    expiresAt?: string;
+  }> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, targetId, ...rest } = options;
+    const { signal, requestTimeoutMs, maxRetries, targetId, role, rotateToken, ...rest } = options;
     const r = asRecord(
       await this.http.request({
         method: 'POST',
-        path: `runtime/${runtimeId}/browser/${browserId}/view`,
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/view`,
         service: SERVICES.agents,
-        body: { target_id: targetId ?? '', ...rest },
+        body: {
+          target_id: targetId ?? '',
+          rotate_token: rotateToken,
+          ...(role ? { role } : {}),
+          ...rest,
+        },
         options: { signal, requestTimeoutMs, maxRetries },
       }),
     );
+    const browserUrl = str(r, 'browser_url');
+    // `vt=` on the WS upgrade carries the minted role — compose it so a
+    // shared URL can never arrive un-tokened. Headed feeds require it;
+    // headless feeds assert the role when present (absent = control).
+    const viewToken =
+      typeof r.view_token === 'string' && r.view_token ? r.view_token : undefined;
     return {
       url: str(r, 'url'),
-      browserUrl: str(r, 'browser_url'),
+      browserUrl,
+      watchUrl: viewToken
+        ? `${browserUrl}${browserUrl.includes('?') ? '&' : '?'}vt=${viewToken}`
+        : browserUrl,
       port: num(r, 'port'),
+      viewToken,
       expiresAt: typeof r.expires_at === 'string' ? r.expires_at : undefined,
     };
   }

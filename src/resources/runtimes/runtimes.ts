@@ -52,6 +52,7 @@ import { buildMountSpec, RuntimeMounts, type MountInput } from '../storage.js';
 import { parseTemplateInfo, type TemplateListResponse } from '../../types/templates.js';
 import { APIResource, type ClientContext } from '../resource.js';
 import { RuntimeBrowser } from './browser.js';
+import { RuntimeDesktop } from './desktop.js';
 import { RuntimeDisplay } from './display.js';
 import { RuntimeFile } from './files.js';
 import { RuntimeGit } from './git.js';
@@ -97,7 +98,11 @@ export interface CreateRuntimeOptions extends RequestOptions {
   metadata?: Record<string, unknown>;
   /** Whether the guest may reach the internet. Defaults to the account policy. */
   internetAccess?: boolean;
-  /** Agent to associate the runtime with. */
+  /**
+   * @deprecated Agent binding was removed — the API rejects `agent_id` on
+   * create. Attach MCP servers via the `mcp` attach spec instead; passing
+   * `agentId` throws a client-side error instead of a server 400.
+   */
   agentId?: string;
   /**
    * Secret providers to attach.
@@ -410,6 +415,8 @@ export class Runtimes extends APIResource {
   readonly command: RuntimeCommands;
   /** Pixel-level control of the runtime's display. */
   readonly display: RuntimeDisplay;
+  /** Session components of a desktop-template runtime. */
+  readonly desktop: RuntimeDesktop;
   /** Semantic control of the runtime's browser. */
   readonly browser: RuntimeBrowser;
   /** Storage mounts on a running runtime. */
@@ -420,6 +427,7 @@ export class Runtimes extends APIResource {
     this.file = new RuntimeFile(context);
     this.pty = new RuntimePty(context);
     this.display = new RuntimeDisplay(context);
+    this.desktop = new RuntimeDesktop(context);
     this.browser = new RuntimeBrowser(context);
     this.git = new RuntimeGit(context);
     this.service = new RuntimeService(context);
@@ -473,7 +481,11 @@ export class Runtimes extends APIResource {
     if (options.envVars !== undefined) body['env_vars'] = options.envVars;
     if (options.metadata !== undefined) body['metadata'] = options.metadata;
     if (options.internetAccess !== undefined) body['internet_access'] = options.internetAccess;
-    if (options.agentId !== undefined) body['agent_id'] = options.agentId;
+    if (options.agentId !== undefined) {
+      throw new GravixLayerInvalidArgumentError(
+        '`agentId` was removed from runtime create — attach MCP servers via the `mcp` attach spec instead.',
+      );
+    }
     if (options.providers !== undefined) body['providers'] = options.providers;
     if (options.networkPolicyIds !== undefined) {
       body['network_policy_ids'] = options.networkPolicyIds;
