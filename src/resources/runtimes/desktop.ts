@@ -1,16 +1,18 @@
 /**
- * Desktop session plane — component lifecycle on desktop-template runtimes.
+ * Desktop — the runtime's computer-use surface.
  *
- * Inspect and control the components a desktop image declares (the display
- * server, the session, the window manager) and read their journal logs.
- * On runtimes without a desktop image the calls return not-found errors.
+ * `client.runtime.desktop` is the single entry point for driving a runtime's
+ * desktop: pixel input and screenshots, windows, apps, clipboard, live view,
+ * agent `act` batches, and the session plane (component lifecycle and journal
+ * logs) on desktop-template images. `client.runtime.browser` stays the
+ * semantic plane for in-page element work.
  */
 
 import { asRecord, bool, str } from '../../core/parse.js';
 import type { RequestOptions } from '../../core/transport.js';
 import { SERVICES } from '../../core/url.js';
 import { assertRuntimeId } from '../../core/validate.js';
-import { APIResource } from '../resource.js';
+import { RuntimeDisplay } from './display.js';
 
 /** One declared component's live state. */
 export interface DesktopComponent {
@@ -57,10 +59,10 @@ function parseComponent(v: unknown): DesktopComponent {
   };
 }
 
-/** `client.runtime.desktop` — the session plane for desktop images. */
-export class RuntimeDesktop extends APIResource {
+/** `client.runtime.desktop` — the full computer-use surface. */
+export class RuntimeDesktop extends RuntimeDisplay {
   /** Declared components and their live states. */
-  async status(runtimeId: string, options: RequestOptions = {}): Promise<DesktopStatus> {
+  async components(runtimeId: string, options: RequestOptions = {}): Promise<DesktopStatus> {
     assertRuntimeId(runtimeId);
     const r = asRecord(
       await this.http.request({
@@ -126,5 +128,75 @@ export class RuntimeDesktop extends APIResource {
       nextCursor: str(r, 'next_cursor'),
       truncated: bool(r, 'truncated'),
     };
+  }
+
+  async startComponent(
+    runtimeId: string,
+    name: string,
+    options: RequestOptions = {},
+  ): Promise<DesktopComponent> {
+    return this.component(runtimeId, name, 'start', options);
+  }
+
+  async stopComponent(
+    runtimeId: string,
+    name: string,
+    options: RequestOptions = {},
+  ): Promise<DesktopComponent> {
+    return this.component(runtimeId, name, 'stop', options);
+  }
+
+  async restartComponent(
+    runtimeId: string,
+    name: string,
+    options: RequestOptions = {},
+  ): Promise<DesktopComponent> {
+    return this.component(runtimeId, name, 'restart', options);
+  }
+
+  // ── simple mouse/keyboard conveniences ────────────────────────────────
+
+  async leftClick(runtimeId: string, x?: number, y?: number, options: RequestOptions = {}) {
+    return this.click(runtimeId, x, y, 'left', options);
+  }
+
+  async doubleClick(runtimeId: string, x?: number, y?: number, options: RequestOptions = {}) {
+    return this.click(runtimeId, x, y, 'left', { ...options, clickCount: 2 });
+  }
+
+  async rightClick(runtimeId: string, x?: number, y?: number, options: RequestOptions = {}) {
+    return this.click(runtimeId, x, y, 'right', options);
+  }
+
+  async middleClick(runtimeId: string, x?: number, y?: number, options: RequestOptions = {}) {
+    return this.click(runtimeId, x, y, 'middle', options);
+  }
+
+  async mousePress(
+    runtimeId: string,
+    button?: 'left' | 'right' | 'middle',
+    x?: number,
+    y?: number,
+    options: RequestOptions = {},
+  ) {
+    return this.down(runtimeId, x, y, button, options);
+  }
+
+  async mouseRelease(
+    runtimeId: string,
+    button?: 'left' | 'right' | 'middle',
+    x?: number,
+    y?: number,
+    options: RequestOptions = {},
+  ) {
+    return this.up(runtimeId, button, { ...options, x, y });
+  }
+
+  async moveMouse(runtimeId: string, x: number, y: number, options: RequestOptions = {}) {
+    return this.move(runtimeId, x, y, options);
+  }
+
+  async write(runtimeId: string, text: string, delayMs?: number, options: RequestOptions = {}) {
+    return this.type(runtimeId, text, { ...options, delayMs });
   }
 }

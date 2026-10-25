@@ -53,7 +53,6 @@ import { parseTemplateInfo, type TemplateListResponse } from '../../types/templa
 import { APIResource, type ClientContext } from '../resource.js';
 import { RuntimeBrowser } from './browser.js';
 import { RuntimeDesktop } from './desktop.js';
-import { RuntimeDisplay } from './display.js';
 import { RuntimeFile } from './files.js';
 import { RuntimeGit } from './git.js';
 import { RuntimePty } from './pty.js';
@@ -413,9 +412,7 @@ export class Runtimes extends APIResource {
   readonly templates: RuntimeTemplates;
   /** Background commands started with `runCmd(..., { background: true })`. */
   readonly command: RuntimeCommands;
-  /** Pixel-level control of the runtime's display. */
-  readonly display: RuntimeDisplay;
-  /** Session components of a desktop-template runtime. */
+  /** The runtime's computer-use surface — pixels, input, windows, session. */
   readonly desktop: RuntimeDesktop;
   /** Semantic control of the runtime's browser. */
   readonly browser: RuntimeBrowser;
@@ -426,7 +423,6 @@ export class Runtimes extends APIResource {
     super(context);
     this.file = new RuntimeFile(context);
     this.pty = new RuntimePty(context);
-    this.display = new RuntimeDisplay(context);
     this.desktop = new RuntimeDesktop(context);
     this.browser = new RuntimeBrowser(context);
     this.git = new RuntimeGit(context);

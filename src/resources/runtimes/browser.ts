@@ -369,6 +369,22 @@ export class RuntimeBrowser extends APIResource {
     );
   }
 
+  async back(runtimeId: string, browserId: string, targetId = '', options: RequestOptions = {}) {
+    return this.command(runtimeId, browserId, 'back', targetId, options);
+  }
+
+  async forward(runtimeId: string, browserId: string, targetId = '', options: RequestOptions = {}) {
+    return this.command(runtimeId, browserId, 'forward', targetId, options);
+  }
+
+  async reload(runtimeId: string, browserId: string, targetId = '', options: RequestOptions = {}) {
+    return this.command(runtimeId, browserId, 'reload', targetId, options);
+  }
+
+  async activate(runtimeId: string, browserId: string, targetId: string, options: RequestOptions = {}) {
+    return this.command(runtimeId, browserId, 'activate', targetId, options);
+  }
+
   // -- observation ---------------------------------------------------------------
 
   /** Page screenshot — viewport default, `fullPage` or `element` scoped. Base64 data. */
@@ -506,7 +522,7 @@ export class RuntimeBrowser extends APIResource {
           target_id: targetId ?? '',
           expression,
           await_promise: awaitPromise ?? true,
-          timeout_ms: timeoutMs,
+          timeout_ms: timeoutMs ?? 30_000,
           world: world ?? 'isolated',
         },
         options: { signal, requestTimeoutMs, maxRetries },
@@ -882,7 +898,7 @@ export class RuntimeBrowser extends APIResource {
     return {
       url: str(r, 'url'),
       browserUrl,
-      watchUrl: viewToken
+      watchUrl: viewToken && browserUrl
         ? `${browserUrl}${browserUrl.includes('?') ? '&' : '?'}vt=${viewToken}`
         : browserUrl,
       port: num(r, 'port'),

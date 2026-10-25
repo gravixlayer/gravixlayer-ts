@@ -16,12 +16,14 @@ import { buildListEndpoint, pathSegment, SERVICES, type QueryValue } from '../co
 import {
   isSuccessfulBuildState,
   isTerminalBuildState,
+  parseTemplateBuildEvent,
   parseTemplateBuildResponse,
   parseTemplateBuildStatus,
   parseTemplateInfo,
   parseTemplateListResponse,
   parseTemplateSnapshot,
   TemplateBuilder,
+  type TemplateBuildEvent,
   type TemplateBuildResponse,
   type TemplateBuildStatus,
   type TemplateDeleteResponse,
@@ -86,6 +88,16 @@ export interface BuildTemplateOptions extends RequestOptions {
    * `GRAVIXLAYER_REGION`).
    */
   region?: string;
+}
+
+/** Options for {@link Templates.streamBuildEvents}. */
+export interface StreamBuildEventsOptions extends RequestOptions {
+  /**
+   * Resume point — only events with `seq` greater than this are delivered.
+   * Pass the last received event's `seq` to continue a disconnected stream
+   * without losing lines. Defaults to 0 (replay the whole log).
+   */
+  afterSeq?: number;
 }
 
 /** Options for {@link Templates.buildAndWait}. */
@@ -198,6 +210,68 @@ export class Templates extends APIResource {
         }),
       ),
     );
+  }
+
+  /**
+   * Stream a build's durable event log as server-sent events.
+   *
+   * Stored events replay first (`seq > afterSeq`), then live output follows
+   * until the build reaches a terminal state and the stream closes on a
+   * `stream_end` event. To resume a disconnected consumer, call again with
+   * `afterSeq` set to the last received event's `seq`.
+   *
+   * @example
+   * ```ts
+   * for await (const ev of client.templates.streamBuildEvents(buildId)) {
+   *   if (ev.kind === 'stdout' || ev.kind === 'stderr') process.stdout.write(ev.message ?? '');
+   *   if (ev.kind === 'stream_end') break;
+   * }
+   * ```
+   */
+  async *streamBuildEvents(
+    buildId: string,
+    options: StreamBuildEventsOptions = {},
+  ): AsyncGenerator<TemplateBuildEvent> {
+    const build = pathSegment(buildId, 'buildId');
+    const stream = await this.http.requestStream({
+      method: 'GET',
+      path: `template/builds/${build}/events`,
+      service: SERVICES.agents,
+      query: { after_seq: options.afterSeq ?? 0 },
+      options: requestOptions(options),
+    });
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let last = options.afterSeq ?? 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        // SSE frames are `id: <seq>\ndata: <json>\n\n`.
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let data = '';
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('id: ')) {
+              const seq = Number(line.slice(4));
+              if (!Number.isNaN(seq)) last = Math.max(last, seq);
+            } else if (line.startsWith('data: ')) {
+              data += line.slice(6);
+            }
+          }
+          if (!data) continue;
+          const event = parseTemplateBuildEvent(asRecord(JSON.parse(data)), last);
+          yield event;
+          if (event.kind === 'stream_end') return;
+        }
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
   }
 
   /**

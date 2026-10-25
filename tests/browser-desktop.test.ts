@@ -9,7 +9,7 @@ describe('display plane', () => {
     const { client, http } = testClient([
       jsonResponse({ enabled: true, width: 1920, height: 1080, display: ':0' }),
     ]);
-    const s = await client.runtime.display.enable(RUNTIME_ID, { width: 1920, height: 1080 });
+    const s = await client.runtime.desktop.enable(RUNTIME_ID, { width: 1920, height: 1080 });
     expect(s.enabled).toBe(true);
     expect(s.width).toBe(1920);
     expect(http.last().url).toContain(`runtime/${RUNTIME_ID}/display/enable`);
@@ -20,7 +20,7 @@ describe('display plane', () => {
     const { client, http } = testClient([
       jsonResponse({ data: 'UE5H', format: 'png', width: 100, height: 100 }),
     ]);
-    const s = await client.runtime.display.screenshot(RUNTIME_ID, {
+    const s = await client.runtime.desktop.screenshot(RUNTIME_ID, {
       waitStableMs: 300,
       timeoutMs: 5000,
     });
@@ -29,10 +29,22 @@ describe('display plane', () => {
     expect((http.jsonBody() as Record<string, unknown>).timeout_ms).toBe(5000);
   });
 
+  it('derives the settle budget from waitStableMs when timeoutMs is unset', async () => {
+    // Same rule as the Python SDK: wait_stable_ms alone raises the timeout
+    // to 4× the quiet window so the settle can actually finish.
+    const { client, http } = testClient([
+      jsonResponse({ data: 'UE5H', format: 'png', width: 100, height: 100 }),
+    ]);
+    await client.runtime.desktop.screenshot(RUNTIME_ID, { waitStableMs: 300 });
+    const body = http.jsonBody() as Record<string, unknown>;
+    expect(body.wait_stable_ms).toBe(300);
+    expect(body.timeout_ms).toBe(1200);
+  });
+
   it('sends raw mouse + keyboard input', async () => {
     const { client, http } = testClient([jsonResponse({}), jsonResponse({})]);
-    await client.runtime.display.click(RUNTIME_ID, 10, 20);
-    await client.runtime.display.hotkey(RUNTIME_ID, ['ctrl', 'c']);
+    await client.runtime.desktop.click(RUNTIME_ID, 10, 20);
+    await client.runtime.desktop.hotkey(RUNTIME_ID, ['ctrl', 'c']);
     expect(http.requests[0]?.url).toContain('display/mouse/click');
     expect(http.requests[1]?.url).toContain('display/keyboard/hotkey');
     expect((http.jsonBody(1) as Record<string, unknown>).keys).toEqual(['ctrl', 'c']);
@@ -40,17 +52,17 @@ describe('display plane', () => {
 
   it('waits for pixel-stable frames', async () => {
     const { client } = testClient([jsonResponse({ settled: true, waited_ms: 350 })]);
-    const r = await client.runtime.display.waitStable(RUNTIME_ID, 300, 5000);
+    const r = await client.runtime.desktop.waitStable(RUNTIME_ID, 300, 5000);
     expect(r.settled).toBe(true);
     expect(r.waitedMs).toBe(350);
   });
 
   it('sends scroll axes only when given — zero is not "unset"', async () => {
     const { client, http } = testClient([jsonResponse({}), jsonResponse({})]);
-    await client.runtime.display.scroll(RUNTIME_ID, 0, -480);
+    await client.runtime.desktop.scroll(RUNTIME_ID, 0, -480);
     let body = http.jsonBody() as Record<string, unknown>;
     expect(body).toEqual({ dx: 0, dy: -480 });
-    await client.runtime.display.scroll(RUNTIME_ID, 0, -480, { x: 0, y: 200 });
+    await client.runtime.desktop.scroll(RUNTIME_ID, 0, -480, { x: 0, y: 200 });
     body = http.jsonBody() as Record<string, unknown>;
     expect(body).toEqual({ dx: 0, dy: -480, x: 0, y: 200 });
   });
@@ -59,7 +71,7 @@ describe('display plane', () => {
     const { client, http } = testClient([
       jsonResponse({ url: 'https://s.service.example', browser_url: 'https://s/auth', port: 9871 }),
     ]);
-    await client.runtime.display.view(RUNTIME_ID, { fps: 10, rotateToken: true });
+    await client.runtime.desktop.view(RUNTIME_ID, { fps: 10, rotateToken: true });
     const body = http.jsonBody() as Record<string, unknown>;
     expect(body.rotate_token).toBe(true);
     expect(body.fps).toBe(10);
@@ -74,14 +86,14 @@ describe('display plane', () => {
         view_token: 'vt-abc',
       }),
     ]);
-    const v = await client.runtime.display.view(RUNTIME_ID, { role: 'watch' });
+    const v = await client.runtime.desktop.view(RUNTIME_ID, { role: 'watch' });
     expect(v.viewToken).toBe('vt-abc');
     expect((http.jsonBody() as Record<string, unknown>).role).toBe('watch');
   });
 
   it('stopView() frees the view port', async () => {
     const { client, http } = testClient([jsonResponse({})]);
-    await client.runtime.display.stopView(RUNTIME_ID);
+    await client.runtime.desktop.stopView(RUNTIME_ID);
     expect(http.last().url).toContain('display/view/stop');
     expect(http.last().method).toBe('POST');
   });
@@ -99,23 +111,23 @@ describe('display plane', () => {
       }),
       jsonResponse({ x: 412, y: 87 }),
     ]);
-    const info = await client.runtime.display.info(RUNTIME_ID);
+    const info = await client.runtime.desktop.info(RUNTIME_ID);
     expect(info.attached).toBe(true);
     expect(info.dpi).toBe(96);
-    const pos = await client.runtime.display.position(RUNTIME_ID);
+    const pos = await client.runtime.desktop.position(RUNTIME_ID);
     expect(pos).toEqual({ x: 412, y: 87 });
   });
 
   it('keys() lists the supported key names', async () => {
     const { client, http } = testClient([jsonResponse({ keys: ['enter', 'tab', 'f5'] })]);
-    const keys = await client.runtime.display.keys(RUNTIME_ID);
+    const keys = await client.runtime.desktop.keys(RUNTIME_ID);
     expect(keys).toEqual(['enter', 'tab', 'f5']);
     expect(http.last().url).toContain('display/keys');
   });
 
   it('click carries click_count, modifiers and coordinate_space', async () => {
     const { client, http } = testClient([jsonResponse({})]);
-    await client.runtime.display.click(RUNTIME_ID, 640, 360, 'left', {
+    await client.runtime.desktop.click(RUNTIME_ID, 640, 360, 'left', {
       clickCount: 2,
       modifiers: ['ctrl'],
       coordinateSpace: 'screenshot',
@@ -133,7 +145,7 @@ describe('display plane', () => {
 
   it('click without coordinates hits the current pointer position', async () => {
     const { client, http } = testClient([jsonResponse({})]);
-    await client.runtime.display.click(RUNTIME_ID);
+    await client.runtime.desktop.click(RUNTIME_ID);
     const body = http.jsonBody() as Record<string, unknown>;
     expect(body.button).toBe('left');
     expect(body.x).toBeUndefined();
@@ -147,11 +159,11 @@ describe('display plane', () => {
       jsonResponse({}),
       jsonResponse({}),
     ]);
-    await client.runtime.display.down(RUNTIME_ID, 10, 10, 'left', { modifiers: ['shift'] });
+    await client.runtime.desktop.down(RUNTIME_ID, 10, 10, 'left', { modifiers: ['shift'] });
     expect(http.requests[0]?.url).toContain('display/mouse/down');
-    await client.runtime.display.up(RUNTIME_ID);
+    await client.runtime.desktop.up(RUNTIME_ID);
     expect(http.requests[1]?.url).toContain('display/mouse/up');
-    await client.runtime.display.drag(RUNTIME_ID, 400, 300, 'left', {
+    await client.runtime.desktop.drag(RUNTIME_ID, 400, 300, 'left', {
       from: { x: 10, y: 10 },
       steps: 8,
       durationMs: 200,
@@ -166,7 +178,7 @@ describe('display plane', () => {
       steps: 8,
       duration_ms: 200,
     });
-    await client.runtime.display.scroll(RUNTIME_ID, 0, -480, { modifiers: ['ctrl'] });
+    await client.runtime.desktop.scroll(RUNTIME_ID, 0, -480, { modifiers: ['ctrl'] });
     expect((http.jsonBody(3) as Record<string, unknown>).modifiers).toEqual(['ctrl']);
   });
 
@@ -174,7 +186,7 @@ describe('display plane', () => {
     const { client, http } = testClient([
       jsonResponse({ data: 'V0VCUA==', format: 'webp', width: 960, height: 540, scale: 0.5 }),
     ]);
-    const s = await client.runtime.display.screenshot(RUNTIME_ID, {
+    const s = await client.runtime.desktop.screenshot(RUNTIME_ID, {
       format: 'webp',
       maxWidth: 960,
       maxHeight: 960,
@@ -187,23 +199,23 @@ describe('display plane', () => {
 
   it('type can route through the clipboard paste path', async () => {
     const { client, http } = testClient([jsonResponse({})]);
-    await client.runtime.display.type(RUNTIME_ID, 'big block', { mode: 'paste' });
+    await client.runtime.desktop.type(RUNTIME_ID, 'big block', { mode: 'paste' });
     expect(http.jsonBody()).toEqual({ text: 'big block', mode: 'paste' });
   });
 
   it('clipboard get/set round-trips through the display', async () => {
     const { client, http } = testClient([jsonResponse({ text: 'hello' }), jsonResponse({})]);
-    expect(await client.runtime.display.getClipboard(RUNTIME_ID)).toBe('hello');
-    await client.runtime.display.setClipboard(RUNTIME_ID, 'world');
+    expect(await client.runtime.desktop.getClipboard(RUNTIME_ID)).toBe('hello');
+    await client.runtime.desktop.setClipboard(RUNTIME_ID, 'world');
     expect(http.requests[0]?.url).toContain('display/clipboard');
     expect(http.jsonBody(1)).toEqual({ op: 'set', text: 'world' });
   });
 
   it('press and hotkey carry held modifiers', async () => {
     const { client, http } = testClient([jsonResponse({}), jsonResponse({})]);
-    await client.runtime.display.press(RUNTIME_ID, 'enter', { modifiers: ['ctrl'] });
+    await client.runtime.desktop.press(RUNTIME_ID, 'enter', { modifiers: ['ctrl'] });
     expect(http.jsonBody()).toEqual({ key: 'enter', modifiers: ['ctrl'] });
-    await client.runtime.display.hotkey(RUNTIME_ID, ['f4'], { modifiers: ['alt'] });
+    await client.runtime.desktop.hotkey(RUNTIME_ID, ['f4'], { modifiers: ['alt'] });
     expect(http.jsonBody(1)).toEqual({ keys: ['f4'], modifiers: ['alt'] });
   });
 
@@ -215,7 +227,7 @@ describe('display plane', () => {
         screenshot: { data: 'UE5H', format: 'png', width: 100, height: 100, scale: 1, rev: 42 },
       }),
     ]);
-    const r = await client.runtime.display.act(RUNTIME_ID, {
+    const r = await client.runtime.desktop.act(RUNTIME_ID, {
       actions: [
         { kind: 'click', mouse: { x: 10, y: 20, button: 'left' } },
         { kind: 'type', key: { text: 'hi' } },
@@ -236,7 +248,7 @@ describe('display plane', () => {
 
   it('act() translates camelCase action fields to wire names', async () => {
     const { client, http } = testClient([jsonResponse({ settled: true, rev: 1 })]);
-    await client.runtime.display.act(RUNTIME_ID, {
+    await client.runtime.desktop.act(RUNTIME_ID, {
       actions: [
         { kind: 'click', x: 5, y: 6, clickCount: 2 },
         { kind: 'drag', mouse: { toX: 9, toY: 9, durationMs: 300 } },
@@ -259,7 +271,7 @@ describe('display plane', () => {
     const { client, http } = testClient([
       jsonResponse({ data: '', format: 'png', width: 0, height: 0, rev: 7, unchanged: true }),
     ]);
-    const s = await client.runtime.display.screenshot(RUNTIME_ID, { ifRev: 7 });
+    const s = await client.runtime.desktop.screenshot(RUNTIME_ID, { ifRev: 7 });
     expect(s.unchanged).toBe(true);
     expect(s.rev).toBe(7);
     expect((http.jsonBody() as Record<string, unknown>).if_rev).toBe(7);
@@ -269,7 +281,7 @@ describe('display plane', () => {
     const { client, http } = testClient([
       jsonResponse({ enabled: true, width: 1280, height: 720, depth: 24, dpi: 96, display: ':0' }),
     ]);
-    const info = await client.runtime.display.resize(RUNTIME_ID, 1280, 720);
+    const info = await client.runtime.desktop.resize(RUNTIME_ID, 1280, 720);
     expect(info.width).toBe(1280);
     expect(http.last().url).toContain('display/resize');
     expect(http.jsonBody()).toEqual({ width: 1280, height: 720 });
@@ -296,7 +308,7 @@ describe('display plane', () => {
         focused: 2097155,
       }),
     ]);
-    const r = await client.runtime.display.windows(RUNTIME_ID, { windowClass: 'term' });
+    const r = await client.runtime.desktop.windows(RUNTIME_ID, { windowClass: 'term' });
     expect(r.focused).toBe(2097155);
     expect(r.windows[0]?.windowClass).toBe('XTerm');
     expect(http.last().url).toContain('window_class=term');
@@ -319,12 +331,12 @@ describe('display plane', () => {
       }),
       jsonResponse({ id: 1 }),
     ]);
-    const w = await client.runtime.display.windowOp(RUNTIME_ID, 1, 'move', {
+    const w = await client.runtime.desktop.windowOp(RUNTIME_ID, 1, 'move', {
       at: { x: 10, y: 20 },
     });
     expect(w.x).toBe(10);
     expect(http.jsonBody()).toMatchObject({ id: 1, op: 'move', x: 10, y: 20 });
-    await client.runtime.display.windowOp(RUNTIME_ID, 1, 'resize', {
+    await client.runtime.desktop.windowOp(RUNTIME_ID, 1, 'resize', {
       size: { w: 400, h: 300 },
     });
     expect(http.jsonBody(1)).toMatchObject({ op: 'resize', w: 400, h: 300 });
@@ -344,7 +356,7 @@ describe('display plane', () => {
         ],
       }),
     ]);
-    const apps = await client.runtime.display.apps(RUNTIME_ID);
+    const apps = await client.runtime.desktop.apps(RUNTIME_ID);
     expect(apps[0]?.name).toBe('Firefox');
     expect(apps[0]?.categories).toEqual(['Network']);
   });
@@ -354,7 +366,7 @@ describe('display plane', () => {
       jsonResponse({ pid: 4242, window_id: 2097155, app: 'org.mozilla.firefox' }),
       jsonResponse({ pid: 4243, window_id: 0, app: 'org.mozilla.firefox', mime: 'text/html' }),
     ]);
-    const l = await client.runtime.display.launchApp(RUNTIME_ID, 'org.mozilla.firefox', {
+    const l = await client.runtime.desktop.launchApp(RUNTIME_ID, 'org.mozilla.firefox', {
       uri: 'https://example.com',
       waitWindow: true,
       timeoutMs: 8000,
@@ -367,7 +379,7 @@ describe('display plane', () => {
       wait_window: true,
       timeout_ms: 8000,
     });
-    const o = await client.runtime.display.open(RUNTIME_ID, 'https://example.com');
+    const o = await client.runtime.desktop.open(RUNTIME_ID, 'https://example.com');
     expect(o.mime).toBe('text/html');
     expect(o.windowId).toBeUndefined();
     expect(http.jsonBody(1)).toMatchObject({ target: 'https://example.com' });
@@ -375,8 +387,8 @@ describe('display plane', () => {
 
   it('clipboard image get/set uses base64 png payloads', async () => {
     const { client, http } = testClient([jsonResponse({ png: 'aVBORw==' }), jsonResponse({})]);
-    expect(await client.runtime.display.getClipboardImage(RUNTIME_ID)).toBe('aVBORw==');
-    await client.runtime.display.setClipboardImage(RUNTIME_ID, 'aVBORw==');
+    expect(await client.runtime.desktop.getClipboardImage(RUNTIME_ID)).toBe('aVBORw==');
+    await client.runtime.desktop.setClipboardImage(RUNTIME_ID, 'aVBORw==');
     expect(http.jsonBody(1)).toEqual({ op: 'set', png: 'aVBORw==' });
   });
 
@@ -384,7 +396,7 @@ describe('display plane', () => {
     const { client, http } = testClient([
       jsonResponse({ url: 'https://s.service.example', browser_url: 'https://s/auth', port: 9871 }),
     ]);
-    await client.runtime.display.view(RUNTIME_ID, { windowId: 2097155 });
+    await client.runtime.desktop.view(RUNTIME_ID, { windowId: 2097155 });
     expect((http.jsonBody() as Record<string, unknown>).window_id).toBe(2097155);
   });
 });
@@ -401,7 +413,7 @@ describe('desktop session plane', () => {
         ],
       }),
     ]);
-    const s = await client.runtime.desktop.status(RUNTIME_ID);
+    const s = await client.runtime.desktop.components(RUNTIME_ID);
     expect(s.present).toBe(true);
     expect(s.components[0]?.unit).toBe('xvfb.service');
     expect(s.components[0]?.subState).toBe('running');
@@ -530,6 +542,16 @@ describe('browser plane', () => {
     expect((http.jsonBody() as Record<string, unknown>).expression).toBe('document.title');
   });
 
+  it('evaluate sends the 30s default timeout — parity with the Python SDK', async () => {
+    // An unset timeout must still go on the wire: the server only applies a
+    // CDP call timeout when timeout_ms > 0, so omitting it meant no bound.
+    const { client, http } = testClient([
+      jsonResponse({ value: 1, is_error: false }),
+    ]);
+    await client.runtime.browser.evaluate(RUNTIME_ID, BID, '1');
+    expect((http.jsonBody() as Record<string, unknown>).timeout_ms).toBe(30_000);
+  });
+
   it('evaluate returns the parsed JSON value — objects pass through', async () => {
     const { client } = testClient([
       jsonResponse({ value: { n: 1, list: ['a'] }, is_error: false }),
@@ -580,6 +602,49 @@ describe('browser plane', () => {
     expect(t.url).toBe('https://prev.io');
     expect(http.last().url).toContain(`browser/${BID}/back`);
     expect((http.jsonBody() as Record<string, unknown>).verb).toBe('back');
+  });
+
+  it('named navigation verbs hit the same command routes', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ target_id: 't1', url: 'https://a.io' }),
+      jsonResponse({ target_id: 't1', url: 'https://b.io' }),
+      jsonResponse({ target_id: 't1', url: 'https://b.io' }),
+      jsonResponse({ target_id: 't2', url: 'https://b.io' }),
+    ]);
+    await client.runtime.browser.back(RUNTIME_ID, BID, 't1');
+    await client.runtime.browser.forward(RUNTIME_ID, BID, 't1');
+    await client.runtime.browser.reload(RUNTIME_ID, BID);
+    const act = await client.runtime.browser.activate(RUNTIME_ID, BID, 't2');
+    expect(act.targetId).toBe('t2');
+    for (const [i, verb] of ['back', 'forward', 'reload', 'activate'].entries()) {
+      expect(http.requests[i]?.url).toContain(`browser/${BID}/${verb}`);
+      const body = http.jsonBody(i) as Record<string, unknown>;
+      expect(body.verb).toBe(verb);
+    }
+    expect(
+      (http.jsonBody(2) as Record<string, unknown>).target_id,
+    ).toBe('');
+    expect(
+      (http.jsonBody(3) as Record<string, unknown>).target_id,
+    ).toBe('t2');
+  });
+
+  it('bound browser exposes the named verbs flat under browser', async () => {
+    const { client, http } = testClient([
+      jsonResponse({
+        id: RUNTIME_ID,
+        status: 'running',
+        template: 'base-desktop',
+      }),
+      jsonResponse({ target_id: 't1', url: 'https://a.io' }),
+      jsonResponse({ target_id: 't2', url: 'https://a.io' }),
+    ]);
+    const rt = await client.runtime.get(RUNTIME_ID);
+    await rt.browser.back(BID, 't1');
+    expect(http.last().url).toContain(`runtime/${RUNTIME_ID}/browser/${BID}/back`);
+    await rt.browser.activate(BID, 't2');
+    expect(http.last().url).toContain(`runtime/${RUNTIME_ID}/browser/${BID}/activate`);
+    expect((http.jsonBody() as Record<string, unknown>).target_id).toBe('t2');
   });
 
   it('sends dblclick and hover through the action path', async () => {
@@ -685,4 +750,56 @@ it('activate + goto evicts a dead default browser', async () => {
   expect(nav.navigated).toBe(true);
   await client.runtime.browser.command(RUNTIME_ID, 'b2', 'activate', 't9');
   expect(http.last().url).toContain('/activate');
+});
+
+
+// ---------------------------------------------------------------------------
+// Merged desktop surface — conveniences + session ops
+// ---------------------------------------------------------------------------
+
+describe('desktop conveniences', () => {
+  it('leftClick/rightClick/middleClick/doubleClick wire button + click_count', async () => {
+    const { client, http } = testClient([
+      jsonResponse({}), jsonResponse({}), jsonResponse({}), jsonResponse({}),
+    ]);
+    await client.runtime.desktop.leftClick(RUNTIME_ID, 10, 20);
+    await client.runtime.desktop.rightClick(RUNTIME_ID);
+    await client.runtime.desktop.middleClick(RUNTIME_ID);
+    await client.runtime.desktop.doubleClick(RUNTIME_ID, 5, 6);
+    const buttons = [0, 1, 2, 3].map((i) => (http.jsonBody(i) as Record<string, unknown>).button);
+    expect(buttons).toEqual(['left', 'right', 'middle', 'left']);
+    expect((http.jsonBody(3) as Record<string, unknown>).click_count).toBe(2);
+    expect((http.jsonBody(0) as Record<string, unknown>).x).toBe(10);
+  });
+
+  it('mousePress/mouseRelease wire down/up with position', async () => {
+    const { client, http } = testClient([jsonResponse({}), jsonResponse({})]);
+    await client.runtime.desktop.mousePress(RUNTIME_ID, 'right', 1, 2);
+    await client.runtime.desktop.mouseRelease(RUNTIME_ID, 'right', 3, 4);
+    expect(http.requests[0]?.url).toContain('display/mouse/down');
+    expect(http.requests[1]?.url).toContain('display/mouse/up');
+    expect((http.jsonBody(0) as Record<string, unknown>).button).toBe('right');
+    expect((http.jsonBody(1) as Record<string, unknown>).x).toBe(3);
+  });
+
+  it('moveMouse + write wire move/type', async () => {
+    const { client, http } = testClient([jsonResponse({}), jsonResponse({})]);
+    await client.runtime.desktop.moveMouse(RUNTIME_ID, 100, 200);
+    await client.runtime.desktop.write(RUNTIME_ID, 'hi', 7);
+    expect(http.requests[0]?.url).toContain('display/mouse/move');
+    const type = http.jsonBody(1) as Record<string, unknown>;
+    expect(type.text).toBe('hi');
+    expect(type.delay_ms).toBe(7);
+  });
+
+  it('startComponent/stopComponent wire the op', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ name: 'session', state: 'active' }),
+      jsonResponse({ name: 'session', state: 'inactive' }),
+    ]);
+    await client.runtime.desktop.startComponent(RUNTIME_ID, 'session');
+    await client.runtime.desktop.stopComponent(RUNTIME_ID, 'session');
+    const ops = [0, 1].map((i) => (http.jsonBody(i) as Record<string, unknown>).op);
+    expect(ops).toEqual(['start', 'stop']);
+  });
 });

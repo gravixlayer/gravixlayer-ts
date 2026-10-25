@@ -331,7 +331,7 @@ function normalizeAction(a: DisplayAction): Record<string, unknown> {
   };
 }
 
-/** `client.runtime.display` — the pixel plane. */
+/** The pixel plane — exposed through `client.runtime.desktop`. */
 export class RuntimeDisplay extends APIResource {
   /** Enable the display; idempotent. */
   async enable(runtimeId: string, options: DisplayEnableOptions = {}): Promise<DisplayStatus> {
@@ -450,7 +450,10 @@ export class RuntimeDisplay extends APIResource {
             ...rest,
             scale_pct: scalePct,
             wait_stable_ms: waitStableMs,
-            timeout_ms: timeoutMs,
+            // The settle wait's budget defaults to 4× the stability
+            // window — same derivation the Python SDK applies — or
+            // cellcore falls back to its fixed settle default.
+            timeout_ms: timeoutMs ?? (waitStableMs ? waitStableMs * 4 : undefined),
             max_width: maxWidth,
             max_height: maxHeight,
             if_rev: ifRev,

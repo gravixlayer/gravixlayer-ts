@@ -64,7 +64,7 @@ import type {
   GitPushOptions,
 } from './git.js';
 import type { RuntimeBrowser } from './browser.js';
-import type { RuntimeDisplay } from './display.js';
+import type { RuntimeDesktop } from './desktop.js';
 import type { CreatePtyOptions, PtyHandle, PtyStreamEvent } from './pty.js';
 import type { ForkRuntimeOptions } from './runtimes.js';
 import type { ForkResponse } from '../../types/snapshots.js';
@@ -119,8 +119,8 @@ export class Runtime {
   readonly pty: BoundPty;
   /** Nested git API, already bound to this runtime. */
   readonly git: BoundGit;
-  /** Display plane: screenshots, mouse, keyboard, view. */
-  readonly display: BoundDisplay;
+  /** Desktop: screenshots, mouse, keyboard, windows, view, session. */
+  readonly desktop: BoundDesktop;
   /** Browser plane: open/navigate/snapshot/actions. */
   readonly browser: BoundBrowser;
   /** Storage mounts attached to this runtime. */
@@ -143,7 +143,7 @@ export class Runtime {
     this.pty = new BoundPty(runtimes, resolve);
     this.git = new BoundGit(runtimes, resolve);
     this.command = new BoundCommands(runtimes, resolve);
-    this.display = new BoundDisplay(runtimes, resolve);
+    this.desktop = new BoundDesktop(runtimes, resolve);
     this.browser = new BoundBrowser(runtimes, resolve);
     this.mounts = new BoundMounts(runtimes, resolve);
   }
@@ -759,24 +759,24 @@ if (ASYNC_DISPOSE !== REGISTERED_ASYNC_DISPOSE) {
   });
 }
 
-/** `sandbox.display`: the pixel plane with the runtime id applied. */
-export class BoundDisplay {
+/** `sandbox.desktop`: the pixel plane with the runtime id applied. */
+export class BoundDesktop {
   constructor(
     private readonly runtimes: Runtimes,
     private readonly id: ResolveId,
   ) {}
 
-  async enable(options?: Parameters<RuntimeDisplay['enable']>[1]) {
-    return this.runtimes.display.enable(this.id(), options);
+  async enable(options?: Parameters<RuntimeDesktop['enable']>[1]) {
+    return this.runtimes.desktop.enable(this.id(), options);
   }
   async disable(options?: RequestOptions) {
-    return this.runtimes.display.disable(this.id(), options);
+    return this.runtimes.desktop.disable(this.id(), options);
   }
   async status(options?: RequestOptions) {
-    return this.runtimes.display.status(this.id(), options);
+    return this.runtimes.desktop.status(this.id(), options);
   }
-  async screenshot(options?: Parameters<RuntimeDisplay['screenshot']>[1]) {
-    return this.runtimes.display.screenshot(this.id(), options);
+  async screenshot(options?: Parameters<RuntimeDesktop['screenshot']>[1]) {
+    return this.runtimes.desktop.screenshot(this.id(), options);
   }
   async click(
     x: number,
@@ -784,28 +784,139 @@ export class BoundDisplay {
     button?: 'left' | 'right' | 'middle',
     options?: RequestOptions,
   ) {
-    return this.runtimes.display.click(this.id(), x, y, button, options);
+    return this.runtimes.desktop.click(this.id(), x, y, button, options);
   }
   async move(x: number, y: number, options?: RequestOptions) {
-    return this.runtimes.display.move(this.id(), x, y, options);
+    return this.runtimes.desktop.move(this.id(), x, y, options);
   }
-  async scroll(dx: number, dy: number, options?: Parameters<RuntimeDisplay['scroll']>[3]) {
-    return this.runtimes.display.scroll(this.id(), dx, dy, options);
+  async scroll(dx: number, dy: number, options?: Parameters<RuntimeDesktop['scroll']>[3]) {
+    return this.runtimes.desktop.scroll(this.id(), dx, dy, options);
   }
-  async type(text: string, options?: Parameters<RuntimeDisplay['type']>[2]) {
-    return this.runtimes.display.type(this.id(), text, options);
+  async type(text: string, options?: Parameters<RuntimeDesktop['type']>[2]) {
+    return this.runtimes.desktop.type(this.id(), text, options);
   }
   async press(key: string, options?: RequestOptions) {
-    return this.runtimes.display.press(this.id(), key, options);
+    return this.runtimes.desktop.press(this.id(), key, options);
   }
   async hotkey(keys: string[], options?: RequestOptions) {
-    return this.runtimes.display.hotkey(this.id(), keys, options);
+    return this.runtimes.desktop.hotkey(this.id(), keys, options);
   }
   async waitStable(stableMs?: number, timeoutMs?: number, options?: RequestOptions) {
-    return this.runtimes.display.waitStable(this.id(), stableMs, timeoutMs, options);
+    return this.runtimes.desktop.waitStable(this.id(), stableMs, timeoutMs, options);
   }
-  async view(options?: Parameters<RuntimeDisplay['view']>[1]) {
-    return this.runtimes.display.view(this.id(), options);
+  async view(options?: Parameters<RuntimeDesktop['view']>[1]) {
+    return this.runtimes.desktop.view(this.id(), options);
+  }
+  async stopView(options?: RequestOptions) {
+    return this.runtimes.desktop.stopView(this.id(), options);
+  }
+  async info(options?: RequestOptions) {
+    return this.runtimes.desktop.info(this.id(), options);
+  }
+  async position(options?: RequestOptions) {
+    return this.runtimes.desktop.position(this.id(), options);
+  }
+  async keys(options?: RequestOptions) {
+    return this.runtimes.desktop.keys(this.id(), options);
+  }
+  async down(x?: number, y?: number, button?: 'left' | 'right' | 'middle', options?: RequestOptions) {
+    return this.runtimes.desktop.down(this.id(), x, y, button, options);
+  }
+  async up(button?: 'left' | 'right' | 'middle', options?: Parameters<RuntimeDesktop['up']>[2]) {
+    return this.runtimes.desktop.up(this.id(), button, options);
+  }
+  async drag(
+    toX: number,
+    toY: number,
+    button?: Parameters<RuntimeDesktop['drag']>[3],
+    options?: Parameters<RuntimeDesktop['drag']>[4],
+  ) {
+    return this.runtimes.desktop.drag(this.id(), toX, toY, button, options);
+  }
+  async getClipboard(options?: RequestOptions) {
+    return this.runtimes.desktop.getClipboard(this.id(), options);
+  }
+  async setClipboard(text: string, options?: RequestOptions) {
+    return this.runtimes.desktop.setClipboard(this.id(), text, options);
+  }
+  async getClipboardImage(options?: RequestOptions) {
+    return this.runtimes.desktop.getClipboardImage(this.id(), options);
+  }
+  async setClipboardImage(pngBase64: string, options?: RequestOptions) {
+    return this.runtimes.desktop.setClipboardImage(this.id(), pngBase64, options);
+  }
+  async act(options: Parameters<RuntimeDesktop['act']>[1]) {
+    return this.runtimes.desktop.act(this.id(), options);
+  }
+  async resize(width: number, height: number, options?: RequestOptions) {
+    return this.runtimes.desktop.resize(this.id(), width, height, options);
+  }
+  async windows(options?: Parameters<RuntimeDesktop['windows']>[1]) {
+    return this.runtimes.desktop.windows(this.id(), options);
+  }
+  async windowOp(
+    windowId: number,
+    op: Parameters<RuntimeDesktop['windowOp']>[2],
+    options?: Parameters<RuntimeDesktop['windowOp']>[3],
+  ) {
+    return this.runtimes.desktop.windowOp(this.id(), windowId, op, options);
+  }
+  async apps(options?: RequestOptions) {
+    return this.runtimes.desktop.apps(this.id(), options);
+  }
+  async launchApp(app: string, options?: Parameters<RuntimeDesktop['launchApp']>[2]) {
+    return this.runtimes.desktop.launchApp(this.id(), app, options);
+  }
+  async open(target: string, options?: Parameters<RuntimeDesktop['open']>[2]) {
+    return this.runtimes.desktop.open(this.id(), target, options);
+  }
+
+  // ── session plane ─────────────────────────────────────────────────────
+
+  async components(options?: RequestOptions) {
+    return this.runtimes.desktop.components(this.id(), options);
+  }
+  async component(name: string, op: 'start' | 'stop' | 'restart', options?: RequestOptions) {
+    return this.runtimes.desktop.component(this.id(), name, op, options);
+  }
+  async startComponent(name: string, options?: RequestOptions) {
+    return this.runtimes.desktop.startComponent(this.id(), name, options);
+  }
+  async stopComponent(name: string, options?: RequestOptions) {
+    return this.runtimes.desktop.stopComponent(this.id(), name, options);
+  }
+  async restartComponent(name: string, options?: RequestOptions) {
+    return this.runtimes.desktop.restartComponent(this.id(), name, options);
+  }
+  async logs(name: string, options?: Parameters<RuntimeDesktop['logs']>[2]) {
+    return this.runtimes.desktop.logs(this.id(), name, options);
+  }
+
+  // ── simple mouse/keyboard conveniences ────────────────────────────────
+
+  async leftClick(x?: number, y?: number, options?: RequestOptions) {
+    return this.runtimes.desktop.leftClick(this.id(), x, y, options);
+  }
+  async doubleClick(x?: number, y?: number, options?: RequestOptions) {
+    return this.runtimes.desktop.doubleClick(this.id(), x, y, options);
+  }
+  async rightClick(x?: number, y?: number, options?: RequestOptions) {
+    return this.runtimes.desktop.rightClick(this.id(), x, y, options);
+  }
+  async middleClick(x?: number, y?: number, options?: RequestOptions) {
+    return this.runtimes.desktop.middleClick(this.id(), x, y, options);
+  }
+  async mousePress(button?: 'left' | 'right' | 'middle', x?: number, y?: number, options?: RequestOptions) {
+    return this.runtimes.desktop.mousePress(this.id(), button, x, y, options);
+  }
+  async mouseRelease(button?: 'left' | 'right' | 'middle', x?: number, y?: number, options?: RequestOptions) {
+    return this.runtimes.desktop.mouseRelease(this.id(), button, x, y, options);
+  }
+  async moveMouse(x: number, y: number, options?: RequestOptions) {
+    return this.runtimes.desktop.moveMouse(this.id(), x, y, options);
+  }
+  async write(text: string, delayMs?: number, options?: RequestOptions) {
+    return this.runtimes.desktop.write(this.id(), text, delayMs, options);
   }
 }
 
@@ -868,6 +979,18 @@ export class BoundBrowser {
     options?: RequestOptions,
   ) {
     return this.runtimes.browser.command(this.id(), browserId, verb, targetId, options);
+  }
+  async back(browserId: string, targetId?: string, options?: RequestOptions) {
+    return this.runtimes.browser.back(this.id(), browserId, targetId, options);
+  }
+  async forward(browserId: string, targetId?: string, options?: RequestOptions) {
+    return this.runtimes.browser.forward(this.id(), browserId, targetId, options);
+  }
+  async reload(browserId: string, targetId?: string, options?: RequestOptions) {
+    return this.runtimes.browser.reload(this.id(), browserId, targetId, options);
+  }
+  async activate(browserId: string, targetId: string, options?: RequestOptions) {
+    return this.runtimes.browser.activate(this.id(), browserId, targetId, options);
   }
   async screenshot(browserId: string, options?: Parameters<RuntimeBrowser['screenshot']>[2]) {
     return this.runtimes.browser.screenshot(this.id(), browserId, options);

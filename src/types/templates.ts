@@ -142,6 +142,43 @@ export interface BuildLogEntry {
   message: string;
 }
 
+/**
+ * One durable build event from the server-sent events stream.
+ *
+ * `kind` is `step` (a named phase boundary), `stdout` / `stderr` (captured
+ * output), `status` (phase/progress updates), or `stream_end` (the build
+ * reached a terminal state). `seq` is the durable sequence number — pass it
+ * back via `afterSeq` to resume a disconnected consumer without losing lines.
+ */
+export interface TemplateBuildEvent {
+  seq: number;
+  kind: string;
+  step?: string;
+  status?: string;
+  message?: string;
+  progress?: number;
+}
+
+/** Parse one SSE `data:` payload into a {@link TemplateBuildEvent}. */
+export function parseTemplateBuildEvent(
+  data: Record<string, unknown>,
+  seq: number,
+): TemplateBuildEvent {
+  const event: TemplateBuildEvent = {
+    seq: optNum(data, 'seq') ?? seq,
+    kind: str(data, 'kind', ''),
+  };
+  const step = optStr(data, 'step');
+  if (step !== undefined) event.step = step;
+  const status = optStr(data, 'status');
+  if (status !== undefined) event.status = status;
+  const message = optStr(data, 'message');
+  if (message !== undefined) event.message = message;
+  const progress = optNum(data, 'progress');
+  if (progress !== undefined) event.progress = progress;
+  return event;
+}
+
 // ---------------------------------------------------------------------------
 // Template metadata
 // ---------------------------------------------------------------------------

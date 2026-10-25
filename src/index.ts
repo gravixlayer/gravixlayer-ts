@@ -78,7 +78,59 @@ export {
   RuntimeCommands,
 } from './resources/runtimes/runtimes.js';
 
-export { BoundFile, BoundGit, BoundPty, Runtime } from './resources/runtimes/runtime.js';
+export {
+  BoundBrowser,
+  BoundDesktop,
+  BoundFile,
+  BoundGit,
+  BoundPty,
+  Runtime,
+} from './resources/runtimes/runtime.js';
+
+export {
+  RuntimeBrowser,
+  type ActionOptions,
+  type ActionResult,
+  type BrowserDownload,
+  type BrowserInfo,
+  type BrowserOpenOptions,
+  type BrowserScreenshotOptions,
+  type BrowserSnapshot,
+  type BrowserTargetInfo,
+  type ElementTarget,
+  type NavigateOptions,
+  type SnapshotElement,
+} from './resources/runtimes/browser.js';
+
+export {
+  RuntimeDesktop,
+  type DesktopComponent,
+  type DesktopLogs,
+  type DesktopLogsOptions,
+  type DesktopStatus,
+} from './resources/runtimes/desktop.js';
+
+export {
+  RuntimeDisplay,
+  type ActOptions,
+  type ActResult,
+  type ClickOptions,
+  type DisplayAction,
+  type DisplayApp,
+  type DisplayEnableOptions,
+  type DisplayInfo,
+  type DisplayScreenshot,
+  type DisplayScreenshotOptions,
+  type DisplayStatus,
+  type DisplayWindow,
+  type DragOptions,
+  type LaunchResult,
+  type MouseButton,
+  type PointerOptions,
+  type PointerPosition,
+  type TypeOptions,
+  type WindowOp,
+} from './resources/runtimes/display.js';
 
 export {
   DEFAULT_WORKING_DIR,
@@ -174,6 +226,7 @@ export {
   type BuildAndWaitOptions,
   type BuildTemplateOptions,
   type ListTemplatesOptions,
+  type StreamBuildEventsOptions,
 } from './resources/templates.js';
 
 export {
@@ -188,6 +241,7 @@ export {
   type AddFileOptions,
   type BuildLogEntry,
   type BuildStep,
+  type TemplateBuildEvent,
   type TemplateBuildResponse,
   type TemplateBuildStatus,
   type TemplateDeleteResponse,
