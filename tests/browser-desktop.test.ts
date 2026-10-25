@@ -409,14 +409,23 @@ describe('desktop session plane', () => {
         display: ':1',
         user: 'agent',
         components: [
-          { name: 'display', unit: 'xvfb.service', state: 'active', sub_state: 'running' },
+          {
+            name: 'display',
+            unit: 'xvfb.service',
+            active: 'active',
+            sub: 'running',
+            result: 'success',
+            restarts: 0,
+            started_usec: 1729000000000000,
+          },
         ],
       }),
     ]);
     const s = await client.runtime.desktop.components(RUNTIME_ID);
     expect(s.present).toBe(true);
     expect(s.components[0]?.unit).toBe('xvfb.service');
-    expect(s.components[0]?.subState).toBe('running');
+    expect(s.components[0]?.sub).toBe('running');
+    expect(s.components[0]?.active).toBe('active');
   });
 
   it('component() sends the lifecycle op and parses the post state', async () => {
@@ -424,21 +433,29 @@ describe('desktop session plane', () => {
       jsonResponse({
         name: 'session',
         unit: 'gnome.service',
-        state: 'active',
-        sub_state: 'running',
+        active: 'active',
+        sub: 'running',
+        result: 'success',
       }),
     ]);
     const c = await client.runtime.desktop.component(RUNTIME_ID, 'session', 'restart');
-    expect(c.state).toBe('active');
+    expect(c.active).toBe('active');
     expect(http.jsonBody()).toEqual({ name: 'session', op: 'restart' });
   });
 
   it('logs() pages the component journal', async () => {
     const { client, http } = testClient([
       jsonResponse({
-        entries: [{ timestamp: 't', message: 'm', priority: 3 }],
-        next_cursor: 'c2',
-        truncated: true,
+        entries: [
+          {
+            usec: 1729000000000123,
+            unit: 'desktop-session.service',
+            priority: 3,
+            message: 'm',
+            identifier: 'x',
+          },
+        ],
+        cursor: 'c2',
       }),
     ]);
     const page = await client.runtime.desktop.logs(RUNTIME_ID, 'display', {
@@ -447,7 +464,8 @@ describe('desktop session plane', () => {
       priority: 'err',
     });
     expect(page.entries[0]?.message).toBe('m');
-    expect(page.nextCursor).toBe('c2');
+    expect(page.entries[0]?.usec).toBe(1729000000000123);
+    expect(page.cursor).toBe('c2');
     expect(http.jsonBody()).toEqual({ name: 'display', cursor: 'c1', max: 100, priority: 'err' });
   });
 });

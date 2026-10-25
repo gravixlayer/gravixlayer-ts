@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `desktop.components`/`component`/`logs` parsed invented response fields
+  (`state`, `sub_state`, `next_cursor`, `timestamp`) — the wire sends
+  `active`, `sub`, `result`, `restarts`, `started_usec` and a `cursor`
+  page token, so the session plane returned empty values. `DesktopComponent`
+  is now `{name, unit, active, sub, result, restarts, startedUsec}` and
+  `DesktopLogs` is `{entries: [{usec, unit, priority, message, identifier}],
+  cursor}` — pass `cursor` back for the next page.
+
 ## [0.1.41] - 2026-10-25
 
 ### Changed

@@ -8,7 +8,7 @@
  * semantic plane for in-page element work.
  */
 
-import { asRecord, bool, str } from '../../core/parse.js';
+import { asRecord, bool, num, str } from '../../core/parse.js';
 import type { RequestOptions } from '../../core/transport.js';
 import { SERVICES } from '../../core/url.js';
 import { assertRuntimeId } from '../../core/validate.js';
@@ -18,9 +18,11 @@ import { RuntimeDisplay } from './display.js';
 export interface DesktopComponent {
   readonly name: string;
   readonly unit: string;
-  readonly state: string;
-  readonly subState: string;
-  readonly description: string;
+  readonly active: string;
+  readonly sub: string;
+  readonly result: string;
+  readonly restarts: number;
+  readonly startedUsec: number;
 }
 
 /** Desktop session status. `present` is false on non-desktop images. */
@@ -33,7 +35,7 @@ export interface DesktopStatus {
 
 /** Options for {@link RuntimeDesktop.logs}. */
 export interface DesktopLogsOptions extends RequestOptions {
-  /** Resume from a previous page's `nextCursor`. */
+  /** Resume from a previous page's `cursor`. */
   cursor?: string;
   /** Cap the returned entries. */
   max?: number;
@@ -41,11 +43,16 @@ export interface DesktopLogsOptions extends RequestOptions {
   priority?: string;
 }
 
-/** A journal page. */
+/** A journal page — feed `cursor` back for the next page. */
 export interface DesktopLogs {
-  readonly entries: { timestamp: string; message: string; priority: number }[];
-  readonly nextCursor: string;
-  readonly truncated: boolean;
+  readonly entries: {
+    usec: number;
+    unit: string;
+    priority: number;
+    message: string;
+    identifier: string;
+  }[];
+  readonly cursor: string;
 }
 
 function parseComponent(v: unknown): DesktopComponent {
@@ -53,9 +60,11 @@ function parseComponent(v: unknown): DesktopComponent {
   return {
     name: str(r, 'name'),
     unit: str(r, 'unit'),
-    state: str(r, 'state'),
-    subState: str(r, 'sub_state'),
-    description: str(r, 'description'),
+    active: str(r, 'active'),
+    sub: str(r, 'sub'),
+    result: str(r, 'result'),
+    restarts: num(r, 'restarts'),
+    startedUsec: num(r, 'started_usec'),
   };
 }
 
@@ -100,7 +109,7 @@ export class RuntimeDesktop extends RuntimeDisplay {
     return parseComponent(r);
   }
 
-  /** Journal page for a component — pass `nextCursor` back for the next page. */
+  /** Journal page for a component — pass `cursor` back for the next page. */
   async logs(
     runtimeId: string,
     name: string,
@@ -120,13 +129,14 @@ export class RuntimeDesktop extends RuntimeDisplay {
     return {
       entries: Array.isArray(r.entries)
         ? (r.entries as Record<string, unknown>[]).map((e) => ({
-            timestamp: typeof e.timestamp === 'string' ? e.timestamp : '',
-            message: typeof e.message === 'string' ? e.message : '',
-            priority: typeof e.priority === 'number' ? e.priority : 0,
+            usec: num(asRecord(e), 'usec'),
+            unit: str(asRecord(e), 'unit'),
+            priority: num(asRecord(e), 'priority'),
+            message: str(asRecord(e), 'message'),
+            identifier: str(asRecord(e), 'identifier'),
           }))
         : [],
-      nextCursor: str(r, 'next_cursor'),
-      truncated: bool(r, 'truncated'),
+      cursor: str(r, 'cursor'),
     };
   }
 
