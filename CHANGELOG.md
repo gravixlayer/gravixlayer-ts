@@ -6,6 +6,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.41] - 2026-10-25
+
+### Changed
+- **`runtime.desktop` is now the single computer-use surface** — it merges
+  the pixel plane (screenshots, mouse, keyboard, windows, apps, clipboard,
+  `act`, live view) with the session plane (`components`,
+  `startComponent`/`stopComponent`/`restartComponent`, `logs`). The
+  `runtime.display` accessor is removed; all its methods are reachable
+  under `runtime.desktop` unchanged. Simple conveniences added:
+  `leftClick`/`doubleClick`/`rightClick`/`middleClick`,
+  `mousePress`/`mouseRelease`, `moveMouse`, and `write`. The bound
+  `sandbox.desktop` on a `Runtime` exposes the full surface.
+
+### Fixed
+- `browser.evaluate` now sends the 30s default `timeout_ms` on the wire —
+  previously an unset timeout was omitted, so the call ran without the
+  documented bound (Python parity).
+- `desktop.screenshot` derives `timeout_ms = waitStableMs × 4` when only
+  `waitStableMs` is given — previously it fell back to the server default,
+  which could cut a long settle short (Python parity).
+
+### Added
+- **Browser navigation verbs** — `runtime.browser.back()`, `.forward()`,
+  `.reload()`, and `.activate(targetId)` are now first-class methods on
+  both the resource and the bound `runtime.browser` handle (previously
+  only reachable through the generic `.command(verb)`), matching the
+  Python SDK surface.
+- **Public exports** — `RuntimeBrowser`, `RuntimeDesktop`, `RuntimeDisplay`,
+  `BoundBrowser`, `BoundDesktop`, and all browser/desktop/display types
+  (`BrowserInfo`, `BrowserTargetInfo`, `ElementTarget`, `ActionResult`,
+  `DesktopStatus`, `DisplayStatus`, …) are now exported from the package
+  root; previously none of the computer-use types were importable.
+- `templates.streamBuildEvents(buildId, { afterSeq? })` — async generator
+  over the durable build event log (SSE): stored events replay first, then
+  live `step`/`stdout`/`stderr`/`status` output until `stream_end`.
+  Pass `afterSeq` (last received `seq`) to resume a disconnected consumer.
+
 ## [0.1.40] - 2026-10-24
 
 ### Added
@@ -530,7 +567,8 @@ First release. Full coverage of the GravixLayer API.
   `trace`, `traced`, and `runtimeSpan` helpers, active only when
   `@opentelemetry/api` is installed and telemetry is enabled.
 
-[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.40...HEAD
+[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.41...HEAD
+[0.1.41]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.41
 [0.1.40]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.40
 [0.1.39]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.39
 [0.1.37]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.37
