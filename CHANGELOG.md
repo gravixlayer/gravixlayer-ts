@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.42] - 2026-10-25
+
 ### Fixed
 - `desktop.components`/`component`/`logs` parsed invented response fields
   (`state`, `sub_state`, `next_cursor`, `timestamp`) — the wire sends
