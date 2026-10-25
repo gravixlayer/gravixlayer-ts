@@ -545,9 +545,7 @@ describe('browser plane', () => {
   it('evaluate sends the 30s default timeout — parity with the Python SDK', async () => {
     // An unset timeout must still go on the wire: the server only applies a
     // CDP call timeout when timeout_ms > 0, so omitting it meant no bound.
-    const { client, http } = testClient([
-      jsonResponse({ value: 1, is_error: false }),
-    ]);
+    const { client, http } = testClient([jsonResponse({ value: 1, is_error: false })]);
     await client.runtime.browser.evaluate(RUNTIME_ID, BID, '1');
     expect((http.jsonBody() as Record<string, unknown>).timeout_ms).toBe(30_000);
   });
@@ -621,12 +619,8 @@ describe('browser plane', () => {
       const body = http.jsonBody(i) as Record<string, unknown>;
       expect(body.verb).toBe(verb);
     }
-    expect(
-      (http.jsonBody(2) as Record<string, unknown>).target_id,
-    ).toBe('');
-    expect(
-      (http.jsonBody(3) as Record<string, unknown>).target_id,
-    ).toBe('t2');
+    expect((http.jsonBody(2) as Record<string, unknown>).target_id).toBe('');
+    expect((http.jsonBody(3) as Record<string, unknown>).target_id).toBe('t2');
   });
 
   it('bound browser exposes the named verbs flat under browser', async () => {
@@ -752,7 +746,6 @@ it('activate + goto evicts a dead default browser', async () => {
   expect(http.last().url).toContain('/activate');
 });
 
-
 // ---------------------------------------------------------------------------
 // Merged desktop surface — conveniences + session ops
 // ---------------------------------------------------------------------------
@@ -760,7 +753,10 @@ it('activate + goto evicts a dead default browser', async () => {
 describe('desktop conveniences', () => {
   it('leftClick/rightClick/middleClick/doubleClick wire button + click_count', async () => {
     const { client, http } = testClient([
-      jsonResponse({}), jsonResponse({}), jsonResponse({}), jsonResponse({}),
+      jsonResponse({}),
+      jsonResponse({}),
+      jsonResponse({}),
+      jsonResponse({}),
     ]);
     await client.runtime.desktop.leftClick(RUNTIME_ID, 10, 20);
     await client.runtime.desktop.rightClick(RUNTIME_ID);

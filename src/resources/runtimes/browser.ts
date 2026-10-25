@@ -381,7 +381,12 @@ export class RuntimeBrowser extends APIResource {
     return this.command(runtimeId, browserId, 'reload', targetId, options);
   }
 
-  async activate(runtimeId: string, browserId: string, targetId: string, options: RequestOptions = {}) {
+  async activate(
+    runtimeId: string,
+    browserId: string,
+    targetId: string,
+    options: RequestOptions = {},
+  ) {
     return this.command(runtimeId, browserId, 'activate', targetId, options);
   }
 
@@ -898,9 +903,10 @@ export class RuntimeBrowser extends APIResource {
     return {
       url: str(r, 'url'),
       browserUrl,
-      watchUrl: viewToken && browserUrl
-        ? `${browserUrl}${browserUrl.includes('?') ? '&' : '?'}vt=${viewToken}`
-        : browserUrl,
+      watchUrl:
+        viewToken && browserUrl
+          ? `${browserUrl}${browserUrl.includes('?') ? '&' : '?'}vt=${viewToken}`
+          : browserUrl,
       port: num(r, 'port'),
       viewToken,
       expiresAt: typeof r.expires_at === 'string' ? r.expires_at : undefined,

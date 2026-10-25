@@ -819,7 +819,12 @@ export class BoundDesktop {
   async keys(options?: RequestOptions) {
     return this.runtimes.desktop.keys(this.id(), options);
   }
-  async down(x?: number, y?: number, button?: 'left' | 'right' | 'middle', options?: RequestOptions) {
+  async down(
+    x?: number,
+    y?: number,
+    button?: 'left' | 'right' | 'middle',
+    options?: RequestOptions,
+  ) {
     return this.runtimes.desktop.down(this.id(), x, y, button, options);
   }
   async up(button?: 'left' | 'right' | 'middle', options?: Parameters<RuntimeDesktop['up']>[2]) {
@@ -906,10 +911,20 @@ export class BoundDesktop {
   async middleClick(x?: number, y?: number, options?: RequestOptions) {
     return this.runtimes.desktop.middleClick(this.id(), x, y, options);
   }
-  async mousePress(button?: 'left' | 'right' | 'middle', x?: number, y?: number, options?: RequestOptions) {
+  async mousePress(
+    button?: 'left' | 'right' | 'middle',
+    x?: number,
+    y?: number,
+    options?: RequestOptions,
+  ) {
     return this.runtimes.desktop.mousePress(this.id(), button, x, y, options);
   }
-  async mouseRelease(button?: 'left' | 'right' | 'middle', x?: number, y?: number, options?: RequestOptions) {
+  async mouseRelease(
+    button?: 'left' | 'right' | 'middle',
+    x?: number,
+    y?: number,
+    options?: RequestOptions,
+  ) {
     return this.runtimes.desktop.mouseRelease(this.id(), button, x, y, options);
   }
   async moveMouse(x: number, y: number, options?: RequestOptions) {
