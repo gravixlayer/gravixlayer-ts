@@ -224,6 +224,371 @@ const CASES: readonly ForwardCase[] = [
     call: (r) => r.git.deleteBranch(REPO, 'feature', true, OPTIONS),
     args: [REPO, 'feature', true, OPTIONS],
   },
+
+  // runtime.browser — every bound method delegates to the resource with the
+  // runtime id first; BID is the browser id.
+  {
+    target: 'browser.open',
+    call: (r) => r.browser.open(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'browser.goto',
+    call: (r) => r.browser.goto('https://x/', OPTIONS),
+    args: ['https://x/', OPTIONS],
+  },
+  {
+    target: 'browser.close',
+    call: (r) => r.browser.close('b1', OPTIONS),
+    args: ['b1', OPTIONS],
+  },
+  {
+    target: 'browser.list',
+    call: (r) => r.browser.list(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'browser.status',
+    call: (r) => r.browser.status('b1', OPTIONS),
+    args: ['b1', OPTIONS],
+  },
+  {
+    target: 'browser.navigate',
+    call: (r) => r.browser.navigate('b1', 'https://x/', OPTIONS),
+    args: ['b1', 'https://x/', OPTIONS],
+  },
+  {
+    target: 'browser.command',
+    call: (r) => r.browser.command('b1', 'back', 'T1', OPTIONS),
+    args: ['b1', 'back', 'T1', OPTIONS],
+  },
+  {
+    target: 'browser.back',
+    call: (r) => r.browser.back('b1', 'T1', OPTIONS),
+    args: ['b1', 'T1', OPTIONS],
+  },
+  {
+    target: 'browser.forward',
+    call: (r) => r.browser.forward('b1', 'T1', OPTIONS),
+    args: ['b1', 'T1', OPTIONS],
+  },
+  {
+    target: 'browser.reload',
+    call: (r) => r.browser.reload('b1', 'T1', OPTIONS),
+    args: ['b1', 'T1', OPTIONS],
+  },
+  {
+    target: 'browser.activate',
+    call: (r) => r.browser.activate('b1', 'T1', OPTIONS),
+    args: ['b1', 'T1', OPTIONS],
+  },
+  {
+    target: 'browser.screenshot',
+    call: (r) => r.browser.screenshot('b1', OPTIONS),
+    args: ['b1', OPTIONS],
+  },
+  {
+    target: 'browser.snapshot',
+    call: (r) => r.browser.snapshot('b1', OPTIONS),
+    args: ['b1', OPTIONS],
+  },
+  {
+    target: 'browser.evaluate',
+    call: (r) => r.browser.evaluate('b1', '1', OPTIONS),
+    args: ['b1', '1', OPTIONS],
+  },
+  {
+    target: 'browser.click',
+    call: (r) => r.browser.click('b1', 'e3', OPTIONS),
+    args: ['b1', 'e3', OPTIONS],
+  },
+  {
+    target: 'browser.dblclick',
+    call: (r) => r.browser.dblclick('b1', 'e3', OPTIONS),
+    args: ['b1', 'e3', OPTIONS],
+  },
+  {
+    target: 'browser.hover',
+    call: (r) => r.browser.hover('b1', 'e3', OPTIONS),
+    args: ['b1', 'e3', OPTIONS],
+  },
+  {
+    target: 'browser.fill',
+    call: (r) => r.browser.fill('b1', 'e3', OPTIONS),
+    args: ['b1', 'e3', OPTIONS],
+  },
+  {
+    target: 'browser.type',
+    call: (r) => r.browser.type('b1', 'e3', 'hi', OPTIONS),
+    args: ['b1', 'e3', 'hi', OPTIONS],
+  },
+  {
+    target: 'browser.press',
+    call: (r) => r.browser.press('b1', 'Enter', OPTIONS),
+    args: ['b1', 'Enter', OPTIONS],
+  },
+  {
+    target: 'browser.hotkey',
+    call: (r) => r.browser.hotkey('b1', ['ctrl', 'c'], OPTIONS),
+    args: ['b1', ['ctrl', 'c'], OPTIONS],
+  },
+  {
+    target: 'browser.scroll',
+    call: (r) => r.browser.scroll('b1', OPTIONS),
+    args: ['b1', OPTIONS],
+  },
+  {
+    target: 'browser.dialog',
+    call: (r) => r.browser.dialog('b1', OPTIONS),
+    args: ['b1', OPTIONS],
+  },
+  {
+    target: 'browser.targets',
+    call: (r) => r.browser.targets('b1', OPTIONS),
+    args: ['b1', OPTIONS],
+  },
+  {
+    target: 'browser.downloads',
+    call: (r) => r.browser.downloads('b1', OPTIONS),
+    args: ['b1', OPTIONS],
+  },
+  {
+    target: 'browser.download',
+    call: (r) => r.browser.download('b1', 'd1', OPTIONS),
+    args: ['b1', 'd1', OPTIONS],
+  },
+  {
+    target: 'browser.pdf',
+    call: (r) => r.browser.pdf('b1', 'T1', OPTIONS),
+    args: ['b1', 'T1', OPTIONS],
+  },
+  {
+    target: 'browser.view',
+    call: (r) => r.browser.view('b1', OPTIONS),
+    args: ['b1', OPTIONS],
+  },
+
+  // runtime.desktop — the merged pixel + session surface.
+  {
+    target: 'desktop.enable',
+    call: (r) => r.desktop.enable(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.disable',
+    call: (r) => r.desktop.disable(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.status',
+    call: (r) => r.desktop.status(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.screenshot',
+    call: (r) => r.desktop.screenshot(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.click',
+    call: (r) => r.desktop.click(10, 20, 'left', OPTIONS),
+    args: [10, 20, 'left', OPTIONS],
+  },
+  {
+    target: 'desktop.move',
+    call: (r) => r.desktop.move(10, 20, OPTIONS),
+    args: [10, 20, OPTIONS],
+  },
+  {
+    target: 'desktop.scroll',
+    call: (r) => r.desktop.scroll(0, -480, OPTIONS),
+    args: [0, -480, OPTIONS],
+  },
+  {
+    target: 'desktop.type',
+    call: (r) => r.desktop.type('hi', OPTIONS),
+    args: ['hi', OPTIONS],
+  },
+  {
+    target: 'desktop.press',
+    call: (r) => r.desktop.press('Enter', OPTIONS),
+    args: ['Enter', OPTIONS],
+  },
+  {
+    target: 'desktop.hotkey',
+    call: (r) => r.desktop.hotkey(['ctrl', 'c'], OPTIONS),
+    args: [['ctrl', 'c'], OPTIONS],
+  },
+  {
+    target: 'desktop.waitStable',
+    call: (r) => r.desktop.waitStable(300, 5000, OPTIONS),
+    args: [300, 5000, OPTIONS],
+  },
+  {
+    target: 'desktop.view',
+    call: (r) => r.desktop.view(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.stopView',
+    call: (r) => r.desktop.stopView(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.info',
+    call: (r) => r.desktop.info(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.position',
+    call: (r) => r.desktop.position(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.keys',
+    call: (r) => r.desktop.keys(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.down',
+    call: (r) => r.desktop.down(10, 20, 'left', OPTIONS),
+    args: [10, 20, 'left', OPTIONS],
+  },
+  {
+    target: 'desktop.up',
+    call: (r) => r.desktop.up('left', OPTIONS),
+    args: ['left', OPTIONS],
+  },
+  {
+    target: 'desktop.drag',
+    call: (r) => r.desktop.drag(30, 40, 'left', OPTIONS),
+    args: [30, 40, 'left', OPTIONS],
+  },
+  {
+    target: 'desktop.getClipboard',
+    call: (r) => r.desktop.getClipboard(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.setClipboard',
+    call: (r) => r.desktop.setClipboard('hi', OPTIONS),
+    args: ['hi', OPTIONS],
+  },
+  {
+    target: 'desktop.getClipboardImage',
+    call: (r) => r.desktop.getClipboardImage(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.setClipboardImage',
+    call: (r) => r.desktop.setClipboardImage('aGk=', OPTIONS),
+    args: ['aGk=', OPTIONS],
+  },
+  {
+    target: 'desktop.act',
+    call: (r) => r.desktop.act({ actions: [], ...OPTIONS }),
+    args: [{ actions: [], ...OPTIONS }],
+  },
+  {
+    target: 'desktop.resize',
+    call: (r) => r.desktop.resize(1920, 1080, OPTIONS),
+    args: [1920, 1080, OPTIONS],
+  },
+  {
+    target: 'desktop.windows',
+    call: (r) => r.desktop.windows(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.windowOp',
+    call: (r) => r.desktop.windowOp(7, 'focus', OPTIONS),
+    args: [7, 'focus', OPTIONS],
+  },
+  {
+    target: 'desktop.apps',
+    call: (r) => r.desktop.apps(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.launchApp',
+    call: (r) => r.desktop.launchApp('terminal', OPTIONS),
+    args: ['terminal', OPTIONS],
+  },
+  {
+    target: 'desktop.open',
+    call: (r) => r.desktop.open('/etc/hosts', OPTIONS),
+    args: ['/etc/hosts', OPTIONS],
+  },
+  {
+    target: 'desktop.components',
+    call: (r) => r.desktop.components(OPTIONS),
+    args: [OPTIONS],
+  },
+  {
+    target: 'desktop.component',
+    call: (r) => r.desktop.component('display', 'restart', OPTIONS),
+    args: ['display', 'restart', OPTIONS],
+  },
+  {
+    target: 'desktop.startComponent',
+    call: (r) => r.desktop.startComponent('display', OPTIONS),
+    args: ['display', OPTIONS],
+  },
+  {
+    target: 'desktop.stopComponent',
+    call: (r) => r.desktop.stopComponent('display', OPTIONS),
+    args: ['display', OPTIONS],
+  },
+  {
+    target: 'desktop.restartComponent',
+    call: (r) => r.desktop.restartComponent('display', OPTIONS),
+    args: ['display', OPTIONS],
+  },
+  {
+    target: 'desktop.logs',
+    call: (r) => r.desktop.logs('display', OPTIONS),
+    args: ['display', OPTIONS],
+  },
+  {
+    target: 'desktop.leftClick',
+    call: (r) => r.desktop.leftClick(10, 20, OPTIONS),
+    args: [10, 20, OPTIONS],
+  },
+  {
+    target: 'desktop.doubleClick',
+    call: (r) => r.desktop.doubleClick(10, 20, OPTIONS),
+    args: [10, 20, OPTIONS],
+  },
+  {
+    target: 'desktop.rightClick',
+    call: (r) => r.desktop.rightClick(10, 20, OPTIONS),
+    args: [10, 20, OPTIONS],
+  },
+  {
+    target: 'desktop.middleClick',
+    call: (r) => r.desktop.middleClick(10, 20, OPTIONS),
+    args: [10, 20, OPTIONS],
+  },
+  {
+    target: 'desktop.mousePress',
+    call: (r) => r.desktop.mousePress('left', 10, 20, OPTIONS),
+    args: ['left', 10, 20, OPTIONS],
+  },
+  {
+    target: 'desktop.mouseRelease',
+    call: (r) => r.desktop.mouseRelease('left', 10, 20, OPTIONS),
+    args: ['left', 10, 20, OPTIONS],
+  },
+  {
+    target: 'desktop.moveMouse',
+    call: (r) => r.desktop.moveMouse(10, 20, OPTIONS),
+    args: [10, 20, OPTIONS],
+  },
+  {
+    target: 'desktop.write',
+    call: (r) => r.desktop.write('hi', 5, OPTIONS),
+    args: ['hi', 5, OPTIONS],
+  },
 ];
 
 /** Build a handle over a fake client, with no request left in the queue. */
