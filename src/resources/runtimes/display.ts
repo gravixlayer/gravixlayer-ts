@@ -106,7 +106,8 @@ export interface DisplayScreenshotOptions extends RequestOptions {
 export interface DisplayAction {
   readonly kind: string;
   readonly mouse?: Record<string, unknown>;
-  readonly key?: Record<string, unknown>;
+  /** Key name — the flat wire form (`"escape"`, `"ctrl+c"`) or a nested body. */
+  readonly key?: string | Record<string, unknown>;
   readonly coordinateSpace?: 'display' | 'screenshot';
   readonly [field: string]: unknown;
 }
@@ -326,7 +327,7 @@ function normalizeAction(a: DisplayAction): Record<string, unknown> {
     kind,
     ...wireActionFields(rest),
     ...(mouse ? { mouse: wireActionFields(mouse) } : {}),
-    ...(key ? { key: wireActionFields(key) } : {}),
+    ...(key ? { key: typeof key === 'object' ? wireActionFields(key) : key } : {}),
     ...(coordinateSpace ? { coordinate_space: coordinateSpace } : {}),
   };
 }

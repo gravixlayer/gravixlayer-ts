@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `desktop.act` mangled a flat `key` action. `normalizeAction` treated
+  `key` as a nested record and ran `Object.entries` on a string, so
+  `{kind: "press", key: "escape"}` went on the wire as
+  `key: {0: 'e', 1: 's', …}` and the guest answered "unknown key ''".
+  `DisplayAction.key` now accepts `string | Record` and a string passes
+  through verbatim — matching the wire shape and the Python SDK.
+
 ## [0.1.42] - 2026-10-25
 
 ### Fixed
