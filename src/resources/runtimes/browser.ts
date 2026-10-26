@@ -10,6 +10,7 @@
  */
 
 import { asRecord, bool, num, str } from '../../core/parse.js';
+import { iterSSEJson } from '../../core/sse.js';
 import type { RequestOptions } from '../../core/transport.js';
 import { SERVICES } from '../../core/url.js';
 import { assertRuntimeId } from '../../core/validate.js';
@@ -29,6 +30,8 @@ export interface BrowserTargetInfo {
   readonly type: string;
   readonly active: boolean;
   readonly loading: boolean;
+  /** Owning context — empty for the default context. */
+  readonly contextId?: string;
 }
 
 /** A browser session. */
@@ -158,6 +161,46 @@ function normTarget(t: ElementTarget | undefined): unknown {
   return t;
 }
 
+/** One browser event from the `events` stream. */
+export interface BrowserEvent {
+  /** Monotonic sequence — resume strictly after it via `since`/`Last-Event-ID`. */
+  readonly seq: number;
+  readonly kind: string;
+  readonly targetId: string;
+  /** Event time in microseconds since epoch. */
+  readonly usec: number;
+  readonly detail: Record<string, unknown>;
+}
+
+/** An isolated browser context (separate cookie/storage jars). */
+export interface BrowserContext {
+  readonly contextId: string;
+  readonly proxy: string;
+  readonly targetCount: number;
+  readonly createdUsec: number;
+}
+
+function parseBrowserEvent(v: unknown): BrowserEvent {
+  const r = asRecord(v);
+  return {
+    seq: num(r, 'seq'),
+    kind: str(r, 'kind'),
+    targetId: str(r, 'target_id'),
+    usec: num(r, 'usec'),
+    detail: asRecord(r.detail ?? {}),
+  };
+}
+
+function parseContext(v: unknown): BrowserContext {
+  const r = asRecord(v);
+  return {
+    contextId: str(r, 'context_id'),
+    proxy: r.proxy == null ? '' : str(r, 'proxy'),
+    targetCount: r.target_count == null ? 0 : num(r, 'target_count'),
+    createdUsec: r.created_usec == null ? 0 : num(r, 'created_usec'),
+  };
+}
+
 function parseTargetInfo(v: unknown): BrowserTargetInfo {
   const r = asRecord(v);
   return {
@@ -167,6 +210,7 @@ function parseTargetInfo(v: unknown): BrowserTargetInfo {
     type: str(r, 'type'),
     active: bool(r, 'active'),
     loading: bool(r, 'loading'),
+    contextId: r.context_id == null ? undefined : str(r, 'context_id'),
   };
 }
 
@@ -741,16 +785,20 @@ export class RuntimeBrowser extends APIResource {
   async targets(
     runtimeId: string,
     browserId: string,
-    options: RequestOptions & { url?: string; activate?: boolean } = {},
+    options: RequestOptions & { url?: string; activate?: boolean; contextId?: string } = {},
   ): Promise<{ targetId: string; targets: readonly BrowserTargetInfo[] }> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, url, activate } = options;
+    const { signal, requestTimeoutMs, maxRetries, url, activate, contextId } = options;
     const r = asRecord(
       await this.http.request({
         method: 'POST',
         path: `runtime/${runtimeId}/browser/${seg(browserId)}/targets`,
         service: SERVICES.agents,
-        body: { url: url ?? '', activate: activate ?? true },
+        body: {
+          url: url ?? '',
+          activate: activate ?? true,
+          ...(contextId !== undefined ? { context_id: contextId } : {}),
+        },
         options: { signal, requestTimeoutMs, maxRetries },
       }),
     );
@@ -911,5 +959,144 @@ export class RuntimeBrowser extends APIResource {
       viewToken,
       expiresAt: typeof r.expires_at === 'string' ? r.expires_at : undefined,
     };
+  }
+
+  /**
+   * Stream browser events (page lifecycle, console, network, dialogs) as
+   * server-sent events. `since`/`lastEventId` resume strictly after a
+   * sequence number; `waitMs` bounds each long-poll page (server default
+   * 25s, max 30s — pages chain without replay or drops).
+   */
+  async *events(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & { since?: number; lastEventId?: string; waitMs?: number } = {},
+  ): AsyncGenerator<BrowserEvent, void, undefined> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, since, lastEventId, waitMs } = options;
+    const query: Record<string, string | number> = {};
+    if (since !== undefined) query.since = since;
+    if (waitMs !== undefined) query.wait_ms = waitMs;
+    const headers: Record<string, string> = {};
+    if (lastEventId !== undefined) headers['Last-Event-ID'] = lastEventId;
+
+    const stream = await this.http.requestStream({
+      method: 'GET',
+      path: `runtime/${runtimeId}/browser/${seg(browserId)}/events`,
+      service: SERVICES.agents,
+      query,
+      options: { signal, requestTimeoutMs, maxRetries, headers },
+    });
+
+    for await (const payload of iterSSEJson<Record<string, unknown>>(stream)) {
+      yield parseBrowserEvent(payload);
+    }
+  }
+
+  /**
+   * Open an isolated browser context (separate cookie/storage jars) → its
+   * `contextId`. `proxy` is a proxy server URL; `storageState` seeds the
+   * context in the Playwright-compatible `{cookies, origins}` shape.
+   */
+  async contextCreate(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & {
+      proxy?: string;
+      storageState?: Record<string, unknown>;
+    } = {},
+  ): Promise<BrowserContext> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, proxy, storageState } = options;
+    const r = asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/context`,
+        service: SERVICES.agents,
+        body: {
+          ...(proxy ? { proxy } : {}),
+          ...(storageState !== undefined ? { storage_state: storageState } : {}),
+        },
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+    return parseContext(r);
+  }
+
+  /** List the browser's live contexts. */
+  async contexts(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions = {},
+  ): Promise<readonly BrowserContext[]> {
+    assertRuntimeId(runtimeId);
+    const r = asRecord(
+      await this.http.request({
+        method: 'GET',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/contexts`,
+        service: SERVICES.agents,
+        options,
+      }),
+    );
+    const list = r.contexts;
+    return Array.isArray(list) ? list.map(parseContext) : [];
+  }
+
+  /** Close an isolated context (the default context cannot be deleted). */
+  async contextDelete(
+    runtimeId: string,
+    browserId: string,
+    contextId: string,
+    options: RequestOptions = {},
+  ): Promise<void> {
+    assertRuntimeId(runtimeId);
+    await this.http.request({
+      method: 'DELETE',
+      path: `runtime/${runtimeId}/browser/${seg(browserId)}/context/${seg(contextId)}`,
+      service: SERVICES.agents,
+      options,
+    });
+  }
+
+  /**
+   * Export cookies + storage for a context in the Playwright-compatible
+   * `{cookies, origins}` shape. An empty `contextId` (the default)
+   * addresses the default context.
+   */
+  async storageExport(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & { contextId?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, contextId } = options;
+    const r = asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/storage/export`,
+        service: SERVICES.agents,
+        body: { context_id: contextId ?? '' },
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+    return asRecord(r.storage_state ?? r);
+  }
+
+  /** Import a previously exported `{cookies, origins}` storage state. */
+  async storageImport(
+    runtimeId: string,
+    browserId: string,
+    storageState: Record<string, unknown>,
+    options: RequestOptions & { contextId?: string } = {},
+  ): Promise<void> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, contextId } = options;
+    await this.http.request({
+      method: 'POST',
+      path: `runtime/${runtimeId}/browser/${seg(browserId)}/storage/import`,
+      service: SERVICES.agents,
+      body: { context_id: contextId ?? '', storage_state: storageState },
+      options: { signal, requestTimeoutMs, maxRetries },
+    });
   }
 }

@@ -91,7 +91,9 @@ export {
   RuntimeBrowser,
   type ActionOptions,
   type ActionResult,
+  type BrowserContext,
   type BrowserDownload,
+  type BrowserEvent,
   type BrowserInfo,
   type BrowserOpenOptions,
   type BrowserScreenshotOptions,
@@ -112,6 +114,12 @@ export {
 
 export {
   RuntimeDisplay,
+  type A11yActionOptions,
+  type A11yActionResult,
+  type A11yElement,
+  type A11yFindOptions,
+  type A11ySnapshot,
+  type A11ySnapshotOptions,
   type ActOptions,
   type ActResult,
   type ClickOptions,
@@ -119,6 +127,7 @@ export {
   type DisplayApp,
   type DisplayEnableOptions,
   type DisplayInfo,
+  type DisplayRecording,
   type DisplayScreenshot,
   type DisplayScreenshotOptions,
   type DisplayStatus,
@@ -128,6 +137,7 @@ export {
   type MouseButton,
   type PointerOptions,
   type PointerPosition,
+  type RecordStartOptions,
   type TypeOptions,
   type WindowOp,
 } from './resources/runtimes/display.js';

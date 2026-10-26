@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Desktop accessibility plane: `desktop.a11ySnapshot` (scope/roles/name
+  filters, `visibleOnly`, `diff` + `rev` deltas), `desktop.a11yFind`, and
+  `desktop.a11yAction` (`click`, `focus`, `invoke`, `set_value`, `type`)
+  acting on snapshot-stable `d{n}` refs, with damage-driven settle —
+  matching the API's `display/a11y/*` routes.
+- Display recordings: `desktop.recordStart` (`include`, `windowId`,
+  `label`), `recordings`, `recording`, `recordStop`, `recordMark`,
+  `recordDelete`, plus `desktop.viewControl(mode)` for the
+  `shared`/`human`/`agent` takeover modes. `DisplayStatus.controlMode`
+  and `DisplayInfo.controlMode` report the live mode.
+- Browser events stream: `browser.events()` — an async generator over the
+  SSE feed (`seq`, `kind`, `target_id`, `usec`, `detail`) with `since` /
+  `lastEventId` resume and `waitMs` long-poll bounds.
+- Browser contexts and storage state: `browser.contextCreate` (proxy +
+  seeded storage), `contexts`, `contextDelete`, `storageExport`,
+  `storageImport` in the Playwright-compatible `{cookies, origins}` shape;
+  `browser.targets` accepts `contextId` and `BrowserTargetInfo` carries
+  `contextId` back.
+- `BoundDesktop`/`BoundBrowser` expose every new method minus the
+  `runtimeId` argument.
+
 ### Fixed
 - `desktop.act` mangled a flat `key` action. `normalizeAction` treated
   `key` as a nested record and ran `Object.entries` on a string, so

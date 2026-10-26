@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { jsonResponse, RUNTIME_ID, testClient } from './helpers.js';
+import { emptyResponse, jsonResponse, RUNTIME_ID, sseJson, testClient } from './helpers.js';
 
 const BID = 'b1';
 
@@ -815,5 +815,228 @@ describe('desktop conveniences', () => {
     await client.runtime.desktop.stopComponent(RUNTIME_ID, 'session');
     const ops = [0, 1].map((i) => (http.jsonBody(i) as Record<string, unknown>).op);
     expect(ops).toEqual(['start', 'stop']);
+  });
+});
+
+describe('desktop a11y + recordings + takeover', () => {
+  it('reports the takeover mode on status', async () => {
+    const { client } = testClient([
+      jsonResponse({ enabled: true, width: 1, height: 1, depth: 24, display: ':0', wm: 'x', control_mode: 'human' }),
+    ]);
+    const s = await client.runtime.desktop.status(RUNTIME_ID);
+    expect(s.controlMode).toBe('human');
+  });
+
+  it('snapshots the a11y tree with scope + diff', async () => {
+    const { client, http } = testClient([
+      jsonResponse({
+        rev: 7,
+        truncated: false,
+        elements: [
+          {
+            ref: 'd3', role: 'push button', name: 'OK', value: '',
+            x: 1, y: 2, w: 3, h: 4,
+            states: ['enabled', 'showing'], actions: ['press'],
+            parent: 'd1', app: 'Files', pid: 42, depth: 2,
+          },
+        ],
+      }),
+    ]);
+    const s = await client.runtime.desktop.a11ySnapshot(RUNTIME_ID, {
+      scope: 'app', app: 'files', diff: true, rev: 5, visibleOnly: true,
+    });
+    expect(s.rev).toBe(7);
+    const el = s.elements[0];
+    expect(el?.ref).toBe('d3');
+    expect(el?.w).toBe(3);
+    expect(el?.app).toBe('Files');
+    expect(el?.states).toContain('showing');
+    const body = http.jsonBody() as Record<string, unknown>;
+    expect(body.scope).toBe('app');
+    expect(body.app).toBe('files');
+    expect(body.diff).toBe(true);
+    expect(body.rev).toBe(5);
+    expect(http.last().url).toContain('display/a11y/snapshot');
+  });
+
+  it('finds elements by role/name', async () => {
+    const { client, http } = testClient([jsonResponse({ rev: 1, elements: [] })]);
+    await client.runtime.desktop.a11yFind(RUNTIME_ID, { role: 'push button', name: 'Save', max: 10 });
+    const body = http.jsonBody() as Record<string, unknown>;
+    expect(body.role).toBe('push button');
+    expect(body.name).toBe('Save');
+    expect(body.max).toBe(10);
+    expect(http.last().url).toContain('display/a11y/find');
+  });
+
+  it('sends a11y actions with op + ref + payload fields', async () => {
+    const { client, http } = testClient([jsonResponse({ ok: true, rev: 9, settled: true })]);
+    const r = await client.runtime.desktop.a11yAction(RUNTIME_ID, 'set_value', 'd2', { text: 'hi' });
+    expect(r.ok).toBe(true);
+    expect(r.settled).toBe(true);
+    const body = http.jsonBody() as Record<string, unknown>;
+    expect(body.op).toBe('set_value');
+    expect(body.ref).toBe('d2');
+    expect(body.text).toBe('hi');
+    expect(http.last().url).toContain('display/a11y/action');
+  });
+
+  it('runs the recording lifecycle', async () => {
+    const rec = {
+      rec_id: 'r1', status: 'recording', window_id: 0, include: ['video', 'input'],
+      path: '/rec/r1.mp4', trajectory_path: '/rec/r1.jsonl', bytes: 0,
+      started_ms: 1000, stopped_ms: 0, duration_ms: 0, marks: [],
+      parent_rec: '', parent_ms: 0,
+    };
+    const stopped = { ...rec, status: 'stopped', bytes: 99, duration_ms: 1000, marks: ['checkpoint'] };
+    const { client, http } = testClient([
+      jsonResponse(rec),
+      jsonResponse({ recordings: [rec] }),
+      jsonResponse({}),
+      jsonResponse(stopped),
+      emptyResponse(),
+    ]);
+    const started = await client.runtime.desktop.recordStart(RUNTIME_ID, {
+      include: ['video', 'input'], label: 'run-1',
+    });
+    expect(started.recId).toBe('r1');
+    const startBody = http.jsonBody(0) as Record<string, unknown>;
+    expect(startBody.include).toEqual(['video', 'input']);
+    expect(startBody.label).toBe('run-1');
+
+    const list = await client.runtime.desktop.recordings(RUNTIME_ID);
+    expect(list[0]?.status).toBe('recording');
+    expect(list[0]?.trajectoryPath).toBe('/rec/r1.jsonl');
+
+    await client.runtime.desktop.recordMark(RUNTIME_ID, 'r1', 'checkpoint');
+    expect(http.last().url).toContain('recordings/r1/mark');
+    expect((http.jsonBody() as Record<string, unknown>).label).toBe('checkpoint');
+
+    const done = await client.runtime.desktop.recordStop(RUNTIME_ID, 'r1');
+    expect(done.status).toBe('stopped');
+    expect(done.bytes).toBe(99);
+    expect(done.marks).toEqual(['checkpoint']);
+
+    await client.runtime.desktop.recordDelete(RUNTIME_ID, 'r1');
+    expect(http.last().method).toBe('DELETE');
+  });
+
+  it('path-encodes recording ids', async () => {
+    const { client, http } = testClient([jsonResponse({ rec_id: 'a/b', status: 'x' })]);
+    await client.runtime.desktop.recording(RUNTIME_ID, 'a/b');
+    expect(http.last().url).toContain('recordings/a%2Fb');
+  });
+
+  it('sets the takeover mode', async () => {
+    const { client, http } = testClient([jsonResponse({})]);
+    await client.runtime.desktop.viewControl(RUNTIME_ID, 'human');
+    expect(http.last().url).toContain('display/view/control');
+    expect((http.jsonBody() as Record<string, unknown>).mode).toBe('human');
+  });
+});
+
+describe('browser events, contexts, storage', () => {
+  it('streams events with since/wait_ms query and Last-Event-ID', async () => {
+    const { client, http } = testClient([
+      sseJson([
+        {
+          seq: 11,
+          kind: 'page',
+          target_id: 't1',
+          usec: 1_700_000_000_000_000,
+          detail: { url: 'https://x.io' },
+        },
+        {
+          seq: 12,
+          kind: 'console',
+          target_id: 't1',
+          usec: 1_700_000_000_000_100,
+          detail: { level: 'info' },
+        },
+      ]),
+    ]);
+    const got = [];
+    for await (const e of client.runtime.browser.events(RUNTIME_ID, BID, {
+      since: 10,
+      waitMs: 5000,
+      lastEventId: '10',
+    })) {
+      got.push(e);
+    }
+    expect(got.map((e) => e.seq)).toEqual([11, 12]);
+    expect(got[0]?.kind).toBe('page');
+    expect(got[0]?.detail.url).toBe('https://x.io');
+    const q = http.query();
+    expect(q.get('since')).toBe('10');
+    expect(q.get('wait_ms')).toBe('5000');
+    expect(http.last().headers['last-event-id']).toBe('10');
+    expect(http.last().url).toContain(`browser/${BID}/events`);
+  });
+
+  it('creates, lists, and deletes contexts', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ context_id: 'c9' }),
+      jsonResponse({
+        contexts: [{ context_id: 'c9', proxy: 'http://p:1', target_count: 2, created_usec: 5 }],
+      }),
+      emptyResponse(),
+    ]);
+    const c = await client.runtime.browser.contextCreate(RUNTIME_ID, BID, {
+      proxy: 'http://p:1',
+      storageState: { cookies: [], origins: [] },
+    });
+    expect(c.contextId).toBe('c9');
+    const body = http.jsonBody(0) as Record<string, unknown>;
+    expect(body.proxy).toBe('http://p:1');
+    expect(body.storage_state).toEqual({ cookies: [], origins: [] });
+
+    const list = await client.runtime.browser.contexts(RUNTIME_ID, BID);
+    expect(list[0]?.targetCount).toBe(2);
+
+    await client.runtime.browser.contextDelete(RUNTIME_ID, BID, 'c9');
+    expect(http.last().method).toBe('DELETE');
+    expect(http.last().url).toContain('context/c9');
+  });
+
+  it('exports and imports storage state for the default context', async () => {
+    const state = { cookies: [{ name: 's', value: 'v', domain: 'x.io', path: '/' }], origins: [] };
+    const { client, http } = testClient([jsonResponse({ storage_state: state }), jsonResponse({})]);
+    const out = await client.runtime.browser.storageExport(RUNTIME_ID, BID);
+    expect(out.cookies).toHaveLength(1);
+    expect((http.jsonBody(0) as Record<string, unknown>).context_id).toBe('');
+
+    await client.runtime.browser.storageImport(RUNTIME_ID, BID, state);
+    const body = http.jsonBody(1) as Record<string, unknown>;
+    expect(body.storage_state).toEqual(state);
+    expect(http.last().url).toContain('storage/import');
+  });
+
+  it('passes context_id through targets', async () => {
+    const { client, http } = testClient([jsonResponse({ target_id: 't9', targets: [] })]);
+    await client.runtime.browser.targets(RUNTIME_ID, BID, { url: 'https://x.io', contextId: 'c9' });
+    const body = http.jsonBody() as Record<string, unknown>;
+    expect(body.context_id).toBe('c9');
+    expect(body.url).toBe('https://x.io');
+  });
+
+  it('parses context_id on target records', async () => {
+    const { client } = testClient([
+      jsonResponse({
+        target_id: 't9',
+        targets: [
+          {
+            target_id: 't9',
+            url: 'u',
+            title: '',
+            type: 'page',
+            active: true,
+            loading: false,
+            context_id: 'c9',
+          },
+        ],
+      }),
+    ]);
+    const r = await client.runtime.browser.targets(RUNTIME_ID, BID);
+    expect(r.targets[0]?.contextId).toBe('c9');
   });
 });

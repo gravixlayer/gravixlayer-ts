@@ -13,6 +13,11 @@ import { SERVICES } from '../../core/url.js';
 import { assertRuntimeId } from '../../core/validate.js';
 import { APIResource } from '../resource.js';
 
+/** Caller-supplied IDs can never alter the request path. */
+function seg(id: string): string {
+  return encodeURIComponent(id);
+}
+
 /** Current display state. */
 export interface DisplayStatus {
   readonly enabled: boolean;
@@ -21,6 +26,8 @@ export interface DisplayStatus {
   readonly depth: number;
   readonly display: string;
   readonly wm: string;
+  /** Live-view takeover mode: `shared` | `human` | `agent`. */
+  readonly controlMode?: string;
 }
 
 /** Live display geometry — follows resizes, unlike the enable-time config. */
@@ -32,6 +39,8 @@ export interface DisplayInfo {
   readonly dpi: number;
   readonly display: string;
   readonly attached: boolean;
+  /** Live-view takeover mode: `shared` | `human` | `agent`. */
+  readonly controlMode?: string;
 }
 
 /** Live pointer position. */
@@ -225,6 +234,183 @@ export interface TypeOptions extends RequestOptions {
   mode?: 'keys' | 'paste';
 }
 
+/** One accessibility element in a desktop a11y snapshot. */
+export interface A11yElement {
+  /** Snapshot-stable ref (e.g. `d3`) usable with `a11yAction`. */
+  readonly ref: string;
+  readonly role: string;
+  readonly name: string;
+  readonly value: string;
+  /** Screen-space bounds in display pixels. */
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  /** State names such as `enabled`, `showing`, `visible`, `focused`. */
+  readonly states: readonly string[];
+  /** Action names this element supports (e.g. `press`, `set_value`). */
+  readonly actions: readonly string[];
+  /** Parent element's ref — `''` for application roots. */
+  readonly parent: string;
+  /** Owning application name. */
+  readonly app: string;
+  /** Owning application's process id. */
+  readonly pid: number;
+  /** Tree depth below the scope root (0 = root). */
+  readonly depth: number;
+}
+
+/** Result of an a11y snapshot or find query. */
+export interface A11ySnapshot {
+  /** Monotonic snapshot revision — pass back via `rev` + `diff` for deltas. */
+  readonly rev: number;
+  readonly elements: readonly A11yElement[];
+  /** The element cap was hit before the scope was exhausted. */
+  readonly truncated: boolean;
+}
+
+/** Outcome of an accessibility action on an element ref. */
+export interface A11yActionResult {
+  readonly ok: boolean;
+  /** Snapshot revision after the action settled. */
+  readonly rev: number;
+  /** Whether the resulting damage/stability wait completed. */
+  readonly settled: boolean;
+}
+
+/** Options for `a11ySnapshot`. */
+export interface A11ySnapshotOptions extends RequestOptions {
+  /** `''`/`'full'` every app; `'app'` one app (see `app`/`pid`); `'focus'` the focused subtree. */
+  readonly scope?: 'full' | 'app' | 'focus' | '';
+  /** `scope:'app'` — case-insensitive application name match. */
+  readonly app?: string;
+  /** `scope:'app'` — owning process id. */
+  readonly pid?: number;
+  /** Depth bound below the scope root (server default 6). */
+  readonly maxDepth?: number;
+  /** Element cap (server default 500). */
+  readonly limit?: number;
+  /** Keep only showing+visible elements (server default true). */
+  readonly visibleOnly?: boolean;
+  /** Keep only these roles (e.g. `['push button', 'entry']`). */
+  readonly roles?: readonly string[];
+  /** Case-insensitive accessible-name substring filter. */
+  readonly name?: string;
+  /** Delta mode: only elements changed since `rev` (or last-known tree when `rev` is unset). */
+  readonly diff?: boolean;
+  /** Revision to diff against — requires `diff: true`. */
+  readonly rev?: number;
+}
+
+/** Options for `a11yFind`. */
+export interface A11yFindOptions extends RequestOptions {
+  /** Role filter — `''`/omitted matches any. */
+  readonly role?: string;
+  /** Case-insensitive name substring — `''`/omitted matches any. */
+  readonly name?: string;
+  /** Scope the search under this element ref — omitted searches the whole tree. */
+  readonly ref?: string;
+  /** Result cap (server default 50). */
+  readonly max?: number;
+}
+
+/** Options for `a11yAction`. */
+export interface A11yActionOptions extends RequestOptions {
+  /** `invoke`: named action (e.g. `'press'`); falls back to `actionIndex`. */
+  readonly action?: string;
+  /** `invoke`: index fallback when `action` is omitted. */
+  readonly actionIndex?: number;
+  /** `type`/`set_value` text payload. */
+  readonly text?: string;
+  /** `set_value` numeric payload. */
+  readonly value?: number;
+  /** Damage-settle bound in ms (server default 1500). */
+  readonly timeoutMs?: number;
+}
+
+/** A display recording's metadata (progress merges live while recording). */
+export interface DisplayRecording {
+  readonly recId: string;
+  /** `recording` | `stopped` | `aborted`. */
+  readonly status: string;
+  /** Window the capture is scoped to — `0` means the whole display. */
+  readonly windowId: number;
+  /** Captured components: `video`, `input`, `window`, `app`. */
+  readonly include: readonly string[];
+  /** fMP4 path on the guest — `''` when video capture is off. */
+  readonly path: string;
+  /** Trajectory JSONL path on the guest — readable through the files plane. */
+  readonly trajectoryPath: string;
+  /** Video bytes on disk so far. */
+  readonly bytes: number;
+  readonly startedMs: number;
+  readonly stoppedMs: number;
+  readonly durationMs: number;
+  /** Named marks stamped via `recordMark`. */
+  readonly marks: readonly string[];
+  /** Fork lineage — parent recording and its duration at the seam. */
+  readonly parentRec: string;
+  readonly parentMs: number;
+}
+
+/** Options for `recordStart`. */
+export interface RecordStartOptions extends RequestOptions {
+  /** Scope capture to one window's rect — `0`/omitted records the whole display. */
+  readonly windowId?: number;
+  /** Components to capture — `video`, `input`, `window`, `app`; omitted records everything. */
+  readonly include?: readonly string[];
+  /** Optional caller tag kept in the recording's metadata. */
+  readonly label?: string;
+}
+
+function parseElement(v: unknown): A11yElement {
+  const r = asRecord(v);
+  return {
+    ref: str(r, 'ref'),
+    role: str(r, 'role'),
+    name: str(r, 'name'),
+    value: r.value == null ? '' : str(r, 'value'),
+    x: num(r, 'x'),
+    y: num(r, 'y'),
+    w: num(r, 'w'),
+    h: num(r, 'h'),
+    states: Array.isArray(r.states) ? r.states.map(String) : [],
+    actions: Array.isArray(r.actions) ? r.actions.map(String) : [],
+    parent: r.parent == null ? '' : str(r, 'parent'),
+    app: r.app == null ? '' : str(r, 'app'),
+    pid: r.pid == null ? 0 : num(r, 'pid'),
+    depth: r.depth == null ? 0 : num(r, 'depth'),
+  };
+}
+
+function parseSnapshot(v: unknown): A11ySnapshot {
+  const r = asRecord(v);
+  return {
+    rev: num(r, 'rev'),
+    elements: Array.isArray(r.elements) ? r.elements.map(parseElement) : [],
+    truncated: r.truncated == null ? false : bool(r, 'truncated'),
+  };
+}
+
+function parseRecording(v: unknown): DisplayRecording {
+  const r = asRecord(v);
+  return {
+    recId: str(r, 'rec_id'),
+    status: str(r, 'status'),
+    windowId: r.window_id == null ? 0 : num(r, 'window_id'),
+    include: Array.isArray(r.include) ? r.include.map(String) : [],
+    path: r.path == null ? '' : str(r, 'path'),
+    trajectoryPath: r.trajectory_path == null ? '' : str(r, 'trajectory_path'),
+    bytes: r.bytes == null ? 0 : num(r, 'bytes'),
+    startedMs: r.started_ms == null ? 0 : num(r, 'started_ms'),
+    stoppedMs: r.stopped_ms == null ? 0 : num(r, 'stopped_ms'),
+    durationMs: r.duration_ms == null ? 0 : num(r, 'duration_ms'),
+    marks: Array.isArray(r.marks) ? r.marks.map(String) : [],
+    parentRec: r.parent_rec == null ? '' : str(r, 'parent_rec'),
+    parentMs: r.parent_ms == null ? 0 : num(r, 'parent_ms'),
+  };
+}
+
 function parseStatus(v: unknown): DisplayStatus {
   const r = asRecord(v);
   return {
@@ -234,6 +420,7 @@ function parseStatus(v: unknown): DisplayStatus {
     depth: num(r, 'depth'),
     display: str(r, 'display'),
     wm: str(r, 'wm'),
+    controlMode: r.control_mode == null ? undefined : str(r, 'control_mode'),
   };
 }
 
@@ -247,6 +434,7 @@ function parseInfo(v: unknown): DisplayInfo {
     dpi: num(r, 'dpi'),
     display: str(r, 'display'),
     attached: bool(r, 'attached'),
+    controlMode: r.control_mode == null ? undefined : str(r, 'control_mode'),
   };
 }
 
@@ -941,6 +1129,237 @@ export class RuntimeDisplay extends APIResource {
       path: `runtime/${runtimeId}/display/clipboard`,
       service: SERVICES.agents,
       body: { op: 'set', png: pngBase64 },
+      options,
+    });
+  }
+
+  /**
+   * Snapshot the desktop accessibility tree → flat element records with
+   * stable `d{n}` refs. Pass `rev` from a previous snapshot for a diff of
+   * what changed.
+   */
+  async a11ySnapshot(runtimeId: string, options: A11ySnapshotOptions = {}): Promise<A11ySnapshot> {
+    assertRuntimeId(runtimeId);
+    const {
+      signal,
+      requestTimeoutMs,
+      maxRetries,
+      scope,
+      app,
+      pid,
+      maxDepth,
+      limit,
+      visibleOnly,
+      roles,
+      name,
+      diff,
+      rev,
+    } = options;
+    return parseSnapshot(
+      asRecord(
+        await this.http.request({
+          method: 'POST',
+          path: `runtime/${runtimeId}/display/a11y/snapshot`,
+          service: SERVICES.agents,
+          body: {
+            ...(scope ? { scope } : {}),
+            ...(app ? { app } : {}),
+            ...(pid ? { pid } : {}),
+            ...(maxDepth ? { max_depth: maxDepth } : {}),
+            ...(limit ? { limit } : {}),
+            ...(visibleOnly !== undefined ? { visible_only: visibleOnly } : {}),
+            ...(roles !== undefined ? { roles: [...roles] } : {}),
+            ...(name ? { name } : {}),
+            ...(diff ? { diff: true, ...(rev ? { rev } : {}) } : {}),
+          },
+          options: { signal, requestTimeoutMs, maxRetries },
+        }),
+      ),
+    );
+  }
+
+  /** Find accessibility elements matching role/name filters. */
+  async a11yFind(runtimeId: string, options: A11yFindOptions = {}): Promise<A11ySnapshot> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, role, name, ref, max } = options;
+    return parseSnapshot(
+      asRecord(
+        await this.http.request({
+          method: 'POST',
+          path: `runtime/${runtimeId}/display/a11y/find`,
+          service: SERVICES.agents,
+          body: {
+            ...(role ? { role } : {}),
+            ...(name ? { name } : {}),
+            ...(ref ? { ref } : {}),
+            ...(max ? { max } : {}),
+          },
+          options: { signal, requestTimeoutMs, maxRetries },
+        }),
+      ),
+    );
+  }
+
+  /**
+   * Perform an accessibility action on an element ref from a snapshot:
+   * `click`, `focus`, `invoke` (named `action` or `actionIndex`),
+   * `set_value` (`text`/`value`), or `type` (`text`). The reply settles
+   * damage-driven like `act`, bounded by `timeoutMs`.
+   */
+  async a11yAction(
+    runtimeId: string,
+    op: 'click' | 'focus' | 'invoke' | 'set_value' | 'type',
+    ref: string,
+    options: A11yActionOptions = {},
+  ): Promise<A11yActionResult> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, action, actionIndex, text, value, timeoutMs } =
+      options;
+    const r = asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/display/a11y/action`,
+        service: SERVICES.agents,
+        body: {
+          op,
+          ref,
+          ...(action ? { action } : {}),
+          ...(actionIndex ? { action_index: actionIndex } : {}),
+          ...(text ? { text } : {}),
+          ...(value !== undefined ? { value } : {}),
+          ...(timeoutMs ? { timeout_ms: timeoutMs } : {}),
+        },
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+    return { ok: bool(r, 'ok'), rev: num(r, 'rev'), settled: bool(r, 'settled') };
+  }
+
+  /** Start a display/trajectory recording → its metadata. */
+  async recordStart(
+    runtimeId: string,
+    options: RecordStartOptions = {},
+  ): Promise<DisplayRecording> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, windowId, include, label } = options;
+    return parseRecording(
+      asRecord(
+        await this.http.request({
+          method: 'POST',
+          path: `runtime/${runtimeId}/display/recordings`,
+          service: SERVICES.agents,
+          body: {
+            ...(windowId ? { window_id: windowId } : {}),
+            ...(include !== undefined ? { include: [...include] } : {}),
+            ...(label ? { label } : {}),
+          },
+          options: { signal, requestTimeoutMs, maxRetries },
+        }),
+      ),
+    );
+  }
+
+  /** List recordings on this runtime. */
+  async recordings(runtimeId: string, options: RequestOptions = {}): Promise<DisplayRecording[]> {
+    assertRuntimeId(runtimeId);
+    const r = asRecord(
+      await this.http.request({
+        method: 'GET',
+        path: `runtime/${runtimeId}/display/recordings`,
+        service: SERVICES.agents,
+        options,
+      }),
+    );
+    const list = r.recordings ?? r.items;
+    return Array.isArray(list) ? list.map(parseRecording) : [];
+  }
+
+  /** Fetch one recording's metadata. */
+  async recording(
+    runtimeId: string,
+    recordingId: string,
+    options: RequestOptions = {},
+  ): Promise<DisplayRecording> {
+    assertRuntimeId(runtimeId);
+    return parseRecording(
+      asRecord(
+        await this.http.request({
+          method: 'GET',
+          path: `runtime/${runtimeId}/display/recordings/${seg(recordingId)}`,
+          service: SERVICES.agents,
+          options,
+        }),
+      ),
+    );
+  }
+
+  /** Stop an in-progress recording → final metadata. */
+  async recordStop(
+    runtimeId: string,
+    recordingId: string,
+    options: RequestOptions = {},
+  ): Promise<DisplayRecording> {
+    assertRuntimeId(runtimeId);
+    return parseRecording(
+      asRecord(
+        await this.http.request({
+          method: 'POST',
+          path: `runtime/${runtimeId}/display/recordings/${seg(recordingId)}/stop`,
+          service: SERVICES.agents,
+          body: {},
+          options,
+        }),
+      ),
+    );
+  }
+
+  /** Add a named mark to a running recording's trajectory. */
+  async recordMark(
+    runtimeId: string,
+    recordingId: string,
+    label: string,
+    options: RequestOptions = {},
+  ): Promise<void> {
+    assertRuntimeId(runtimeId);
+    await this.http.request({
+      method: 'POST',
+      path: `runtime/${runtimeId}/display/recordings/${seg(recordingId)}/mark`,
+      service: SERVICES.agents,
+      body: { label },
+      options,
+    });
+  }
+
+  /** Delete a stopped recording and its artifacts. */
+  async recordDelete(
+    runtimeId: string,
+    recordingId: string,
+    options: RequestOptions = {},
+  ): Promise<void> {
+    assertRuntimeId(runtimeId);
+    await this.http.request({
+      method: 'DELETE',
+      path: `runtime/${runtimeId}/display/recordings/${seg(recordingId)}`,
+      service: SERVICES.agents,
+      options,
+    });
+  }
+
+  /**
+   * Set the live-view takeover mode: `shared` (both sides may drive),
+   * `human` (only the human viewer; agent input is rejected), or `agent`.
+   */
+  async viewControl(
+    runtimeId: string,
+    mode: 'shared' | 'human' | 'agent',
+    options: RequestOptions = {},
+  ): Promise<void> {
+    assertRuntimeId(runtimeId);
+    await this.http.request({
+      method: 'POST',
+      path: `runtime/${runtimeId}/display/view/control`,
+      service: SERVICES.agents,
+      body: { mode },
       options,
     });
   }

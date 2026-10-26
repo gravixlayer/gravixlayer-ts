@@ -63,7 +63,7 @@ import type {
   GitFetchOptions,
   GitPushOptions,
 } from './git.js';
-import type { RuntimeBrowser } from './browser.js';
+import type { BrowserEvent, RuntimeBrowser } from './browser.js';
 import type { RuntimeDesktop } from './desktop.js';
 import type { CreatePtyOptions, PtyHandle, PtyStreamEvent } from './pty.js';
 import type { ForkRuntimeOptions } from './runtimes.js';
@@ -876,6 +876,43 @@ export class BoundDesktop {
     return this.runtimes.desktop.open(this.id(), target, options);
   }
 
+  // ── accessibility, recordings, takeover ──────────────────────────────
+
+  async a11ySnapshot(options?: Parameters<RuntimeDesktop['a11ySnapshot']>[1]) {
+    return this.runtimes.desktop.a11ySnapshot(this.id(), options);
+  }
+  async a11yFind(options?: Parameters<RuntimeDesktop['a11yFind']>[1]) {
+    return this.runtimes.desktop.a11yFind(this.id(), options);
+  }
+  async a11yAction(
+    op: Parameters<RuntimeDesktop['a11yAction']>[1],
+    ref: string,
+    options?: Parameters<RuntimeDesktop['a11yAction']>[3],
+  ) {
+    return this.runtimes.desktop.a11yAction(this.id(), op, ref, options);
+  }
+  async recordStart(options?: Parameters<RuntimeDesktop['recordStart']>[1]) {
+    return this.runtimes.desktop.recordStart(this.id(), options);
+  }
+  async recordings(options?: RequestOptions) {
+    return this.runtimes.desktop.recordings(this.id(), options);
+  }
+  async recording(recordingId: string, options?: RequestOptions) {
+    return this.runtimes.desktop.recording(this.id(), recordingId, options);
+  }
+  async recordStop(recordingId: string, options?: RequestOptions) {
+    return this.runtimes.desktop.recordStop(this.id(), recordingId, options);
+  }
+  async recordMark(recordingId: string, label: string, options?: RequestOptions) {
+    return this.runtimes.desktop.recordMark(this.id(), recordingId, label, options);
+  }
+  async recordDelete(recordingId: string, options?: RequestOptions) {
+    return this.runtimes.desktop.recordDelete(this.id(), recordingId, options);
+  }
+  async viewControl(mode: 'shared' | 'human' | 'agent', options?: RequestOptions) {
+    return this.runtimes.desktop.viewControl(this.id(), mode, options);
+  }
+
   // ── session plane ─────────────────────────────────────────────────────
 
   async components(options?: RequestOptions) {
@@ -1090,5 +1127,30 @@ export class BoundBrowser {
   }
   async view(browserId: string, options?: Parameters<RuntimeBrowser['view']>[2]) {
     return this.runtimes.browser.view(this.id(), browserId, options);
+  }
+  events(
+    browserId: string,
+    options?: Parameters<RuntimeBrowser['events']>[2],
+  ): AsyncGenerator<BrowserEvent, void, undefined> {
+    return this.runtimes.browser.events(this.id(), browserId, options);
+  }
+  async contextCreate(browserId: string, options?: Parameters<RuntimeBrowser['contextCreate']>[2]) {
+    return this.runtimes.browser.contextCreate(this.id(), browserId, options);
+  }
+  async contexts(browserId: string, options?: RequestOptions) {
+    return this.runtimes.browser.contexts(this.id(), browserId, options);
+  }
+  async contextDelete(browserId: string, contextId: string, options?: RequestOptions) {
+    return this.runtimes.browser.contextDelete(this.id(), browserId, contextId, options);
+  }
+  async storageExport(browserId: string, options?: Parameters<RuntimeBrowser['storageExport']>[2]) {
+    return this.runtimes.browser.storageExport(this.id(), browserId, options);
+  }
+  async storageImport(
+    browserId: string,
+    storageState: Record<string, unknown>,
+    options?: Parameters<RuntimeBrowser['storageImport']>[3],
+  ) {
+    return this.runtimes.browser.storageImport(this.id(), browserId, storageState, options);
   }
 }
