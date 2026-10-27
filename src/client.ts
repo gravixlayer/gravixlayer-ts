@@ -138,7 +138,7 @@ export class GravixLayer implements ClientContext {
   readonly identity: Identity;
   /** Rules governing what a runtime may reach on the network. */
   readonly networkPolicies: NetworkPolicies;
-  /** Buckets, bucket links, and runtime mounts. */
+  /** Buckets and runtime mounts. */
   readonly storage: Storage;
 
   /** The configured HTTP engine. Shared by every resource. */

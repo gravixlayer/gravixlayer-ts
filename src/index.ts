@@ -380,22 +380,19 @@ export {
 // ---------------------------------------------------------------------------
 
 export {
-  BucketLinks,
   buildMountSpec,
   RuntimeMounts,
   Storage,
   StorageBuckets,
-  type CreateBucketLinkOptions,
+  type ConnectBucketOptions,
   type CreateBucketOptions,
   type MountInput,
   type StorageScopedOptions,
 } from './resources/storage.js';
 
 export {
-  LINK_PROVIDERS,
+  BUCKET_PROVIDERS,
   MountMode,
-  type BucketLink,
-  type BucketLinkList,
   type RuntimeMount,
   type RuntimeMountList,
   type StorageBucket,

@@ -821,7 +821,15 @@ describe('desktop conveniences', () => {
 describe('desktop a11y + recordings + takeover', () => {
   it('reports the takeover mode on status', async () => {
     const { client } = testClient([
-      jsonResponse({ enabled: true, width: 1, height: 1, depth: 24, display: ':0', wm: 'x', control_mode: 'human' }),
+      jsonResponse({
+        enabled: true,
+        width: 1,
+        height: 1,
+        depth: 24,
+        display: ':0',
+        wm: 'x',
+        control_mode: 'human',
+      }),
     ]);
     const s = await client.runtime.desktop.status(RUNTIME_ID);
     expect(s.controlMode).toBe('human');
@@ -834,16 +842,30 @@ describe('desktop a11y + recordings + takeover', () => {
         truncated: false,
         elements: [
           {
-            ref: 'd3', role: 'push button', name: 'OK', value: '',
-            x: 1, y: 2, w: 3, h: 4,
-            states: ['enabled', 'showing'], actions: ['press'],
-            parent: 'd1', app: 'Files', pid: 42, depth: 2,
+            ref: 'd3',
+            role: 'push button',
+            name: 'OK',
+            value: '',
+            x: 1,
+            y: 2,
+            w: 3,
+            h: 4,
+            states: ['enabled', 'showing'],
+            actions: ['press'],
+            parent: 'd1',
+            app: 'Files',
+            pid: 42,
+            depth: 2,
           },
         ],
       }),
     ]);
     const s = await client.runtime.desktop.a11ySnapshot(RUNTIME_ID, {
-      scope: 'app', app: 'files', diff: true, rev: 5, visibleOnly: true,
+      scope: 'app',
+      app: 'files',
+      diff: true,
+      rev: 5,
+      visibleOnly: true,
     });
     expect(s.rev).toBe(7);
     const el = s.elements[0];
@@ -861,7 +883,11 @@ describe('desktop a11y + recordings + takeover', () => {
 
   it('finds elements by role/name', async () => {
     const { client, http } = testClient([jsonResponse({ rev: 1, elements: [] })]);
-    await client.runtime.desktop.a11yFind(RUNTIME_ID, { role: 'push button', name: 'Save', max: 10 });
+    await client.runtime.desktop.a11yFind(RUNTIME_ID, {
+      role: 'push button',
+      name: 'Save',
+      max: 10,
+    });
     const body = http.jsonBody() as Record<string, unknown>;
     expect(body.role).toBe('push button');
     expect(body.name).toBe('Save');
@@ -871,7 +897,9 @@ describe('desktop a11y + recordings + takeover', () => {
 
   it('sends a11y actions with op + ref + payload fields', async () => {
     const { client, http } = testClient([jsonResponse({ ok: true, rev: 9, settled: true })]);
-    const r = await client.runtime.desktop.a11yAction(RUNTIME_ID, 'set_value', 'd2', { text: 'hi' });
+    const r = await client.runtime.desktop.a11yAction(RUNTIME_ID, 'set_value', 'd2', {
+      text: 'hi',
+    });
     expect(r.ok).toBe(true);
     expect(r.settled).toBe(true);
     const body = http.jsonBody() as Record<string, unknown>;
@@ -883,12 +911,27 @@ describe('desktop a11y + recordings + takeover', () => {
 
   it('runs the recording lifecycle', async () => {
     const rec = {
-      rec_id: 'r1', status: 'recording', window_id: 0, include: ['video', 'input'],
-      path: '/rec/r1.mp4', trajectory_path: '/rec/r1.jsonl', bytes: 0,
-      started_ms: 1000, stopped_ms: 0, duration_ms: 0, marks: [],
-      parent_rec: '', parent_ms: 0,
+      rec_id: 'r1',
+      status: 'recording',
+      window_id: 0,
+      include: ['video', 'input'],
+      path: '/rec/r1.mp4',
+      trajectory_path: '/rec/r1.jsonl',
+      bytes: 0,
+      started_ms: 1000,
+      stopped_ms: 0,
+      duration_ms: 0,
+      marks: [],
+      parent_rec: '',
+      parent_ms: 0,
     };
-    const stopped = { ...rec, status: 'stopped', bytes: 99, duration_ms: 1000, marks: ['checkpoint'] };
+    const stopped = {
+      ...rec,
+      status: 'stopped',
+      bytes: 99,
+      duration_ms: 1000,
+      marks: ['checkpoint'],
+    };
     const { client, http } = testClient([
       jsonResponse(rec),
       jsonResponse({ recordings: [rec] }),
@@ -897,7 +940,8 @@ describe('desktop a11y + recordings + takeover', () => {
       emptyResponse(),
     ]);
     const started = await client.runtime.desktop.recordStart(RUNTIME_ID, {
-      include: ['video', 'input'], label: 'run-1',
+      include: ['video', 'input'],
+      label: 'run-1',
     });
     expect(started.recId).toBe('r1');
     const startBody = http.jsonBody(0) as Record<string, unknown>;

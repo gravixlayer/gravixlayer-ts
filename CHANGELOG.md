@@ -4,7 +4,19 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.43]
+
+### Changed
+- **Storage buckets are one public resource.** `storage.buckets.create`
+  provisions a managed bucket, `storage.buckets.connect` connects an existing
+  S3/S3-compatible bucket, and `list`/`get`/`verify`/`delete` operate on both
+  through `source: "managed" | "external"`. Mounts take only
+  `{kind: "bucket", bucket: "<id-or-name>"}`; `storage.links` and the mount
+  `link` field are removed.
+- **Mount validation rejects credential fields on bucket mounts.**
+  `credentialProvider`/`credentialSecret` are git-mount fields; a bucket
+  mount carrying them now fails locally instead of being silently ignored —
+  matching the other stray-field refusals and the Python SDK and CLI.
 
 ### Added
 - Desktop accessibility plane: `desktop.a11ySnapshot` (scope/roles/name
@@ -168,23 +180,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Tests
 - `tests/storage.e2e.test.ts` — opt-in live suite for `client.storage`:
-  managed buckets, static-credential bucket links, git mounts,
+  managed buckets, static-credential external buckets, git mounts,
   pause/resume + kill-detach lifecycle, read-only enforcement, and guest
   credential hygiene. Runs only with `GRAVIXLAYER_E2E=1` plus an API key;
   reads `~/.config/gravix-test/aws.env` for test credentials.
 ## [0.1.39] - 2026-10-15
 ### Added
 - `client.storage` — storage mounts end to end: `storage.buckets`
-  (`create`/`list`/`get`/`delete` managed buckets),
-  `storage.links` (`create`/`list`/`get`/`verify`/`delete` for S3 and
-  S3-compatible buckets; static secret references or `oidc` role
-  assumption — credential material never crosses the SDK), and
-  `storage.mounts` (`attach`/`list`/`detach` on a running runtime).
-  `sandbox.mounts` is bound on every runtime handle, and
-  `runtime.create({ mounts })` attaches bucket, link, and git mounts at
-  boot. `MountInput` validation runs locally — bad paths, mixed
-  bucket/link targets, non-https endpoints or git URLs fail before the
-  request leaves the process.
+  (`create`/`connect`/`list`/`get`/`verify`/`delete` for managed and external
+  S3/S3-compatible buckets; static secret references or `oidc` role assumption —
+  credential material never crosses the SDK), and `storage.mounts`
+  (`attach`/`list`/`detach` on a running runtime). `sandbox.mounts` is bound on
+  every runtime handle, and `runtime.create({ mounts })` attaches bucket and git
+  mounts at boot. `MountInput` validation runs locally — bad paths, missing
+  bucket targets, non-https endpoints or git URLs fail before the request leaves
+  the process.
 
 ## [0.1.38] - 2026-10-14
 ### Added

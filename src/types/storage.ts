@@ -1,17 +1,15 @@
 /**
  * Storage mounts.
  *
- * A *bucket* is managed object storage the platform provisions for you. A
- * *bucket link* binds an S3-compatible bucket you already own — credentials
- * are referenced by name from a secret provider and never passed through the
- * API. A *mount* attaches a bucket, link, or git repository to a runtime at a
- * guest path.
+ * A *bucket* is S3 or S3-compatible object storage. The platform can provision
+ * it, or it can connect to a bucket the account already owns. A *mount*
+ * attaches a bucket or git repository to a runtime at a guest path.
  */
 
 import { bool, optStr, str } from '../core/parse.js';
 
-/** Object storage providers a link may target. */
-export const LINK_PROVIDERS = ['s3', 's3_compatible'] as const;
+/** Object storage providers a bucket may target. */
+export const BUCKET_PROVIDERS = ['s3', 's3_compatible'] as const;
 
 /** Mount write permission. */
 export const MountMode = {
@@ -23,16 +21,28 @@ export const MountMode = {
 
 export type MountMode = (typeof MountMode)[keyof typeof MountMode];
 
-/** A managed bucket. */
+/** An S3 or S3-compatible bucket, managed or externally connected. */
 export interface StorageBucket {
   id: string;
   name: string;
+  /** `managed` when provisioned by the platform, `external` when connected. */
+  source: 'managed' | 'external' | string;
+  /** One of {@link BUCKET_PROVIDERS}. */
   provider: string;
   region: string;
-  /** Provider-side bucket name once provisioned. */
+  /** Provider-side bucket name. */
   bucket: string;
+  /** Object prefix for external buckets. */
+  prefix?: string;
+  /** Custom endpoint for `s3_compatible` providers. */
+  endpoint?: string;
+  pathStyle?: boolean;
+  /** `static` (secret references) or `oidc` (role assumption). */
+  authMode?: string;
   status: string;
   error?: string;
+  verifyError?: string;
+  lastVerifiedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -41,61 +51,30 @@ export function parseStorageBucket(data: Record<string, unknown>): StorageBucket
   const bucket: StorageBucket = {
     id: str(data, 'id'),
     name: str(data, 'name'),
+    source: str(data, 'source', 'managed'),
     provider: str(data, 'provider'),
     region: str(data, 'region'),
     bucket: str(data, 'bucket'),
     status: str(data, 'status'),
   };
+  const prefix = optStr(data, 'prefix');
+  if (prefix !== undefined) bucket.prefix = prefix;
+  const endpoint = optStr(data, 'endpoint');
+  if (endpoint !== undefined) bucket.endpoint = endpoint;
+  if (data['path_style'] !== undefined) bucket.pathStyle = bool(data, 'path_style');
+  const authMode = optStr(data, 'auth_mode');
+  if (authMode !== undefined) bucket.authMode = authMode;
   const error = optStr(data, 'error');
   if (error !== undefined) bucket.error = error;
+  const verifyError = optStr(data, 'verify_error');
+  if (verifyError !== undefined) bucket.verifyError = verifyError;
+  const lastVerifiedAt = optStr(data, 'last_verified_at');
+  if (lastVerifiedAt !== undefined) bucket.lastVerifiedAt = lastVerifiedAt;
   const createdAt = optStr(data, 'created_at');
   if (createdAt !== undefined) bucket.createdAt = createdAt;
   const updatedAt = optStr(data, 'updated_at');
   if (updatedAt !== undefined) bucket.updatedAt = updatedAt;
   return bucket;
-}
-
-/** A link to a bucket the account already owns. */
-export interface BucketLink {
-  id: string;
-  name: string;
-  /** One of {@link LINK_PROVIDERS}. */
-  provider: string;
-  bucket: string;
-  prefix: string;
-  region: string;
-  /** Custom endpoint for `s3_compatible` providers. */
-  endpoint?: string;
-  pathStyle: boolean;
-  /** `static` (provider secret references) or `oidc` (role assumption). */
-  authMode: string;
-  status: string;
-  verifyError?: string;
-  lastVerifiedAt?: string;
-  createdAt?: string;
-}
-
-export function parseBucketLink(data: Record<string, unknown>): BucketLink {
-  const link: BucketLink = {
-    id: str(data, 'id'),
-    name: str(data, 'name'),
-    provider: str(data, 'provider'),
-    bucket: str(data, 'bucket'),
-    prefix: str(data, 'prefix'),
-    region: str(data, 'region'),
-    pathStyle: bool(data, 'path_style'),
-    authMode: str(data, 'auth_mode'),
-    status: str(data, 'status'),
-  };
-  const endpoint = optStr(data, 'endpoint');
-  if (endpoint !== undefined) link.endpoint = endpoint;
-  const verifyError = optStr(data, 'verify_error');
-  if (verifyError !== undefined) link.verifyError = verifyError;
-  const lastVerifiedAt = optStr(data, 'last_verified_at');
-  if (lastVerifiedAt !== undefined) link.lastVerifiedAt = lastVerifiedAt;
-  const createdAt = optStr(data, 'created_at');
-  if (createdAt !== undefined) link.createdAt = createdAt;
-  return link;
 }
 
 /** A mount attached to a runtime. */
@@ -104,7 +83,7 @@ export interface RuntimeMount {
   runtimeId: string;
   /** `bucket` or `git`. */
   kind: string;
-  /** The bucket or link id a bucket mount binds to. */
+  /** The bucket id a bucket mount binds to. */
   targetId?: string;
   mountPath: string;
   /** `ro` or `rw`. */
@@ -143,11 +122,6 @@ export function parseRuntimeMount(data: Record<string, unknown>): RuntimeMount {
 
 export interface StorageBucketList {
   buckets: StorageBucket[];
-  total: number;
-}
-
-export interface BucketLinkList {
-  links: BucketLink[];
   total: number;
 }
 

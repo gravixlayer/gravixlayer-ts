@@ -217,8 +217,8 @@ can only narrow access.
 
 ## Storage mounts
 
-Managed buckets, links to buckets you already own, and git repositories can
-mount into a sandbox at boot or while it runs:
+Managed buckets, buckets you already own, and git repositories can mount into
+a sandbox at boot or while it runs:
 
 ```ts
 const bucket = await client.storage.buckets.create('datasets');
@@ -234,17 +234,17 @@ const sandbox = await client.runtime.create({
 const mount = await sandbox.mounts.attach({
   kind: 'bucket',
   path: '/mnt/more',
-  link: 'byo-data', // a bucket link id or name
+  bucket: 'byo-data',
 });
 console.log(mount.state, mount.provenance);
 await sandbox.mounts.detach(mount.id);
 ```
 
-Bring your own bucket with a *link* — credentials live in a secret provider
-and are referenced by name, never passed through the SDK:
+Connect an existing bucket — credentials live in a secret provider and are
+referenced by name, never passed through the SDK:
 
 ```ts
-const link = await client.storage.links.create('byo-data', 'acme-data', {
+const external = await client.storage.buckets.connect('byo-data', 'acme-data', {
   provider: 's3_compatible',
   endpoint: 'https://objects.example.com',
   pathStyle: true,

@@ -17,8 +17,9 @@ const BUCKET = {
 };
 
 const LINK = {
-  id: 'lnk-1',
+  id: 'bkt-ext-1',
   name: 'byo-data',
+  source: 'external',
   provider: 's3_compatible',
   bucket: 'acme-data',
   prefix: 'models/',
@@ -87,10 +88,10 @@ describe('storage buckets', () => {
   });
 });
 
-describe('bucket links', () => {
-  it('creates a static link with secret references only', async () => {
-    const { client, http } = testClient([jsonResponse({ link: LINK }, 201)]);
-    const link = await client.storage.links.create('byo-data', 'acme-data', {
+describe('external buckets', () => {
+  it('connects a static bucket with secret references only', async () => {
+    const { client, http } = testClient([jsonResponse({ bucket: LINK }, 201)]);
+    const link = await client.storage.buckets.connect('byo-data', 'acme-data', {
       provider: 's3_compatible',
       prefix: 'models/',
       region: 'eu-west-1',
@@ -104,39 +105,42 @@ describe('bucket links', () => {
     const body = http.jsonBody() as Record<string, unknown>;
     expect(body).toEqual({
       name: 'byo-data',
-      provider: 's3_compatible',
-      bucket: 'acme-data',
-      auth_mode: 'static',
-      prefix: 'models/',
-      region: 'eu-west-1',
-      endpoint: 'https://objects.example.com',
-      path_style: true,
-      secret_provider_id: 'prov-1',
-      access_key_secret: 'AWS_ACCESS_KEY_ID',
-      secret_key_secret: 'AWS_SECRET_ACCESS_KEY',
+      external: {
+        provider: 's3_compatible',
+        bucket: 'acme-data',
+        auth_mode: 'static',
+        prefix: 'models/',
+        region: 'eu-west-1',
+        endpoint: 'https://objects.example.com',
+        path_style: true,
+        secret_provider_id: 'prov-1',
+        access_key_secret: 'AWS_ACCESS_KEY_ID',
+        secret_key_secret: 'AWS_SECRET_ACCESS_KEY',
+      },
     });
     expect(link.pathStyle).toBe(true);
     expect(link.status).toBe('verified');
     expect(link.lastVerifiedAt).toBe('2026-01-02T00:00:00Z');
   });
 
-  it('creates an oidc link', async () => {
-    const { client, http } = testClient([jsonResponse({ link: LINK }, 201)]);
-    await client.storage.links.create('byo-data', 'acme-data', {
+  it('connects an oidc bucket', async () => {
+    const { client, http } = testClient([jsonResponse({ bucket: LINK }, 201)]);
+    await client.storage.buckets.connect('byo-data', 'acme-data', {
       authMode: 'oidc',
       roleArn: 'arn:aws:iam::1234:role/data-read',
       externalId: 'ext-9',
     });
     const body = http.jsonBody() as Record<string, unknown>;
-    expect(body['auth_mode']).toBe('oidc');
-    expect(body['role_arn']).toBe('arn:aws:iam::1234:role/data-read');
-    expect(body['external_id']).toBe('ext-9');
-    expect(body['secret_provider_id']).toBeUndefined();
+    const external = body['external'] as Record<string, unknown>;
+    expect(external['auth_mode']).toBe('oidc');
+    expect(external['role_arn']).toBe('arn:aws:iam::1234:role/data-read');
+    expect(external['external_id']).toBe('ext-9');
+    expect(external['secret_provider_id']).toBeUndefined();
   });
 
-  it('rejects bad link combinations before any request', async () => {
+  it('rejects bad external bucket combinations before any request', async () => {
     const { client, http } = testClient([]);
-    const bad: Array<[string, Parameters<typeof client.storage.links.create>[2]]> = [
+    const bad: Array<[string, Parameters<typeof client.storage.buckets.connect>[2]]> = [
       ['http endpoint', { provider: 's3_compatible', endpoint: 'http://a' }],
       ['s3 with endpoint', { provider: 's3', endpoint: 'https://x' }],
       ['s3_compatible without endpoint', { provider: 's3_compatible' }],
@@ -168,7 +172,7 @@ describe('bucket links', () => {
     ];
     for (const [label, options] of bad) {
       await expectRejection(
-        client.storage.links.create('x', 'bkt', options),
+        client.storage.buckets.connect('x', 'bkt', options),
         GravixLayerInvalidArgumentError,
       );
       void label;
@@ -176,17 +180,17 @@ describe('bucket links', () => {
     expect(http.requests).toHaveLength(0);
   });
 
-  it('verifies and deletes a link', async () => {
+  it('verifies and disconnects a bucket', async () => {
     const { client, http } = testClient([
-      jsonResponse({ link: LINK }),
+      jsonResponse({ bucket: LINK }),
       jsonResponse({ deleted: true }),
     ]);
-    const verified = await client.storage.links.verify('lnk-1');
-    expect(http.last().url).toContain('/v1/agents/bucket-links/lnk-1/verify');
+    const verified = await client.storage.buckets.verify('bkt-ext-1');
+    expect(http.last().url).toContain('/v1/agents/buckets/bkt-ext-1/verify');
     expect(http.last().method).toBe('POST');
     expect(verified.verifyError).toBeUndefined();
 
-    expect(await client.storage.links.delete('lnk-1')).toBe(true);
+    expect(await client.storage.buckets.delete('bkt-ext-1')).toBe(true);
     expect(http.last().method).toBe('DELETE');
   });
 });
@@ -196,12 +200,6 @@ describe('buildMountSpec', () => {
     expect(
       buildMountSpec({ kind: 'bucket', path: '/mnt/data', mode: 'rw', bucket: 'bkt-1' }),
     ).toEqual({ kind: 'bucket', path: '/mnt/data', mode: 'rw', bucket: 'bkt-1' });
-  });
-
-  it('builds a link mount', () => {
-    expect(
-      buildMountSpec({ kind: 'bucket', path: '/mnt/ext', link: 'byo-data', mode: 'ro' }),
-    ).toEqual({ kind: 'bucket', path: '/mnt/ext', mode: 'ro', link: 'byo-data' });
   });
 
   it('builds a git mount with ref, depth and refresh', () => {
@@ -244,7 +242,6 @@ describe('buildMountSpec', () => {
 
   it('rejects invalid combinations without a request', () => {
     const bad: Array<[string, Parameters<typeof buildMountSpec>[0]]> = [
-      ['both targets', { kind: 'bucket', path: '/m', bucket: 'a', link: 'b' }],
       ['no target', { kind: 'bucket', path: '/m' }],
       ['rw git', { kind: 'git', path: '/m', url: 'https://x/y.git', mode: 'rw' }],
       ['non-https git', { kind: 'git', path: '/m', url: 'git@x:y' }],
@@ -262,6 +259,16 @@ describe('buildMountSpec', () => {
         { kind: 'bucket', path: '/m', bucket: 'a', url: 'https://x/y.git' },
       ],
       ['git mount with bucket', { kind: 'git', path: '/m', url: 'https://x/y.git', bucket: 'a' }],
+      [
+        'bucket mount with credential refs',
+        {
+          kind: 'bucket',
+          path: '/m',
+          bucket: 'a',
+          credentialProvider: 'p',
+          credentialSecret: 's',
+        },
+      ],
       [
         'unknown key',
         { kind: 'bucket', path: '/m', bucket: 'a', credentialProviders: 'p' } as MountInput,
@@ -361,7 +368,7 @@ describe('runtime create with mounts', () => {
   it('rejects an invalid mount before the request', async () => {
     const { client, http } = testClient([]);
     await expectRejection(
-      client.runtime.create({ mounts: [{ kind: 'bucket', path: '/m', bucket: 'a', link: 'b' }] }),
+      client.runtime.create({ mounts: [{ kind: 'bucket', path: '/m', bucket: '' }] }),
       GravixLayerInvalidArgumentError,
     );
     expect(http.requests).toHaveLength(0);

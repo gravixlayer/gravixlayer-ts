@@ -979,7 +979,7 @@ export class BoundMounts {
     private readonly id: ResolveId,
   ) {}
 
-  /** Attach a bucket, link, or git repository at a guest path. */
+  /** Attach a bucket or git repository at a guest path. */
   async attach(mount: MountInput, options?: RequestOptions): Promise<RuntimeMount> {
     return this.runtimes.mounts.attach(this.id(), mount, options);
   }

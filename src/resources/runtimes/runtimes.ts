@@ -113,7 +113,7 @@ export interface CreateRuntimeOptions extends RequestOptions {
   /** Network policies to attach. The account default is always applied. */
   networkPolicyIds?: string[];
   /**
-   * Storage mounts to attach at boot — buckets, bucket links, or git
+   * Storage mounts to attach at boot — buckets or git
    * repositories. At most 8; paths must be absolute and non-nesting.
    */
   mounts?: MountInput[];

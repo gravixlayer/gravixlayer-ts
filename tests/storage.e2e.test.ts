@@ -1,5 +1,5 @@
 /**
- * Live E2E for the storage-mount surface — buckets, bucket links, git
+ * Live E2E for the storage-mount surface — buckets, git
  * mounts, lifecycle, credential hygiene. Runs against a real deployment.
  * Skipped unless GRAVIXLAYER_E2E=1 and GRAVIXLAYER_API_KEY are set.
  *
@@ -129,17 +129,15 @@ e2e('storage mounts e2e', () => {
   });
   const runtimeIds: string[] = [];
   const bucketIds: string[] = [];
-  const linkIds: string[] = [];
   const providerIds: string[] = [];
 
-  // Kill runtimes first (mounts detach) — links/buckets refuse delete while
+  // Kill runtimes first (mounts detach) — buckets refuse delete while
   // mounted. Everything is best-effort so teardown never masks a failure.
   afterAll(async () => {
     for (const id of runtimeIds) {
       await client.runtime.kill(id).catch(() => {});
     }
     await new Promise((r) => setTimeout(r, 2000));
-    for (const id of linkIds) await client.storage.links.delete(id).catch(() => {});
     for (const id of bucketIds) await client.storage.buckets.delete(id).catch(() => {});
     for (const id of providerIds) {
       await client.identity.providers.delete(id).catch(() => {});
@@ -204,7 +202,7 @@ e2e('storage mounts e2e', () => {
     expect(wr.exitCode).not.toBe(0);
   }, 600_000);
 
-  it('bucket link: static creds → verify → rw mount → write lands', async () => {
+  it('external bucket: static creds → verify → rw mount → write lands', async () => {
     if (!HAS_LINK_CREDS) return;
     const provider = await client.identity.providers.create(`e2e-aws-${RUN_ID}`, {
       secrets: [
@@ -215,7 +213,7 @@ e2e('storage mounts e2e', () => {
     });
     providerIds.push(provider.id);
 
-    const link = await client.storage.links.create(`e2e-link-${RUN_ID}`, TEST_BUCKET, {
+    const link = await client.storage.buckets.connect(`e2e-bucket-${RUN_ID}`, TEST_BUCKET, {
       provider: 's3',
       region: TEST_BUCKET_REGION,
       authMode: 'static',
@@ -224,14 +222,14 @@ e2e('storage mounts e2e', () => {
       secretKeySecret: 'AWS_SECRET_ACCESS_KEY',
       ...(PROJECT_ID ? { projectId: PROJECT_ID } : {}),
     });
-    linkIds.push(link.id);
+    bucketIds.push(link.id);
 
-    const verified = await client.storage.links.verify(link.id);
+    const verified = await client.storage.buckets.verify(link.id);
     expect(verified.verifyError ?? '').toBe('');
 
     const sandbox = await client.runtime.create({
       template: TEMPLATE,
-      mounts: [{ kind: 'bucket', path: MOUNT_LINK, link: link.id, mode: 'rw' }],
+      mounts: [{ kind: 'bucket', path: MOUNT_LINK, bucket: link.id, mode: 'rw' }],
     });
     runtimeIds.push(sandbox.runtimeId);
     await waitStatus(client, sandbox.runtimeId);
