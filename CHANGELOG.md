@@ -4,7 +4,7 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.43]
+## [0.1.43] - 2026-10-27
 
 ### Changed
 - **Storage buckets are one public resource.** `storage.buckets.create`
@@ -618,7 +618,8 @@ First release. Full coverage of the GravixLayer API.
   `trace`, `traced`, and `runtimeSpan` helpers, active only when
   `@opentelemetry/api` is installed and telemetry is enabled.
 
-[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.42...HEAD
+[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.43...HEAD
+[0.1.43]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.43
 [0.1.42]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.42
 [0.1.41]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.41
 [0.1.40]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.40
