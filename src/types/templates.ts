@@ -202,6 +202,13 @@ export interface TemplateInfo {
   region?: string;
   /** `sandbox` for runtime templates, `agent` for deployable agents. */
   kind?: string;
+  /** `false` on unpublished rows — present when the list passed
+   * `includeInactive`. */
+  isActive?: boolean;
+  /** Latest build on the template, when the list passed `includeInactive` —
+   * carries the reason an unpublished row holds its name. */
+  latestBuildId?: string;
+  latestBuildStatus?: string;
 }
 
 export function parseTemplateInfo(data: Record<string, unknown>): TemplateInfo {
@@ -222,6 +229,12 @@ export function parseTemplateInfo(data: Record<string, unknown>): TemplateInfo {
   if (region !== undefined) info.region = region;
   const kind = optStr(data, 'kind');
   if (kind !== undefined) info.kind = kind;
+  const isActive = data['is_active'];
+  if (typeof isActive === 'boolean') info.isActive = isActive;
+  const latestBuildId = optStr(data, 'latest_build_id');
+  if (latestBuildId !== undefined) info.latestBuildId = latestBuildId;
+  const latestBuildStatus = optStr(data, 'latest_build_status');
+  if (latestBuildStatus !== undefined) info.latestBuildStatus = latestBuildStatus;
   return info;
 }
 

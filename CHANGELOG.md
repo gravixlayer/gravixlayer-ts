@@ -4,6 +4,14 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`templates.list({ includeInactive: true })`** — lists the account's
+  unpublished templates (pending, building, or failed builds still
+  holding their name) so they can be retried or deleted. `TemplateInfo`
+  gains `isActive`, `latestBuildId`, and `latestBuildStatus`.
+
 ## [0.1.44] - 2026-10-29
 
 ### Added

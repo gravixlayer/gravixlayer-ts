@@ -342,7 +342,35 @@ describe('templates', () => {
     expect(http.query().get('kind')).toBe('sandbox');
     expect(http.query().get('project_id')).toBe('proj-1');
     expect(http.query().get('limit')).toBe('100');
+    expect(http.query().get('include_inactive')).toBeNull();
     expect(result.templates[0]?.name).toBe('base');
+  });
+
+  it('lists unpublished templates when includeInactive is set', async () => {
+    // A failed build keeps its name reserved — the flag surfaces the
+    // holder so it can be retried or deleted, and the parsed row carries
+    // the latest build's status.
+    const { client, http } = testClient([
+      jsonResponse({
+        templates: [
+          {
+            id: 'tpl-9',
+            name: 'mine',
+            kind: 'sandbox',
+            is_active: false,
+            latest_build_id: 'b-9',
+            latest_build_status: 'failed',
+          },
+        ],
+        limit: 100,
+      }),
+    ]);
+    const result = await client.templates.list({ includeInactive: true });
+
+    expect(http.query().get('include_inactive')).toBe('true');
+    expect(result.templates[0]?.isActive).toBe(false);
+    expect(result.templates[0]?.latestBuildId).toBe('b-9');
+    expect(result.templates[0]?.latestBuildStatus).toBe('failed');
   });
 
   it('reads one template', async () => {

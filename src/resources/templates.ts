@@ -74,6 +74,10 @@ export interface ListTemplatesOptions extends RequestOptions {
   offset?: number;
   /** Project to scope the listing to. */
   projectId?: string;
+  /** Also return the account's unpublished templates — rows whose builds
+   * are pending, running, or failed and still hold their name — for
+   * retry or delete. Their `latestBuildStatus` carries the reason. */
+  includeInactive?: boolean;
 }
 
 /** Options for {@link Templates.build}. */
@@ -355,6 +359,7 @@ export class Templates extends APIResource {
 
     const extra: Record<string, QueryValue> = { kind: 'sandbox' };
     if (options.projectId) extra['project_id'] = options.projectId;
+    if (options.includeInactive) extra['include_inactive'] = 'true';
 
     return parseTemplateListResponse(
       asRecord(
