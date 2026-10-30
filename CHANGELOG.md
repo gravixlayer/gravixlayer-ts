@@ -4,6 +4,20 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.44] - 2026-10-29
+
+### Added
+- **Recording artifact downloads.** `desktop.recordVideo(recordingId)` and
+  `desktop.recordTrajectory(recordingId)` return the recording's MP4 / ndjson
+  artifact bytes as `Uint8Array` — `GET .../recordings/{rec}/video` and
+  `/trajectory` — on the resource and the bound `Runtime` object.
+
+### Changed
+- **Desktop template is Ubuntu 24.04.** `base-desktop.Dockerfile` builds on
+  `ubuntu:24.04` (GNOME 46); `base-browser.Dockerfile` gains `xauth` and a
+  fuller font set. New `base-osworld.Dockerfile` ships the OSWorld research
+  desktop image.
+
 ## [0.1.43] - 2026-10-27
 
 ### Changed
