@@ -200,8 +200,12 @@ RUN FF_VERSION=153.5.1esr \
            FF_SHA256=e566ecb209917c0b4d11813212c5afae4383f28ca554c4ad651df044cb255cde ;; \
          *) echo "unsupported Firefox arch: $(uname -m)" >&2; exit 1 ;; \
        esac \
-    && curl -fsSL -o /tmp/firefox.tar.xz \
+    && for url in \
         "https://ftp.mozilla.org/pub/firefox/releases/${FF_VERSION}/${FF_ARCH}/en-US/firefox-${FF_VERSION}.tar.xz" \
+        "https://archive.mozilla.org/pub/firefox/releases/${FF_VERSION}/${FF_ARCH}/en-US/firefox-${FF_VERSION}.tar.xz"; do \
+         curl -fSL --retry 5 --retry-all-errors --connect-timeout 20 \
+            -o /tmp/firefox.tar.xz "$url" && break; \
+       done \
     && echo "${FF_SHA256}  /tmp/firefox.tar.xz" | sha256sum -c - \
     && tar -xJf /tmp/firefox.tar.xz -C /opt \
     && rm /tmp/firefox.tar.xz \
