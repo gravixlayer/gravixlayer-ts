@@ -1363,4 +1363,37 @@ export class RuntimeDisplay extends APIResource {
       options,
     });
   }
+
+  /**
+   * Download the recording's MP4 bytes. fMP4 fragments decode as a prefix,
+   * so a still-running recording returns a playable file.
+   */
+  async recordVideo(
+    runtimeId: string,
+    recordingId: string,
+    options: RequestOptions = {},
+  ): Promise<Uint8Array> {
+    assertRuntimeId(runtimeId);
+    return this.http.requestBytes({
+      method: 'GET',
+      path: `runtime/${runtimeId}/display/recordings/${seg(recordingId)}/video`,
+      service: SERVICES.agents,
+      options,
+    });
+  }
+
+  /** Download the recording's event trajectory (ndjson lines). */
+  async recordTrajectory(
+    runtimeId: string,
+    recordingId: string,
+    options: RequestOptions = {},
+  ): Promise<Uint8Array> {
+    assertRuntimeId(runtimeId);
+    return this.http.requestBytes({
+      method: 'GET',
+      path: `runtime/${runtimeId}/display/recordings/${seg(recordingId)}/trajectory`,
+      service: SERVICES.agents,
+      options,
+    });
+  }
 }

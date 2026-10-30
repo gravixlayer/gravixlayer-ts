@@ -2,7 +2,7 @@
 #
 # GravixLayer base-desktop template
 #
-# A full Ubuntu 22.04 desktop: GNOME 42 (Ubuntu session) on a virtual
+# A full Ubuntu 24.04 desktop: GNOME 46 (Ubuntu session) on a virtual
 # display with real applications, plus the base toolchain
 # (Python 3.14.6 · Node 24.18.0).
 # Applications: Files · Terminal · Text Editor · Document Viewer ·
@@ -43,7 +43,7 @@
 #     accessibility tree covers GTK, Qt, Firefox, Chromium and Electron
 #     windows.
 
-FROM ubuntu:22.04 AS system
+FROM ubuntu:24.04 AS system
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -108,7 +108,7 @@ FROM devtools AS desktop
 #                            CPU, the guest has no GPU
 #   ubuntu-session, gnome-shell, gnome-shell-extension-*, yaru-theme-*,
 #   ubuntu-settings, fonts-ubuntu
-#                          — GNOME 42 with the Ubuntu session, dock, theme,
+#                          — GNOME 46 with the Ubuntu session, dock, theme,
 #                            font and wallpaper
 #   librsvg2-common        — SVG icons: every symbolic icon in the shell
 #   nautilus, gnome-terminal, gedit, evince, gnome-calculator, eog

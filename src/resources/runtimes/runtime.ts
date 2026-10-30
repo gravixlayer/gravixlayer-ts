@@ -909,6 +909,12 @@ export class BoundDesktop {
   async recordDelete(recordingId: string, options?: RequestOptions) {
     return this.runtimes.desktop.recordDelete(this.id(), recordingId, options);
   }
+  async recordVideo(recordingId: string, options?: RequestOptions) {
+    return this.runtimes.desktop.recordVideo(this.id(), recordingId, options);
+  }
+  async recordTrajectory(recordingId: string, options?: RequestOptions) {
+    return this.runtimes.desktop.recordTrajectory(this.id(), recordingId, options);
+  }
   async viewControl(mode: 'shared' | 'human' | 'agent', options?: RequestOptions) {
     return this.runtimes.desktop.viewControl(this.id(), mode, options);
   }
