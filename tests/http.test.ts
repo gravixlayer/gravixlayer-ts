@@ -317,10 +317,14 @@ describe('pooled fetch', () => {
       expect(lookups).toEqual(['lanes.example']);
       if (!answer) throw new Error('lookup did not start');
       answer();
-      // The answer settles a promise; the next turn dials all four lanes.
+      // The answer settles a promise; the next turns dial all four lanes.
+      // A lane whose connect ran on the async module-load path parks just
+      // after releaseParked and dials off the cached answer a turn later —
+      // still served by the one lookup, which is the invariant here.
       expect(dials).toEqual([]);
-      await flush();
+      for (let i = 0; i < 8 && dials.length < 4; i++) await flush();
       expect(dials).toEqual(['127.0.0.1', '127.0.0.1', '127.0.0.1', '127.0.0.1']);
+      expect(lookups).toEqual(['lanes.example']);
     } finally {
       restore();
       await pooled.close();
