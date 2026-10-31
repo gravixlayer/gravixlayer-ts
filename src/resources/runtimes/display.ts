@@ -874,12 +874,13 @@ export class RuntimeDisplay extends APIResource {
   }
 
   /**
-   * Live view/takeover endpoint a human can open. `browserUrl` carries the
-   * auth token; it is minted on the first call for a port, so a repeat call
-   * returns a token-less URL unless `rotateToken` is set (fresh token —
-   * invalidates the previous URL). `role: 'watch'` mints a view-only link
-   * (no input injection). `watchUrl` is `browserUrl` with the role token
-   * already composed — the ready-to-open link.
+   * Live view/takeover endpoint a human can open. `browserUrl` carries a
+   * fresh auth token — every call mints one, so repeat calls always return
+   * a working link (each mint invalidates the previous token; already-open
+   * viewers keep their live sockets). `rotateToken` is accepted but no
+   * longer needed. `role: 'watch'` mints a view-only link (no input
+   * injection). `watchUrl` is `browserUrl` with the role token already
+   * composed — the ready-to-open link.
    */
   async view(
     runtimeId: string,
