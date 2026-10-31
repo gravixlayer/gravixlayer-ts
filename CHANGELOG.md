@@ -4,6 +4,13 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.47] - 2026-10-31
+
+### Added
+- **`dpi` on `display.enable()` / `display.resize()`** and **`dir` on
+  `display.record.start()`**: set screen density at create/resize time
+  and choose a guest output directory for recording artifacts.
+
 ## [0.1.46] - 2026-10-31
 
 ### Fixed

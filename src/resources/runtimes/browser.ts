@@ -901,12 +901,13 @@ export class RuntimeBrowser extends APIResource {
 
   /**
    * Live view endpoint — headed streams the display socket, headless the page
-   * screencast. `browserUrl` carries the auth token; it is minted on the first
-   * call for a port, so a repeat call returns a token-less URL unless
-   * `rotateToken` is set (fresh token — invalidates the previous URL).
-   * `role: 'watch'` mints a view-only link: `viewToken`/`watchUrl` carry a
-   * `vt=` capability that sees frames but can never inject input. Headed
-   * browsers ride the display's token-gated feed, where `vt=` is required.
+   * screencast. `browserUrl` carries a fresh auth token — every call mints
+   * one, so repeat calls always return a working link (each mint invalidates
+   * the previous token; already-open viewers keep their live sockets).
+   * `rotateToken` is accepted but no longer needed. `role: 'watch'` mints a
+   * view-only link: `viewToken`/`watchUrl` carry a `vt=` capability that
+   * sees frames but can never inject input. Headed browsers ride the
+   * display's token-gated feed, where `vt=` is required.
    */
   async view(
     runtimeId: string,

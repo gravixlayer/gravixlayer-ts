@@ -77,6 +77,8 @@ export interface DisplayEnableOptions extends RequestOptions {
    * new virtual display; `attach` requires a session display.
    */
   mode?: 'auto' | 'spawn' | 'attach';
+  /** Dots-per-inch; `0`/omitted keeps the server default (96). */
+  dpi?: number;
 }
 
 /** Options for {@link RuntimeDisplay.screenshot}. */
@@ -361,6 +363,11 @@ export interface RecordStartOptions extends RequestOptions {
   readonly include?: readonly string[];
   /** Optional caller tag kept in the recording's metadata. */
   readonly label?: string;
+  /**
+   * Guest directory recording artifacts land in — must be absolute.
+   * Omitted uses the platform default.
+   */
+  readonly dir?: string;
 }
 
 function parseElement(v: unknown): A11yElement {
@@ -975,17 +982,18 @@ export class RuntimeDisplay extends APIResource {
     runtimeId: string,
     width: number,
     height: number,
-    options: RequestOptions = {},
+    options: RequestOptions & { dpi?: number } = {},
   ): Promise<DisplayInfo> {
     assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, dpi } = options;
     return parseInfo(
       asRecord(
         await this.http.request({
           method: 'POST',
           path: `runtime/${runtimeId}/display/resize`,
           service: SERVICES.agents,
-          body: { width, height },
-          options,
+          body: { width, height, ...(dpi ? { dpi } : {}) },
+          options: { signal, requestTimeoutMs, maxRetries },
         }),
       ),
     );
@@ -1242,7 +1250,7 @@ export class RuntimeDisplay extends APIResource {
     options: RecordStartOptions = {},
   ): Promise<DisplayRecording> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, windowId, include, label } = options;
+    const { signal, requestTimeoutMs, maxRetries, windowId, include, label, dir } = options;
     return parseRecording(
       asRecord(
         await this.http.request({
@@ -1253,6 +1261,7 @@ export class RuntimeDisplay extends APIResource {
             ...(windowId ? { window_id: windowId } : {}),
             ...(include !== undefined ? { include: [...include] } : {}),
             ...(label ? { label } : {}),
+            ...(dir ? { dir } : {}),
           },
           options: { signal, requestTimeoutMs, maxRetries },
         }),
