@@ -1239,7 +1239,10 @@ export class BoundBrowser {
     return this.runtimes.browser.intercept(this.id(), browserId, rules, options);
   }
 
-  async interceptClear(browserId: string, options?: Parameters<RuntimeBrowser['interceptClear']>[2]) {
+  async interceptClear(
+    browserId: string,
+    options?: Parameters<RuntimeBrowser['interceptClear']>[2],
+  ) {
     return this.runtimes.browser.interceptClear(this.id(), browserId, options);
   }
 

@@ -1112,7 +1112,13 @@ export class RuntimeBrowser extends APIResource {
     options: ActionOptions = {},
   ): Promise<ActionResult> {
     assertRuntimeId(runtimeId);
-    return this.act(runtimeId, browserId, 'select', { target: normTarget(target), option }, options);
+    return this.act(
+      runtimeId,
+      browserId,
+      'select',
+      { target: normTarget(target), option },
+      options,
+    );
   }
 
   /** Check a checkbox/radio — a real click, only when state differs. */
@@ -1168,7 +1174,11 @@ export class RuntimeBrowser extends APIResource {
   ): Promise<ActionResult> {
     assertRuntimeId(runtimeId);
     return this.act(
-      runtimeId, browserId, 'scroll_into_view', { target: normTarget(target) }, options,
+      runtimeId,
+      browserId,
+      'scroll_into_view',
+      { target: normTarget(target) },
+      options,
     );
   }
 
@@ -1233,8 +1243,17 @@ export class RuntimeBrowser extends APIResource {
   ): Promise<Record<string, unknown>> {
     assertRuntimeId(runtimeId);
     const {
-      signal, requestTimeoutMs, maxRetries,
-      targetId, viewport, geolocation, timezone, locale, userAgent, touch, colorScheme,
+      signal,
+      requestTimeoutMs,
+      maxRetries,
+      targetId,
+      viewport,
+      geolocation,
+      timezone,
+      locale,
+      userAgent,
+      touch,
+      colorScheme,
     } = options;
     const body: Record<string, unknown> = { target_id: targetId ?? '' };
     if (viewport !== undefined) body.viewport = viewport;
