@@ -177,6 +177,8 @@ export interface RunCommandOptions extends CommandFollowOptions {
   timeout?: number;
   /** Start the command and return as soon as it is running. */
   background?: boolean;
+  /** Login name to run the command as (e.g. `'root'`). Defaults to the runtime identity. */
+  user?: string;
 }
 
 /** Callbacks that stream a code execution's output as it runs. */
@@ -869,6 +871,7 @@ export class Runtimes extends APIResource {
       body['timeout'] = nonNegativeInt(options.timeout, 'timeout') * 1000;
     }
     if (options.background) body['background'] = true;
+    if (options.user !== undefined) body['user'] = options.user;
     return body;
   }
 

@@ -44,6 +44,8 @@ export interface CreatePtyOptions extends RequestOptions {
   cols?: number;
   /** Terminal height in rows. Defaults to 24. */
   rows?: number;
+  /** Login name to run the session as (e.g. `'root'`). Defaults to the runtime identity. */
+  user?: string;
 }
 
 /** An event from a PTY output stream. */
@@ -87,6 +89,7 @@ export class RuntimePty extends APIResource {
     if (options.environment !== undefined) body['environment'] = options.environment;
     if (options.cols !== undefined) body['cols'] = assertPositiveInt(options.cols, 'cols');
     if (options.rows !== undefined) body['rows'] = assertPositiveInt(options.rows, 'rows');
+    if (options.user !== undefined) body['user'] = options.user;
 
     return parsePtySession(
       asRecord(

@@ -222,6 +222,8 @@ export interface AgentBuildConfig {
   environment?: Record<string, string>;
   /** Command that starts the agent, when the default is not suitable. */
   startCmd?: string;
+  /** Login `startCmd` runs as during the build. Defaults to the image identity. */
+  startUser?: string;
   /** Command polled until the agent is ready to serve. */
   readyCmd?: string;
   readyTimeoutSeconds?: number;
@@ -248,6 +250,7 @@ export function serializeAgentBuildConfig(config: AgentBuildConfig): Record<stri
     disk_mb: config.diskMb || undefined,
     environment: Object.keys(config.environment ?? {}).length ? config.environment : undefined,
     start_cmd: config.startCmd || undefined,
+    start_user: config.startUser || undefined,
     ready_cmd: config.readyCmd || undefined,
     ready_timeout_secs: config.readyTimeoutSeconds || undefined,
     tags: Object.keys(config.tags ?? {}).length ? config.tags : undefined,

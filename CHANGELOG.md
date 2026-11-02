@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `user` on `runCommand`, PTY create, and display launch/open options,
+  serialized to the wire's `user`; `startUser` on agent build config
+  and the template builder, serialized as `start_user`.
+
 ### Fixed
 - **`emulate` now serializes to the wire's flat fields** — `viewport`
   `{width, height, scale}` maps to `width`/`height`/`device_scale_factor`,

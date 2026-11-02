@@ -548,6 +548,7 @@ export class Agents extends APIResource {
     if (options.memoryMb !== undefined) config.memoryMb = options.memoryMb;
     if (options.diskMb !== undefined) config.diskMb = options.diskMb;
     if (options.startCmd !== undefined) config.startCmd = options.startCmd;
+    if (options.startUser !== undefined) config.startUser = options.startUser;
     if (options.readyCmd !== undefined) config.readyCmd = options.readyCmd;
     if (options.readyTimeoutSeconds !== undefined) {
       config.readyTimeoutSeconds = options.readyTimeoutSeconds;

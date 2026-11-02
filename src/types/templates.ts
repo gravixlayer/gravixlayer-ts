@@ -381,6 +381,7 @@ export class TemplateBuilder {
   private _memoryMb = 1024;
   private _diskMb = 4096;
   private _startCmd?: string;
+  private _startUser?: string;
   private _readyCmd?: string;
   private _readyPort?: number;
   private _readyTimeoutSeconds = DEFAULT_READY_TIMEOUT_SECS;
@@ -446,6 +447,16 @@ export class TemplateBuilder {
   /** Command run when a runtime starts from this template. */
   startCmd(command: string): this {
     this._startCmd = command;
+    return this;
+  }
+
+  /**
+   * Login the `startCmd`/`readyCmd` provisioning steps run as.
+   * Pass `'root'` when the build must install packages or write system
+   * paths; omit for the image's default identity.
+   */
+  startUser(user: string): this {
+    this._startUser = user;
     return this;
   }
 
@@ -626,6 +637,7 @@ export class TemplateBuilder {
     data['disk_mb'] = this._diskMb;
 
     if (this._startCmd) data['start_cmd'] = this._startCmd;
+    if (this._startUser) data['start_user'] = this._startUser;
     if (this._readyPort !== undefined) data['ready_port'] = this._readyPort;
     if (this._readyCmd) data['ready_cmd'] = this._readyCmd;
     if (this._readyCmd || this._readyPort !== undefined) {

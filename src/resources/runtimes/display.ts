@@ -1070,17 +1070,18 @@ export class RuntimeDisplay extends APIResource {
       uri?: string;
       waitWindow?: boolean;
       timeoutMs?: number;
+      user?: string;
     } = {},
   ): Promise<LaunchResult> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, uri, waitWindow, timeoutMs } = options;
+    const { signal, requestTimeoutMs, maxRetries, uri, waitWindow, timeoutMs, user } = options;
     return parseLaunch(
       asRecord(
         await this.http.request({
           method: 'POST',
           path: `runtime/${runtimeId}/display/apps/launch`,
           service: SERVICES.agents,
-          body: { app, uri, wait_window: waitWindow, timeout_ms: timeoutMs },
+          body: { app, uri, wait_window: waitWindow, timeout_ms: timeoutMs, user },
           options: { signal, requestTimeoutMs, maxRetries },
         }),
       ),
@@ -1094,17 +1095,17 @@ export class RuntimeDisplay extends APIResource {
   async open(
     runtimeId: string,
     target: string,
-    options: RequestOptions & { waitWindow?: boolean; timeoutMs?: number } = {},
+    options: RequestOptions & { waitWindow?: boolean; timeoutMs?: number; user?: string } = {},
   ): Promise<LaunchResult> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, waitWindow, timeoutMs } = options;
+    const { signal, requestTimeoutMs, maxRetries, waitWindow, timeoutMs, user } = options;
     return parseLaunch(
       asRecord(
         await this.http.request({
           method: 'POST',
           path: `runtime/${runtimeId}/display/open`,
           service: SERVICES.agents,
-          body: { target, wait_window: waitWindow, timeout_ms: timeoutMs },
+          body: { target, wait_window: waitWindow, timeout_ms: timeoutMs, user },
           options: { signal, requestTimeoutMs, maxRetries },
         }),
       ),
