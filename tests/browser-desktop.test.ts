@@ -1122,8 +1122,13 @@ describe('browser waves A-D', () => {
     });
     const body = http.jsonBody() as Record<string, unknown>;
     expect(body.target_id).toBe('t1');
-    expect((body.viewport as Record<string, unknown>).width).toBe(1280);
-    expect(body.timezone).toBe('America/New_York');
+    expect(body.width).toBe(1280);
+    expect(body.height).toBe(800);
+    expect(body.device_scale_factor).toBe(1);
+    expect(body.timezone_id).toBe('America/New_York');
+    expect(body.touch).toBe(true);
+    expect('viewport' in body).toBe(false);
+    expect('timezone' in body).toBe(false);
     expect('user_agent' in body).toBe(false);
     expect('locale' in body).toBe(false);
   });

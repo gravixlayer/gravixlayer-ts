@@ -1237,8 +1237,11 @@ export class RuntimeBrowser extends APIResource {
       timezone?: string;
       locale?: string;
       userAgent?: string;
+      mobile?: boolean;
       touch?: boolean;
       colorScheme?: 'light' | 'dark';
+      contextId?: string;
+      clear?: boolean;
     } = {},
   ): Promise<Record<string, unknown>> {
     assertRuntimeId(runtimeId);
@@ -1252,17 +1255,32 @@ export class RuntimeBrowser extends APIResource {
       timezone,
       locale,
       userAgent,
+      mobile,
       touch,
       colorScheme,
+      contextId,
+      clear,
     } = options;
-    const body: Record<string, unknown> = { target_id: targetId ?? '' };
-    if (viewport !== undefined) body.viewport = viewport;
-    if (geolocation !== undefined) body.geolocation = geolocation;
-    if (timezone) body.timezone = timezone;
+    const body: Record<string, unknown> = {};
+    if (targetId) body.target_id = targetId;
+    if (contextId) body.context_id = contextId;
+    if (viewport !== undefined) {
+      if (viewport.width) body.width = viewport.width;
+      if (viewport.height) body.height = viewport.height;
+      if (viewport.scale) body.device_scale_factor = viewport.scale;
+    }
+    if (geolocation !== undefined) {
+      if (geolocation.latitude !== undefined) body.geolocation_lat = geolocation.latitude;
+      if (geolocation.longitude !== undefined) body.geolocation_lon = geolocation.longitude;
+      if (geolocation.accuracy !== undefined) body.geolocation_accuracy = geolocation.accuracy;
+    }
+    if (timezone) body.timezone_id = timezone;
     if (locale) body.locale = locale;
     if (userAgent) body.user_agent = userAgent;
+    if (mobile !== undefined) body.mobile = mobile;
     if (touch !== undefined) body.touch = touch;
     if (colorScheme) body.color_scheme = colorScheme;
+    if (clear) body.clear = true;
     return asRecord(
       await this.http.request({
         method: 'POST',
@@ -1301,12 +1319,13 @@ export class RuntimeBrowser extends APIResource {
   async interceptClear(
     runtimeId: string,
     browserId: string,
-    options: RequestOptions & { ruleIds?: readonly string[] } = {},
+    options: RequestOptions & { ruleIds?: readonly string[]; targetId?: string } = {},
   ): Promise<Record<string, unknown>> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, ruleIds } = options;
+    const { signal, requestTimeoutMs, maxRetries, ruleIds, targetId } = options;
     const body: Record<string, unknown> = {};
     if (ruleIds && ruleIds.length) body.rule_ids = [...ruleIds];
+    if (targetId) body.target_id = targetId;
     return asRecord(
       await this.http.request({
         method: 'POST',
@@ -1328,15 +1347,18 @@ export class RuntimeBrowser extends APIResource {
       password?: string;
       secretRef?: string;
       clear?: boolean;
+      targetId?: string;
     } = {},
   ): Promise<Record<string, unknown>> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, username, password, secretRef, clear } = options;
+    const { signal, requestTimeoutMs, maxRetries, username, password, secretRef, clear, targetId } =
+      options;
     const body: Record<string, unknown> = {};
     if (username) body.username = username;
     if (secretRef) body.secret_ref = secretRef;
     else if (password) body.password = password;
     if (clear) body.clear = true;
+    if (targetId) body.target_id = targetId;
     return asRecord(
       await this.http.request({
         method: 'POST',
@@ -1490,7 +1512,7 @@ export class RuntimeBrowser extends APIResource {
   async content(
     runtimeId: string,
     browserId: string,
-    targetId: string,
+    targetId: string = '',
     options: RequestOptions & { format?: string } = {},
   ): Promise<Record<string, unknown>> {
     assertRuntimeId(runtimeId);
@@ -1512,12 +1534,13 @@ export class RuntimeBrowser extends APIResource {
   async cookies(
     runtimeId: string,
     browserId: string,
-    options: RequestOptions & { contextId?: string } = {},
+    options: RequestOptions & { contextId?: string; url?: string } = {},
   ): Promise<Record<string, unknown>> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, contextId } = options;
+    const { signal, requestTimeoutMs, maxRetries, contextId, url } = options;
     const body: Record<string, unknown> = {};
     if (contextId) body.context_id = contextId;
+    if (url) body.url = url;
     return asRecord(
       await this.http.request({
         method: 'POST',
@@ -1630,16 +1653,19 @@ export class RuntimeBrowser extends APIResource {
     runtimeId: string,
     browserId: string,
     targetId: string,
-    options: RequestOptions = {},
+    options: RequestOptions & { fps?: number; quality?: number } = {},
   ): Promise<Record<string, unknown>> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries } = options;
+    const { signal, requestTimeoutMs, maxRetries, fps, quality } = options;
+    const body: Record<string, unknown> = {};
+    if (fps) body.fps = fps;
+    if (quality) body.quality = quality;
     return asRecord(
       await this.http.request({
         method: 'POST',
         path: `runtime/${runtimeId}/browser/${seg(browserId)}/targets/${seg(targetId)}/recording/start`,
         service: SERVICES.agents,
-        body: {},
+        body,
         options: { signal, requestTimeoutMs, maxRetries },
       }),
     );
@@ -1735,32 +1761,40 @@ export class RuntimeBrowser extends APIResource {
     runtimeId: string,
     browserId: string,
     steps: readonly Record<string, unknown>[],
-    options: RequestOptions & { stopOnFail?: boolean } = {},
+    options: RequestOptions & {
+      stopOnFail?: boolean;
+      stepTimeoutMs?: number;
+      targetId?: string;
+    } = {},
   ): Promise<Record<string, unknown>> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, stopOnFail } = options;
+    const { signal, requestTimeoutMs, maxRetries, stopOnFail, stepTimeoutMs, targetId } = options;
+    const body: Record<string, unknown> = { steps: [...steps], stop_on_fail: stopOnFail ?? false };
+    if (stepTimeoutMs) body.step_timeout_ms = stepTimeoutMs;
+    if (targetId) body.target_id = targetId;
     return asRecord(
       await this.http.request({
         method: 'POST',
         path: `runtime/${runtimeId}/browser/${seg(browserId)}/replay`,
         service: SERVICES.agents,
-        body: { steps: [...steps], stop_on_fail: stopOnFail ?? false },
+        body,
         options: { signal, requestTimeoutMs, maxRetries },
       }),
     );
   }
 
   /** Fork the page into a cohort of identical targets (1–8) for best-of-N
-   * runs → `{forks: [...]}`. */
+   * runs → `{target_ids: [...]}`. */
   async fork(
     runtimeId: string,
     browserId: string,
-    options: RequestOptions & { count?: number; url?: string } = {},
+    options: RequestOptions & { count?: number; url?: string; targetId?: string } = {},
   ): Promise<Record<string, unknown>> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, count, url } = options;
+    const { signal, requestTimeoutMs, maxRetries, count, url, targetId } = options;
     const body: Record<string, unknown> = { count: count ?? 1 };
     if (url) body.url = url;
+    if (targetId) body.target_id = targetId;
     return asRecord(
       await this.http.request({
         method: 'POST',

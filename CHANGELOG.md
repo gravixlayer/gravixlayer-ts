@@ -4,6 +4,21 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **`emulate` now serializes to the wire's flat fields** — `viewport`
+  `{width, height, scale}` maps to `width`/`height`/`device_scale_factor`,
+  `geolocation` to `geolocation_lat`/`geolocation_lon`/`geolocation_accuracy`,
+  and `timezone` to `timezone_id`. Previously those options were sent under
+  keys the API does not read, so the overrides were silently dropped. Also
+  added `mobile`, `contextId`, and `clear` (drops every override on the
+  scope).
+- **Missing scoping options added**: `targetId` on `interceptClear`,
+  `auth`, `replay`, and `fork`; `stepTimeoutMs` on `replay`; `fps` and
+  `quality` on `recordingStart`; `url` filter on `cookies`; `content`
+  accepts an omitted `targetId` for the active tab.
+
 ## [0.1.48] - 2026-11-01
 
 ### Added

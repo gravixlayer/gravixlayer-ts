@@ -1302,7 +1302,7 @@ export class BoundBrowser {
 
   async content(
     browserId: string,
-    targetId: string,
+    targetId: string = '',
     options?: Parameters<RuntimeBrowser['content']>[3],
   ) {
     return this.runtimes.browser.content(this.id(), browserId, targetId, options);
