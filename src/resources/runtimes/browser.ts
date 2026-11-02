@@ -1100,4 +1100,656 @@ export class RuntimeBrowser extends APIResource {
       options: { signal, requestTimeoutMs, maxRetries },
     });
   }
+
+  // -- form + advanced verbs ---------------------------------------------------
+
+  /** Pick a `<select>` option by value, label text, or index. */
+  async select(
+    runtimeId: string,
+    browserId: string,
+    target: ElementTarget,
+    option: string,
+    options: ActionOptions = {},
+  ): Promise<ActionResult> {
+    assertRuntimeId(runtimeId);
+    return this.act(runtimeId, browserId, 'select', { target: normTarget(target), option }, options);
+  }
+
+  /** Check a checkbox/radio — a real click, only when state differs. */
+  async check(
+    runtimeId: string,
+    browserId: string,
+    target: ElementTarget,
+    options: ActionOptions = {},
+  ): Promise<ActionResult> {
+    assertRuntimeId(runtimeId);
+    return this.act(runtimeId, browserId, 'check', { target: normTarget(target) }, options);
+  }
+
+  /** Uncheck a checkbox — no-op when already unchecked. */
+  async uncheck(
+    runtimeId: string,
+    browserId: string,
+    target: ElementTarget,
+    options: ActionOptions = {},
+  ): Promise<ActionResult> {
+    assertRuntimeId(runtimeId);
+    return this.act(runtimeId, browserId, 'uncheck', { target: normTarget(target) }, options);
+  }
+
+  /** Move DOM focus onto an element. */
+  async focus(
+    runtimeId: string,
+    browserId: string,
+    target: ElementTarget,
+    options: ActionOptions = {},
+  ): Promise<ActionResult> {
+    assertRuntimeId(runtimeId);
+    return this.act(runtimeId, browserId, 'focus', { target: normTarget(target) }, options);
+  }
+
+  /** Remove DOM focus from an element. */
+  async blur(
+    runtimeId: string,
+    browserId: string,
+    target: ElementTarget,
+    options: ActionOptions = {},
+  ): Promise<ActionResult> {
+    assertRuntimeId(runtimeId);
+    return this.act(runtimeId, browserId, 'blur', { target: normTarget(target) }, options);
+  }
+
+  /** Scroll an element into the viewport (nearest block/inline). */
+  async scrollIntoView(
+    runtimeId: string,
+    browserId: string,
+    target: ElementTarget,
+    options: ActionOptions = {},
+  ): Promise<ActionResult> {
+    assertRuntimeId(runtimeId);
+    return this.act(
+      runtimeId, browserId, 'scroll_into_view', { target: normTarget(target) }, options,
+    );
+  }
+
+  /** Drag `target` onto `dropTarget` — stepped pointer move so intermediate
+   * `dragover` handlers fire. */
+  async dragTo(
+    runtimeId: string,
+    browserId: string,
+    target: ElementTarget,
+    dropTarget: ElementTarget,
+    options: ActionOptions = {},
+  ): Promise<ActionResult> {
+    assertRuntimeId(runtimeId);
+    return this.act(
+      runtimeId,
+      browserId,
+      'drag_to',
+      { target: normTarget(target), drop_target: normTarget(dropTarget) },
+      options,
+    );
+  }
+
+  /** Set files on a `<input type=file>` element. `paths` are guest paths —
+   * ship customer files first via the files API `write`. */
+  async upload(
+    runtimeId: string,
+    browserId: string,
+    target: ElementTarget,
+    paths: readonly string[],
+    options: ActionOptions = {},
+  ): Promise<ActionResult> {
+    assertRuntimeId(runtimeId);
+    return this.act(
+      runtimeId,
+      browserId,
+      'upload',
+      { target: normTarget(target), paths: [...paths] },
+      options,
+    );
+  }
+
+  // -- emulation, network, auth ------------------------------------------------
+
+  /** Apply emulation overrides to a target — viewport `{width, height,
+   * scale}`, `geolocation` `{latitude, longitude, accuracy?}`, `timezone`
+   * (IANA), `locale` (also sets accept-language), `userAgent`, `touch`,
+   * `colorScheme` (`light`/`dark`). Only carried keys override; they persist
+   * across target re-attach. */
+  async emulate(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & {
+      targetId?: string;
+      viewport?: { width: number; height: number; scale?: number };
+      geolocation?: { latitude: number; longitude: number; accuracy?: number };
+      timezone?: string;
+      locale?: string;
+      userAgent?: string;
+      touch?: boolean;
+      colorScheme?: 'light' | 'dark';
+    } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const {
+      signal, requestTimeoutMs, maxRetries,
+      targetId, viewport, geolocation, timezone, locale, userAgent, touch, colorScheme,
+    } = options;
+    const body: Record<string, unknown> = { target_id: targetId ?? '' };
+    if (viewport !== undefined) body.viewport = viewport;
+    if (geolocation !== undefined) body.geolocation = geolocation;
+    if (timezone) body.timezone = timezone;
+    if (locale) body.locale = locale;
+    if (userAgent) body.user_agent = userAgent;
+    if (touch !== undefined) body.touch = touch;
+    if (colorScheme) body.color_scheme = colorScheme;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/emulate`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Install request-interception rules — each `{url_pattern, action:
+   * "continue"|"block"|"mock", resource_type?, mock_status?, mock_headers?,
+   * mock_body_b64?}`. Matching runs in the runtime; the network tap stays
+   * off while no rules exist. */
+  async intercept(
+    runtimeId: string,
+    browserId: string,
+    rules: readonly Record<string, unknown>[],
+    options: RequestOptions & { targetId?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, targetId } = options;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/intercept`,
+        service: SERVICES.agents,
+        body: { target_id: targetId ?? '', rules: [...rules] },
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Remove interception rules — `ruleIds` for specific rules, empty clears all. */
+  async interceptClear(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & { ruleIds?: readonly string[] } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, ruleIds } = options;
+    const body: Record<string, unknown> = {};
+    if (ruleIds && ruleIds.length) body.rule_ids = [...ruleIds];
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/intercept/clear`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Answer HTTP basic/digest challenges in-page. `secretRef` resolves the
+   * password server-side; `clear` disarms the handler. */
+  async auth(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & {
+      username?: string;
+      password?: string;
+      secretRef?: string;
+      clear?: boolean;
+    } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, username, password, secretRef, clear } = options;
+    const body: Record<string, unknown> = {};
+    if (username) body.username = username;
+    if (secretRef) body.secret_ref = secretRef;
+    else if (password) body.password = password;
+    if (clear) body.clear = true;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/auth`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  // -- extensions + CDP --------------------------------------------------------
+
+  /** Hot-load an unpacked extension from a guest directory → `{extension_id}`. */
+  async extensionLoad(
+    runtimeId: string,
+    browserId: string,
+    path: string,
+    options: RequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries } = options;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/extensions/load`,
+        service: SERVICES.agents,
+        body: { path },
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Unload an extension by the id `extensionLoad` returned. */
+  async extensionUnload(
+    runtimeId: string,
+    browserId: string,
+    extensionId: string,
+    options: RequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries } = options;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/extensions/unload`,
+        service: SERVICES.agents,
+        body: { extension_id: extensionId },
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Start a tokened CDP WebSocket bridge → `{port, path, token}` — the
+   * attach point for external drivers. Raw protocol semantics: the bridge
+   * bypasses targeting/actionability. */
+  async cdpEndpoint(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & { port?: number; token?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, port, token } = options;
+    const body: Record<string, unknown> = {};
+    if (port) body.port = port;
+    if (token) body.token = token;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/cdp_endpoint`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Tear down the CDP bridge. */
+  async cdpEndpointStop(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries } = options;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/cdp_endpoint/stop`,
+        service: SERVICES.agents,
+        body: {},
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  // -- approvals ----------------------------------------------------------------
+
+  /** Ask an operator for approval — parks until resolved or `timeoutMs`
+   * lapses → `{approval_id, resolved, approved?}`. Resolve from another
+   * call, or watch `approval_request` events. */
+  async approvalRequest(
+    runtimeId: string,
+    browserId: string,
+    message: string,
+    options: RequestOptions & { timeoutMs?: number } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, timeoutMs } = options;
+    const body: Record<string, unknown> = { message };
+    if (timeoutMs) body.timeout_ms = timeoutMs;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/approvals`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Resolve a pending approval — the parked `approvalRequest` wakes with
+   * the answer. */
+  async approvalResolve(
+    runtimeId: string,
+    browserId: string,
+    approvalId: string,
+    approved: boolean,
+    options: RequestOptions & { note?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, note } = options;
+    const body: Record<string, unknown> = { approved };
+    if (note) body.note = note;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/approvals/${seg(approvalId)}/resolve`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  // -- reads: content + cookies --------------------------------------------------
+
+  /** Serialized page content — rendered HTML by default, `format` selects
+   * the extraction. */
+  async content(
+    runtimeId: string,
+    browserId: string,
+    targetId: string,
+    options: RequestOptions & { format?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, format } = options;
+    const body: Record<string, unknown> = { target_id: targetId };
+    if (format) body.format = format;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/content`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** List the context's cookies — empty `contextId` is the default context. */
+  async cookies(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & { contextId?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, contextId } = options;
+    const body: Record<string, unknown> = {};
+    if (contextId) body.context_id = contextId;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/cookies`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Set one cookie — `url` scopes it, `attrs` carries domain/path/secure/
+   * expiry fields. */
+  async setCookie(
+    runtimeId: string,
+    browserId: string,
+    name: string,
+    value: string,
+    options: RequestOptions & {
+      url?: string;
+      contextId?: string;
+      attrs?: Record<string, unknown>;
+    } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, url, contextId, attrs } = options;
+    const body: Record<string, unknown> = { op: 'set', name, value };
+    if (url) body.url = url;
+    if (contextId) body.context_id = contextId;
+    if (attrs) body.attrs = attrs;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/cookies`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Delete one cookie by name (`url` scopes the match). */
+  async deleteCookie(
+    runtimeId: string,
+    browserId: string,
+    name: string,
+    options: RequestOptions & { url?: string; contextId?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, url, contextId } = options;
+    const body: Record<string, unknown> = { op: 'delete', name };
+    if (url) body.url = url;
+    if (contextId) body.context_id = contextId;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/cookies`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Clear every cookie in the context. */
+  async clearCookies(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & { contextId?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, contextId } = options;
+    const body: Record<string, unknown> = { op: 'clear' };
+    if (contextId) body.context_id = contextId;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/cookies`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  // -- downloads, recording, profile, replay, fork -------------------------------
+
+  /** Drop a download record; `deleteFile` also removes the guest file. */
+  async downloadDelete(
+    runtimeId: string,
+    browserId: string,
+    downloadId: string,
+    options: RequestOptions & { deleteFile?: boolean } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, deleteFile } = options;
+    const suffix = deleteFile ? '?delete_file=true' : '';
+    return asRecord(
+      await this.http.request({
+        method: 'DELETE',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/downloads/${seg(downloadId)}${suffix}`,
+        service: SERVICES.agents,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Start a per-target video recording (works headless) → recording handle. */
+  async recordingStart(
+    runtimeId: string,
+    browserId: string,
+    targetId: string,
+    options: RequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries } = options;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/targets/${seg(targetId)}/recording/start`,
+        service: SERVICES.agents,
+        body: {},
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Stop a target recording → sealed artifact metadata. */
+  async recordingStop(
+    runtimeId: string,
+    browserId: string,
+    targetId: string,
+    options: RequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries } = options;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/targets/${seg(targetId)}/recording/stop`,
+        service: SERVICES.agents,
+        body: {},
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Copy a finished recording's artifacts into `destDir` (guest path). */
+  async recordingExport(
+    runtimeId: string,
+    browserId: string,
+    recordingId: string,
+    destDir: string,
+    options: RequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries } = options;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/recordings/export`,
+        service: SERVICES.agents,
+        body: { recording_id: recordingId, dest_dir: destDir },
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Quiesce and tar the browser's profile (cookies, storage, prefs —
+   * durable auth) → `destPath`. */
+  async profileExport(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & { destPath?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, destPath } = options;
+    const body: Record<string, unknown> = {};
+    if (destPath) body.dest_path = destPath;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/profile/export`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Respawn the browser against a previously exported profile tar. */
+  async profileImport(
+    runtimeId: string,
+    browserId: string,
+    archivePath: string,
+    options: RequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries } = options;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/profile/import`,
+        service: SERVICES.agents,
+        body: { archive_path: archivePath },
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Replay recorded action steps with per-step effect checks — `steps` are
+   * `{action, expect_*?}` entries; `stopOnFail` halts on the first failed
+   * check. */
+  async replay(
+    runtimeId: string,
+    browserId: string,
+    steps: readonly Record<string, unknown>[],
+    options: RequestOptions & { stopOnFail?: boolean } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, stopOnFail } = options;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/replay`,
+        service: SERVICES.agents,
+        body: { steps: [...steps], stop_on_fail: stopOnFail ?? false },
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
+
+  /** Fork the page into a cohort of identical targets (1–8) for best-of-N
+   * runs → `{forks: [...]}`. */
+  async fork(
+    runtimeId: string,
+    browserId: string,
+    options: RequestOptions & { count?: number; url?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    assertRuntimeId(runtimeId);
+    const { signal, requestTimeoutMs, maxRetries, count, url } = options;
+    const body: Record<string, unknown> = { count: count ?? 1 };
+    if (url) body.url = url;
+    return asRecord(
+      await this.http.request({
+        method: 'POST',
+        path: `runtime/${runtimeId}/browser/${seg(browserId)}/fork`,
+        service: SERVICES.agents,
+        body,
+        options: { signal, requestTimeoutMs, maxRetries },
+      }),
+    );
+  }
 }

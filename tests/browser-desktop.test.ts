@@ -1084,3 +1084,216 @@ describe('browser events, contexts, storage', () => {
     expect(r.targets[0]?.contextId).toBe('c9');
   });
 });
+
+describe('browser waves A-D', () => {
+  it('sends the new form verbs through the action surface', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+    ]);
+    await client.runtime.browser.select(RUNTIME_ID, BID, 'e3', 'us');
+    expect(http.last().url).toContain(`browser/${BID}/actions/select`);
+    expect((http.jsonBody() as Record<string, unknown>).option).toBe('us');
+
+    await client.runtime.browser.check(RUNTIME_ID, BID, 'e4');
+    expect(http.last().url).toContain('/actions/check');
+
+    await client.runtime.browser.dragTo(RUNTIME_ID, BID, 'e3', {
+      by: 'css',
+      value: '#dst',
+    });
+    const drag = http.jsonBody() as Record<string, unknown>;
+    expect(drag.verb).toBe('drag_to');
+    expect(drag.drop_target).toEqual({ by: 'css', value: '#dst' });
+
+    await client.runtime.browser.upload(RUNTIME_ID, BID, 'e7', ['/workspace/a.csv']);
+    expect((http.jsonBody() as Record<string, unknown>).paths).toEqual(['/workspace/a.csv']);
+  });
+
+  it('sends field-scoped emulation only for the keys given', async () => {
+    const { client, http } = testClient([jsonResponse({ ok: true })]);
+    await client.runtime.browser.emulate(RUNTIME_ID, BID, {
+      targetId: 't1',
+      viewport: { width: 1280, height: 800, scale: 1 },
+      timezone: 'America/New_York',
+      touch: true,
+    });
+    const body = http.jsonBody() as Record<string, unknown>;
+    expect(body.target_id).toBe('t1');
+    expect((body.viewport as Record<string, unknown>).width).toBe(1280);
+    expect(body.timezone).toBe('America/New_York');
+    expect('user_agent' in body).toBe(false);
+    expect('locale' in body).toBe(false);
+  });
+
+  it('installs and clears intercept rules', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ rule_ids: ['r1'] }),
+      jsonResponse({ ok: true }),
+    ]);
+    const rules = [{ url_pattern: '*/admin/*', action: 'block' }];
+    const r = await client.runtime.browser.intercept(RUNTIME_ID, BID, rules);
+    expect(r.rule_ids).toEqual(['r1']);
+    expect((http.jsonBody(0) as Record<string, unknown>).rules).toEqual(rules);
+
+    await client.runtime.browser.interceptClear(RUNTIME_ID, BID, { ruleIds: ['r1'] });
+    expect(http.last().url).toContain('intercept/clear');
+    expect((http.jsonBody() as Record<string, unknown>).rule_ids).toEqual(['r1']);
+  });
+
+  it('prefers secret_ref over password for http auth', async () => {
+    const { client, http } = testClient([jsonResponse({ ok: true })]);
+    await client.runtime.browser.auth(RUNTIME_ID, BID, {
+      username: 'u',
+      password: 'p',
+      secretRef: 'svc_pw',
+    });
+    const body = http.jsonBody() as Record<string, unknown>;
+    expect(body.secret_ref).toBe('svc_pw');
+    expect('password' in body).toBe(false);
+  });
+
+  it('loads and unloads extensions by path/id', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ extension_id: 'x1' }),
+      jsonResponse({ ok: true }),
+    ]);
+    const r = await client.runtime.browser.extensionLoad(RUNTIME_ID, BID, '/workspace/ext');
+    expect(r.extension_id).toBe('x1');
+    expect((http.jsonBody(0) as Record<string, unknown>).path).toBe('/workspace/ext');
+
+    await client.runtime.browser.extensionUnload(RUNTIME_ID, BID, 'x1');
+    expect((http.jsonBody() as Record<string, unknown>).extension_id).toBe('x1');
+  });
+
+  it('manages the cdp endpoint lifecycle', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ port: 9222, path: '/cdp', token: 'tok' }),
+      jsonResponse({ ok: true }),
+    ]);
+    const ep = await client.runtime.browser.cdpEndpoint(RUNTIME_ID, BID, { port: 9222 });
+    expect(ep.token).toBe('tok');
+    expect((http.jsonBody(0) as Record<string, unknown>).port).toBe(9222);
+    expect('token' in (http.jsonBody(0) as Record<string, unknown>)).toBe(false);
+
+    await client.runtime.browser.cdpEndpointStop(RUNTIME_ID, BID);
+    expect(http.last().url).toContain('cdp_endpoint/stop');
+  });
+
+  it('round-trips approvals', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ approval_id: 'a1', resolved: true, approved: true }),
+      jsonResponse({ ok: true }),
+    ]);
+    const r = await client.runtime.browser.approvalRequest(RUNTIME_ID, BID, 'post invoice?', {
+      timeoutMs: 20_000,
+    });
+    expect(r.approved).toBe(true);
+    expect((http.jsonBody(0) as Record<string, unknown>).timeout_ms).toBe(20_000);
+
+    await client.runtime.browser.approvalResolve(RUNTIME_ID, BID, 'a1', false, {
+      note: 'nope',
+    });
+    const body = http.jsonBody() as Record<string, unknown>;
+    expect(body.approved).toBe(false);
+    expect(body.note).toBe('nope');
+  });
+
+  it('reads content and manages cookies', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ content: '<html/>' }),
+      jsonResponse({ cookies: [{ name: 's' }] }),
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+    ]);
+    const c = await client.runtime.browser.content(RUNTIME_ID, BID, 't1');
+    expect(c.content).toBe('<html/>');
+    expect((http.jsonBody(0) as Record<string, unknown>).target_id).toBe('t1');
+
+    const cookies = await client.runtime.browser.cookies(RUNTIME_ID, BID);
+    expect((cookies.cookies as Record<string, unknown>[])[0]?.name).toBe('s');
+
+    await client.runtime.browser.setCookie(RUNTIME_ID, BID, 'k', 'v', {
+      url: 'https://x.io',
+      attrs: { secure: true },
+    });
+    const setBody = http.jsonBody(2) as Record<string, unknown>;
+    expect(setBody.op).toBe('set');
+    expect(setBody.attrs).toEqual({ secure: true });
+
+    await client.runtime.browser.deleteCookie(RUNTIME_ID, BID, 'k');
+    expect((http.jsonBody(3) as Record<string, unknown>).op).toBe('delete');
+
+    await client.runtime.browser.clearCookies(RUNTIME_ID, BID, { contextId: 'c2' });
+    const clear = http.jsonBody(4) as Record<string, unknown>;
+    expect(clear.op).toBe('clear');
+    expect(clear.context_id).toBe('c2');
+  });
+
+  it('deletes a download with the file flag', async () => {
+    const { client, http } = testClient([jsonResponse({ ok: true })]);
+    await client.runtime.browser.downloadDelete(RUNTIME_ID, BID, 'd7', { deleteFile: true });
+    expect(http.last().method).toBe('DELETE');
+    expect(http.last().url).toContain(`downloads/d7`);
+    expect(http.last().url).toContain('delete_file=true');
+  });
+
+  it('records a target and exports the artifact', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ recording_id: 'rec1' }),
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+    ]);
+    const rec = await client.runtime.browser.recordingStart(RUNTIME_ID, BID, 't9');
+    expect(rec.recording_id).toBe('rec1');
+    expect(http.last().url).toContain('targets/t9/recording/start');
+
+    await client.runtime.browser.recordingStop(RUNTIME_ID, BID, 't9');
+    expect(http.last().url).toContain('targets/t9/recording/stop');
+
+    await client.runtime.browser.recordingExport(RUNTIME_ID, BID, 'rec1', '/workspace/out');
+    const body = http.jsonBody() as Record<string, unknown>;
+    expect(body.recording_id).toBe('rec1');
+    expect(body.dest_dir).toBe('/workspace/out');
+  });
+
+  it('exports and imports a profile archive', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ path: '/workspace/p.tar' }),
+      jsonResponse({ ok: true }),
+    ]);
+    const r = await client.runtime.browser.profileExport(RUNTIME_ID, BID, {
+      destPath: '/workspace/p.tar',
+    });
+    expect(r.path).toBe('/workspace/p.tar');
+    expect((http.jsonBody(0) as Record<string, unknown>).dest_path).toBe('/workspace/p.tar');
+
+    await client.runtime.browser.profileImport(RUNTIME_ID, BID, '/workspace/p.tar');
+    expect((http.jsonBody() as Record<string, unknown>).archive_path).toBe('/workspace/p.tar');
+  });
+
+  it('replays steps and forks the session', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ steps: 3, failed: 0 }),
+      jsonResponse({ forks: ['t2', 't3'] }),
+    ]);
+    const steps = [{ action: { verb: 'click' }, expect_url: '/done' }];
+    const r = await client.runtime.browser.replay(RUNTIME_ID, BID, steps, {
+      stopOnFail: true,
+    });
+    expect(r.failed).toBe(0);
+    expect((http.jsonBody(0) as Record<string, unknown>).stop_on_fail).toBe(true);
+
+    const f = await client.runtime.browser.fork(RUNTIME_ID, BID, {
+      count: 2,
+      url: 'https://x.io',
+    });
+    expect(f.forks).toEqual(['t2', 't3']);
+    const body = http.jsonBody() as Record<string, unknown>;
+    expect(body.count).toBe(2);
+    expect(body.url).toBe('https://x.io');
+  });
+});

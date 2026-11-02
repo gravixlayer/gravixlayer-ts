@@ -1159,4 +1159,237 @@ export class BoundBrowser {
   ) {
     return this.runtimes.browser.storageImport(this.id(), browserId, storageState, options);
   }
+
+  async select(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['select']>[2],
+    option: string,
+    options?: Parameters<RuntimeBrowser['select']>[4],
+  ) {
+    return this.runtimes.browser.select(this.id(), browserId, target, option, options);
+  }
+
+  async check(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['check']>[2],
+    options?: Parameters<RuntimeBrowser['check']>[3],
+  ) {
+    return this.runtimes.browser.check(this.id(), browserId, target, options);
+  }
+
+  async uncheck(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['uncheck']>[2],
+    options?: Parameters<RuntimeBrowser['uncheck']>[3],
+  ) {
+    return this.runtimes.browser.uncheck(this.id(), browserId, target, options);
+  }
+
+  async focus(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['focus']>[2],
+    options?: Parameters<RuntimeBrowser['focus']>[3],
+  ) {
+    return this.runtimes.browser.focus(this.id(), browserId, target, options);
+  }
+
+  async blur(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['blur']>[2],
+    options?: Parameters<RuntimeBrowser['blur']>[3],
+  ) {
+    return this.runtimes.browser.blur(this.id(), browserId, target, options);
+  }
+
+  async scrollIntoView(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['scrollIntoView']>[2],
+    options?: Parameters<RuntimeBrowser['scrollIntoView']>[3],
+  ) {
+    return this.runtimes.browser.scrollIntoView(this.id(), browserId, target, options);
+  }
+
+  async dragTo(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['dragTo']>[2],
+    dropTarget: Parameters<RuntimeBrowser['dragTo']>[3],
+    options?: Parameters<RuntimeBrowser['dragTo']>[4],
+  ) {
+    return this.runtimes.browser.dragTo(this.id(), browserId, target, dropTarget, options);
+  }
+
+  async upload(
+    browserId: string,
+    target: Parameters<RuntimeBrowser['upload']>[2],
+    paths: readonly string[],
+    options?: Parameters<RuntimeBrowser['upload']>[4],
+  ) {
+    return this.runtimes.browser.upload(this.id(), browserId, target, paths, options);
+  }
+
+  async emulate(browserId: string, options?: Parameters<RuntimeBrowser['emulate']>[2]) {
+    return this.runtimes.browser.emulate(this.id(), browserId, options);
+  }
+
+  async intercept(
+    browserId: string,
+    rules: Parameters<RuntimeBrowser['intercept']>[2],
+    options?: Parameters<RuntimeBrowser['intercept']>[3],
+  ) {
+    return this.runtimes.browser.intercept(this.id(), browserId, rules, options);
+  }
+
+  async interceptClear(browserId: string, options?: Parameters<RuntimeBrowser['interceptClear']>[2]) {
+    return this.runtimes.browser.interceptClear(this.id(), browserId, options);
+  }
+
+  async auth(browserId: string, options?: Parameters<RuntimeBrowser['auth']>[2]) {
+    return this.runtimes.browser.auth(this.id(), browserId, options);
+  }
+
+  async extensionLoad(
+    browserId: string,
+    path: string,
+    options?: Parameters<RuntimeBrowser['extensionLoad']>[3],
+  ) {
+    return this.runtimes.browser.extensionLoad(this.id(), browserId, path, options);
+  }
+
+  async extensionUnload(
+    browserId: string,
+    extensionId: string,
+    options?: Parameters<RuntimeBrowser['extensionUnload']>[3],
+  ) {
+    return this.runtimes.browser.extensionUnload(this.id(), browserId, extensionId, options);
+  }
+
+  async cdpEndpoint(browserId: string, options?: Parameters<RuntimeBrowser['cdpEndpoint']>[2]) {
+    return this.runtimes.browser.cdpEndpoint(this.id(), browserId, options);
+  }
+
+  async cdpEndpointStop(
+    browserId: string,
+    options?: Parameters<RuntimeBrowser['cdpEndpointStop']>[2],
+  ) {
+    return this.runtimes.browser.cdpEndpointStop(this.id(), browserId, options);
+  }
+
+  async approvalRequest(
+    browserId: string,
+    message: string,
+    options?: Parameters<RuntimeBrowser['approvalRequest']>[3],
+  ) {
+    return this.runtimes.browser.approvalRequest(this.id(), browserId, message, options);
+  }
+
+  async approvalResolve(
+    browserId: string,
+    approvalId: string,
+    approved: boolean,
+    options?: Parameters<RuntimeBrowser['approvalResolve']>[4],
+  ) {
+    return this.runtimes.browser.approvalResolve(
+      this.id(),
+      browserId,
+      approvalId,
+      approved,
+      options,
+    );
+  }
+
+  async content(
+    browserId: string,
+    targetId: string,
+    options?: Parameters<RuntimeBrowser['content']>[3],
+  ) {
+    return this.runtimes.browser.content(this.id(), browserId, targetId, options);
+  }
+
+  async cookies(browserId: string, options?: Parameters<RuntimeBrowser['cookies']>[2]) {
+    return this.runtimes.browser.cookies(this.id(), browserId, options);
+  }
+
+  async setCookie(
+    browserId: string,
+    name: string,
+    value: string,
+    options?: Parameters<RuntimeBrowser['setCookie']>[4],
+  ) {
+    return this.runtimes.browser.setCookie(this.id(), browserId, name, value, options);
+  }
+
+  async deleteCookie(
+    browserId: string,
+    name: string,
+    options?: Parameters<RuntimeBrowser['deleteCookie']>[3],
+  ) {
+    return this.runtimes.browser.deleteCookie(this.id(), browserId, name, options);
+  }
+
+  async clearCookies(browserId: string, options?: Parameters<RuntimeBrowser['clearCookies']>[2]) {
+    return this.runtimes.browser.clearCookies(this.id(), browserId, options);
+  }
+
+  async downloadDelete(
+    browserId: string,
+    downloadId: string,
+    options?: Parameters<RuntimeBrowser['downloadDelete']>[3],
+  ) {
+    return this.runtimes.browser.downloadDelete(this.id(), browserId, downloadId, options);
+  }
+
+  async recordingStart(
+    browserId: string,
+    targetId: string,
+    options?: Parameters<RuntimeBrowser['recordingStart']>[3],
+  ) {
+    return this.runtimes.browser.recordingStart(this.id(), browserId, targetId, options);
+  }
+
+  async recordingStop(
+    browserId: string,
+    targetId: string,
+    options?: Parameters<RuntimeBrowser['recordingStop']>[3],
+  ) {
+    return this.runtimes.browser.recordingStop(this.id(), browserId, targetId, options);
+  }
+
+  async recordingExport(
+    browserId: string,
+    recordingId: string,
+    destDir: string,
+    options?: Parameters<RuntimeBrowser['recordingExport']>[4],
+  ) {
+    return this.runtimes.browser.recordingExport(
+      this.id(),
+      browserId,
+      recordingId,
+      destDir,
+      options,
+    );
+  }
+
+  async profileExport(browserId: string, options?: Parameters<RuntimeBrowser['profileExport']>[2]) {
+    return this.runtimes.browser.profileExport(this.id(), browserId, options);
+  }
+
+  async profileImport(
+    browserId: string,
+    archivePath: string,
+    options?: Parameters<RuntimeBrowser['profileImport']>[3],
+  ) {
+    return this.runtimes.browser.profileImport(this.id(), browserId, archivePath, options);
+  }
+
+  async replay(
+    browserId: string,
+    steps: Parameters<RuntimeBrowser['replay']>[2],
+    options?: Parameters<RuntimeBrowser['replay']>[3],
+  ) {
+    return this.runtimes.browser.replay(this.id(), browserId, steps, options);
+  }
+
+  async fork(browserId: string, options?: Parameters<RuntimeBrowser['fork']>[2]) {
+    return this.runtimes.browser.fork(this.id(), browserId, options);
+  }
 }
