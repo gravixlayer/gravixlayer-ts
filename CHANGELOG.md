@@ -4,6 +4,21 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.48] - 2026-11-01
+
+### Added
+- **Full wave A-D browser surface on `client.runtime.browser`**:
+  `emulate`, `intercept`/`interceptClear`, `auth` (`secretRef`-capable),
+  `extensionLoad`/`extensionUnload`, `cdpEndpoint`/`cdpEndpointStop`,
+  `approvalRequest`/`approvalResolve`, `content`, cookie ops
+  (`cookies`, `setCookie`, `deleteCookie`, `clearCookies`),
+  `downloadDelete`, per-target recording (`recordingStart`,
+  `recordingStop`) plus `recordingExport`, profile archives
+  (`profileExport`, `profileImport`), `replay`, and `fork`. New action
+  verbs — `select`, `check`, `uncheck`, `focus`, `blur`,
+  `scrollIntoView`, `dragTo`, `upload` — ride the same
+  `actions/{verb}` route with the shared target/settle contract.
+
 ## [0.1.47] - 2026-10-31
 
 ### Added
