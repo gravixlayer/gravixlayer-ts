@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `base-browser` template Dockerfile now installs Google Chrome from the
+  official stable `.deb` channel for the build architecture (amd64 or
+  arm64) instead of a Playwright Chromium build.
+- `base-desktop` and `base-osworld` template Dockerfiles install Google
+  Chrome for Testing (pinned stable build) selected by build
+  architecture (`linux64`/`linux-arm64`) instead of a Playwright
+  Chromium build; the desktop app entry is now named Google Chrome.
+
 ### Added
 - `user` on `runCommand`, PTY create, and display launch/open options,
   serialized to the wire's `user`; `startUser` on agent build config
