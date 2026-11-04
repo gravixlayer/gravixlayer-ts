@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `base-desktop` and `base-osworld` template Dockerfiles install Google
+  Chrome from the official stable `.deb` channel for the build
+  architecture (amd64 or arm64), same as `base-browser` — replacing the
+  Chrome for Testing zip, so headed sessions show real Chrome chrome.
+  The desktop app entry keeps the `chromium.desktop` filename the dock
+  favorites pin but now points at real Chrome with the `google-chrome`
+  icon and `StartupWMClass=Google-chrome`. `base-osworld` additionally
+  keeps a `/usr/local/bin/google-chrome` shim to a pinned Chrome for
+  Testing build (now arch-selected `linux64`/`linux-arm64`, was
+  amd64-only) because OSWorld task configs need
+  `--remote-debugging-port` on the default profile, which branded
+  Chrome ≥136 refuses.
+
 ## [0.1.50] - 2026-11-04
 
 ### Changed
