@@ -9,7 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - `base-browser` template Dockerfile now installs Google Chrome from the
   official stable `.deb` channel for the build architecture (amd64 or
-  arm64) instead of a Playwright Chromium build.
+  arm64) instead of a Playwright Chromium build. Google's apt repo and
+  daily refresh hook are disabled so the image stays immutable.
 - `base-desktop` and `base-osworld` template Dockerfiles install Google
   Chrome for Testing (pinned stable build) selected by build
   architecture (`linux64`/`linux-arm64`) instead of a Playwright
