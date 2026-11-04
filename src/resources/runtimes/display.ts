@@ -18,6 +18,20 @@ function seg(id: string): string {
   return encodeURIComponent(id);
 }
 
+/** One participant in a live-view presence roster — a connected viewer
+ * or the agent's own pointer (`id === "_agent"`). Identity is
+ * self-asserted display metadata, never an auth input. */
+export interface Presence {
+  readonly id: string;
+  readonly name: string;
+  readonly color: string;
+  /** The platform agent's pointer or an agent-flagged viewer. */
+  readonly agent: boolean;
+  readonly x: number;
+  readonly y: number;
+  readonly pressed: boolean;
+}
+
 /** Current display state. */
 export interface DisplayStatus {
   readonly enabled: boolean;
@@ -28,6 +42,8 @@ export interface DisplayStatus {
   readonly wm: string;
   /** Live-view takeover mode: `shared` | `human` | `agent`. */
   readonly controlMode?: string;
+  /** Who is on the live view — viewers plus the agent pointer slot. */
+  readonly viewers?: readonly Presence[];
 }
 
 /** Live display geometry — follows resizes, unlike the enable-time config. */
@@ -428,6 +444,21 @@ function parseStatus(v: unknown): DisplayStatus {
     display: str(r, 'display'),
     wm: str(r, 'wm'),
     controlMode: r.control_mode == null ? undefined : str(r, 'control_mode'),
+    viewers: Array.isArray(r.viewers) ? r.viewers.map(parsePresence) : undefined,
+  };
+}
+
+/** `viewers` arrive on display/browser status — same wire shape. */
+export function parsePresence(v: unknown): Presence {
+  const r = asRecord(v);
+  return {
+    id: str(r, 'id'),
+    name: str(r, 'name'),
+    color: str(r, 'color'),
+    agent: bool(r, 'agent'),
+    x: num(r, 'x'),
+    y: num(r, 'y'),
+    pressed: bool(r, 'pressed'),
   };
 }
 

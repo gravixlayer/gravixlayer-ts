@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { emptyResponse, jsonResponse, RUNTIME_ID, sseJson, testClient } from './helpers.js';
+import {
+  emptyResponse,
+  jsonResponse,
+  runtimePayload,
+  RUNTIME_ID,
+  sseJson,
+  testClient,
+} from './helpers.js';
 
 const BID = 'b1';
 
@@ -718,6 +725,42 @@ describe('browser plane', () => {
     expect((http.jsonBody() as Record<string, unknown>).role).toBe('watch');
     expect(v.viewToken).toBe('vt-watch-1');
     expect(v.watchUrl).toBe('https://s.service.example/_ws/auth?token=t&vt=vt-watch-1');
+  });
+
+  it('viewControl posts the takeover mode to the browser view route', async () => {
+    const { client, http } = testClient([jsonResponse({})]);
+    await client.runtime.browser.viewControl(RUNTIME_ID, BID, 'human');
+    expect(http.last().url).toContain(`browser/${BID}/view/control`);
+    expect((http.jsonBody() as Record<string, unknown>).mode).toBe('human');
+  });
+
+  it('status surfaces control_mode and the presence roster', async () => {
+    const { client } = testClient([
+      jsonResponse({
+        browser_id: BID,
+        state: 'ready',
+        targets: [],
+        control_mode: 'human',
+        viewers: [
+          { id: 'v1', name: 'op', color: '#6b8afd', agent: false, x: 12, y: 30, pressed: false },
+          { id: '_agent', name: 'Agent', color: '#008145', agent: true, x: 5, y: 6, pressed: true },
+        ],
+      }),
+    ]);
+    const s = await client.runtime.browser.status(RUNTIME_ID, BID);
+    expect(s.controlMode).toBe('human');
+    expect(s.viewers).toHaveLength(2);
+    expect(s.viewers?.[0].name).toBe('op');
+    expect(s.viewers?.[1].agent).toBe(true);
+    expect(s.viewers?.[1].pressed).toBe(true);
+  });
+
+  it('bound browser handle delegates viewControl', async () => {
+    const { client, http } = testClient([jsonResponse(runtimePayload()), jsonResponse({})]);
+    const rt = await client.runtime.get(RUNTIME_ID);
+    await rt.browser.viewControl(BID, 'agent');
+    expect(http.last().url).toContain(`browser/${BID}/view/control`);
+    expect((http.jsonBody() as Record<string, unknown>).mode).toBe('agent');
   });
 
   it('caller ids are percent-encoded in the route path', async () => {

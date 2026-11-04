@@ -1134,6 +1134,13 @@ export class BoundBrowser {
   async view(browserId: string, options?: Parameters<RuntimeBrowser['view']>[2]) {
     return this.runtimes.browser.view(this.id(), browserId, options);
   }
+  async viewControl(
+    browserId: string,
+    mode: 'shared' | 'human' | 'agent',
+    options?: RequestOptions,
+  ) {
+    return this.runtimes.browser.viewControl(this.id(), browserId, mode, options);
+  }
   events(
     browserId: string,
     options?: Parameters<RuntimeBrowser['events']>[2],

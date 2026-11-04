@@ -15,6 +15,7 @@ import type { RequestOptions } from '../../core/transport.js';
 import { SERVICES } from '../../core/url.js';
 import { assertRuntimeId } from '../../core/validate.js';
 import { APIResource } from '../resource.js';
+import { parsePresence, type Presence } from './display.js';
 
 /** Percent-encode one URL path segment — caller-supplied ids (browser,
  * target, download) must never carry `/`, `?` or `#` into a path. */
@@ -42,6 +43,10 @@ export interface BrowserInfo {
   readonly headless: boolean;
   readonly state: string;
   readonly targets: readonly BrowserTargetInfo[];
+  /** Live-view takeover mode: `shared` | `human` | `agent`. Status only. */
+  readonly controlMode?: string;
+  /** Live-view presence roster — viewers plus the agent pointer slot. */
+  readonly viewers?: readonly Presence[];
 }
 
 /** One interactable element in a snapshot digest. */
@@ -224,6 +229,8 @@ function parseInfo(v: unknown): BrowserInfo {
     headless: bool(r, 'headless'),
     state: str(r, 'state'),
     targets,
+    controlMode: r.control_mode == null ? undefined : str(r, 'control_mode'),
+    viewers: Array.isArray(r.viewers) ? r.viewers.map(parsePresence) : undefined,
   };
 }
 
@@ -960,6 +967,29 @@ export class RuntimeBrowser extends APIResource {
       viewToken,
       expiresAt: typeof r.expires_at === 'string' ? r.expires_at : undefined,
     };
+  }
+
+  /**
+   * Set the live-view takeover mode — same contract as the display plane:
+   * `shared` (both sides may drive), `human` (only the human viewer; agent
+   * `Action` calls reject with a precondition error), or `agent` (viewer
+   * input is dropped). A human operator takes over with `human` and hands
+   * back with `shared`/`agent`.
+   */
+  async viewControl(
+    runtimeId: string,
+    browserId: string,
+    mode: 'shared' | 'human' | 'agent',
+    options: RequestOptions = {},
+  ): Promise<void> {
+    assertRuntimeId(runtimeId);
+    await this.http.request({
+      method: 'POST',
+      path: `runtime/${runtimeId}/browser/${seg(browserId)}/view/control`,
+      service: SERVICES.agents,
+      body: { mode },
+      options,
+    });
   }
 
   /**

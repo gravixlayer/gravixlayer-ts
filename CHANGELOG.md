@@ -22,6 +22,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `chromium.desktop` Exec carries the same first-run suppression flags.
 
 ### Added
+- Live-view HITL parity with the desktop plane: `browser.viewControl(bid,
+  mode)` (also reachable as `runtime.browser.viewControl(...)`) sets the
+  takeover mode `shared` | `human` | `agent` for a browser's screencast
+  feed — `human` rejects agent input while a human holds control,
+  `agent` drops viewer input. `DesktopStatus.viewers` and
+  `BrowserInfo`/`BrowserStatus` `viewers` + `controlMode` expose the
+  presence roster: every participant joins with `{id, name, color,
+  agent}` identity and publishes a labeled cursor, including the
+  agent's own `_agent` slot fed from real input dispatch.
+
 - `user` on `runCommand`, PTY create, and display launch/open options,
   serialized to the wire's `user`; `startUser` on agent build config
   and the template builder, serialized as `start_user`.
