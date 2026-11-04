@@ -750,9 +750,9 @@ describe('browser plane', () => {
     const s = await client.runtime.browser.status(RUNTIME_ID, BID);
     expect(s.controlMode).toBe('human');
     expect(s.viewers).toHaveLength(2);
-    expect(s.viewers?.[0].name).toBe('op');
-    expect(s.viewers?.[1].agent).toBe(true);
-    expect(s.viewers?.[1].pressed).toBe(true);
+    expect(s.viewers?.[0]?.name).toBe('op');
+    expect(s.viewers?.[1]?.agent).toBe(true);
+    expect(s.viewers?.[1]?.pressed).toBe(true);
   });
 
   it('bound browser handle delegates viewControl', async () => {
