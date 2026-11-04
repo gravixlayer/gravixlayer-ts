@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.50] - 2026-11-04
+
 ### Changed
 - `base-browser` template Dockerfile now installs Google Chrome from the
   official stable `.deb` channel for the build architecture (amd64 or
