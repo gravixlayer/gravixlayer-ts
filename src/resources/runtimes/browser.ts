@@ -112,6 +112,22 @@ export type ElementTarget =
       pierce?: boolean;
     };
 
+/**
+ * Coherent device persona — user agent, client hints, platform, locale,
+ * timezone, geolocation and mobile applied consistently as a set.
+ */
+export interface BrowserFingerprint {
+  userAgent?: string;
+  platform?: string;
+  uaFullVersion?: string;
+  locale?: string;
+  timezoneId?: string;
+  geolocationLat?: number;
+  geolocationLon?: number;
+  geolocationAccuracy?: number;
+  mobile?: boolean;
+}
+
 /** Options for {@link RuntimeBrowser.open}. */
 export interface BrowserOpenOptions extends RequestOptions {
   engine?: 'chromium' | 'firefox';
@@ -120,6 +136,10 @@ export interface BrowserOpenOptions extends RequestOptions {
   profileDir?: string;
   args?: string[];
   url?: string;
+  /** `"handoff"` transfers live control to a human when a captcha is detected. */
+  captchaPolicy?: 'handoff';
+  /** Coherent device persona for the default context. */
+  fingerprint?: BrowserFingerprint;
 }
 
 /** Options for {@link RuntimeBrowser.navigate}. */
@@ -155,6 +175,20 @@ export interface ActionOptions extends RequestOptions {
   force?: boolean;
   /** Bound on target resolution (ms). */
   targetTimeoutMs?: number;
+}
+
+function fingerprintBody(f: BrowserFingerprint): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (f.userAgent !== undefined) out['user_agent'] = f.userAgent;
+  if (f.platform !== undefined) out['platform'] = f.platform;
+  if (f.uaFullVersion !== undefined) out['ua_full_version'] = f.uaFullVersion;
+  if (f.locale !== undefined) out['locale'] = f.locale;
+  if (f.timezoneId !== undefined) out['timezone_id'] = f.timezoneId;
+  if (f.geolocationLat !== undefined) out['geolocation_lat'] = f.geolocationLat;
+  if (f.geolocationLon !== undefined) out['geolocation_lon'] = f.geolocationLon;
+  if (f.geolocationAccuracy !== undefined) out['geolocation_accuracy'] = f.geolocationAccuracy;
+  if (f.mobile !== undefined) out['mobile'] = f.mobile;
+  return out;
 }
 
 function normTarget(t: ElementTarget | undefined): unknown {
@@ -298,7 +332,8 @@ export class RuntimeBrowser extends APIResource {
   /** Open a browser. Headed by default — the window is on the runtime's display. */
   async open(runtimeId: string, options: BrowserOpenOptions = {}): Promise<BrowserInfo> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, profileDir, engine, headless, ...rest } = options;
+    const { signal, requestTimeoutMs, maxRetries, profileDir, engine, headless, captchaPolicy, fingerprint, ...rest } =
+      options;
     return parseInfo(
       asRecord(
         await this.http.request({
@@ -310,6 +345,8 @@ export class RuntimeBrowser extends APIResource {
             engine: engine ?? 'chromium',
             headless: headless ?? false,
             profile_dir: profileDir,
+            ...(captchaPolicy ? { captcha_policy: captchaPolicy } : {}),
+            ...(fingerprint ? { fingerprint: fingerprintBody(fingerprint) } : {}),
           },
           options: { signal, requestTimeoutMs, maxRetries },
         }),
@@ -1035,10 +1072,17 @@ export class RuntimeBrowser extends APIResource {
     options: RequestOptions & {
       proxy?: string;
       storageState?: Record<string, unknown>;
+      /** Upstream proxy username. */
+      proxyUsername?: string;
+      /** Provider secret name holding the proxy password — resolved server-side. */
+      proxyPasswordSecretRef?: string;
+      /** Per-context device persona. */
+      fingerprint?: BrowserFingerprint;
     } = {},
   ): Promise<BrowserContext> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, proxy, storageState } = options;
+    const { signal, requestTimeoutMs, maxRetries, proxy, storageState, proxyUsername, proxyPasswordSecretRef, fingerprint } =
+      options;
     const r = asRecord(
       await this.http.request({
         method: 'POST',
@@ -1047,6 +1091,9 @@ export class RuntimeBrowser extends APIResource {
         body: {
           ...(proxy ? { proxy } : {}),
           ...(storageState !== undefined ? { storage_state: storageState } : {}),
+          ...(proxyUsername ? { proxy_username: proxyUsername } : {}),
+          ...(proxyPasswordSecretRef ? { proxy_password_secret_ref: proxyPasswordSecretRef } : {}),
+          ...(fingerprint ? { fingerprint: fingerprintBody(fingerprint) } : {}),
         },
         options: { signal, requestTimeoutMs, maxRetries },
       }),

@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `SecretInput.allowedOrigins`, `UpdateSecretOptions.allowedOrigins` and
+  `addSecret`/`create` support for origin-bound secrets.
+- `BrowserOpenOptions.captchaPolicy` (`"handoff"`) + `fingerprint`, a new
+  `BrowserFingerprint` type, and `contextCreate` proxy credentials
+  (`proxyUsername`, `proxyPasswordSecretRef`) / `fingerprint`.
+
 ### Changed
 - `base-desktop` and `base-osworld` template Dockerfiles install Google
   Chrome from the official stable `.deb` channel for the build

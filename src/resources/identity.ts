@@ -38,6 +38,12 @@ export interface SecretInput {
   key: string;
   /** Secret value. Sent once and never returned. */
   value: string;
+  /**
+   * Origins the value may be filled on in a browser — e.g.
+   * `"https://app.example.com"`, `"*.example.com"`, `"example.com"`. A
+   * `secret_ref` fill refuses to type on any other origin.
+   */
+  allowedOrigins?: readonly string[];
 }
 
 /** Options common to every write, which may be scoped to a project. */
@@ -80,6 +86,8 @@ export interface UpdateSecretOptions extends ProjectScopedOptions {
   key?: string;
   /** New value, which replaces the old one. */
   value?: string;
+  /** Replaces the secret's origin binding for browser fills. */
+  allowedOrigins?: readonly string[];
 }
 
 /** Strip operation-specific fields, leaving only per-request transport options. */
@@ -122,6 +130,7 @@ export class SecretProviders extends APIResource {
       body['secrets'] = options.secrets.map((secret) => ({
         key: assertNonEmpty(secret.key, 'secret.key'),
         value: secret.value,
+        ...(secret.allowedOrigins ? { allowed_origins: secret.allowedOrigins } : {}),
       }));
     }
 
@@ -216,7 +225,7 @@ export class SecretProviders extends APIResource {
     providerId: string,
     key: string,
     value: string,
-    options: ProjectScopedOptions = {},
+    options: ProjectScopedOptions & { allowedOrigins?: readonly string[] } = {},
   ): Promise<SecretInfo> {
     const provider = pathSegment(providerId, 'providerId');
     assertNonEmpty(key, 'key');
@@ -226,7 +235,11 @@ export class SecretProviders extends APIResource {
         method: 'POST',
         path: scoped(`providers/${provider}/secrets`, options.projectId),
         service: SERVICES.identity,
-        body: { key, value },
+        body: {
+          key,
+          value,
+          ...(options.allowedOrigins ? { allowed_origins: options.allowedOrigins } : {}),
+        },
         options: requestOptions(options),
       }),
     );
@@ -260,6 +273,7 @@ export class SecretProviders extends APIResource {
     const body: Record<string, unknown> = {};
     if (options.key !== undefined) body['key'] = options.key;
     if (options.value !== undefined) body['value'] = options.value;
+    if (options.allowedOrigins !== undefined) body['allowed_origins'] = options.allowedOrigins;
 
     const data = asRecord(
       await this.http.request({
