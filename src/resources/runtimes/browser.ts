@@ -332,8 +332,17 @@ export class RuntimeBrowser extends APIResource {
   /** Open a browser. Headed by default — the window is on the runtime's display. */
   async open(runtimeId: string, options: BrowserOpenOptions = {}): Promise<BrowserInfo> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, profileDir, engine, headless, captchaPolicy, fingerprint, ...rest } =
-      options;
+    const {
+      signal,
+      requestTimeoutMs,
+      maxRetries,
+      profileDir,
+      engine,
+      headless,
+      captchaPolicy,
+      fingerprint,
+      ...rest
+    } = options;
     return parseInfo(
       asRecord(
         await this.http.request({
@@ -1081,8 +1090,16 @@ export class RuntimeBrowser extends APIResource {
     } = {},
   ): Promise<BrowserContext> {
     assertRuntimeId(runtimeId);
-    const { signal, requestTimeoutMs, maxRetries, proxy, storageState, proxyUsername, proxyPasswordSecretRef, fingerprint } =
-      options;
+    const {
+      signal,
+      requestTimeoutMs,
+      maxRetries,
+      proxy,
+      storageState,
+      proxyUsername,
+      proxyPasswordSecretRef,
+      fingerprint,
+    } = options;
     const r = asRecord(
       await this.http.request({
         method: 'POST',
