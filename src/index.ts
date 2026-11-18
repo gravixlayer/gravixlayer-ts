@@ -149,13 +149,16 @@ export {
   type CopyOptions,
   type CreateDirectoryOptions,
   type DeleteOptions,
+  type DownloadOptions,
   type FindOptions,
   type MoveOptions,
+  type ReadOptions,
   type ReplaceOptions,
   type UploadOptions,
   type WatchOptions,
   type WriteEntry,
   type WriteManyOptions,
+  type WriteOptions,
 } from './resources/runtimes/files.js';
 
 export {

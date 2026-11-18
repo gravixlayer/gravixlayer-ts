@@ -49,6 +49,13 @@ export const DEFAULT_WORKING_DIR = '/workspace';
 /** How many files {@link RuntimeFile.writeMany} sends at the same time. */
 const DEFAULT_WRITE_CONCURRENCY = 8;
 
+/**
+ * Largest `files/write` JSON body the API accepts is 2 MiB; JSON escapes
+ * (`\"`, `\\`, `\n`, control chars) inflate the body past the raw content
+ * length, so writes switch to the binary upload endpoint with headroom.
+ */
+const WRITE_JSON_MAX_BYTES = 1024 * 1024;
+
 /** One file in a batch write. */
 export interface WriteEntry {
   /** Absolute destination path in the guest. */
@@ -61,12 +68,36 @@ export interface WriteEntry {
   user?: string;
 }
 
+/** Options for {@link RuntimeFile.read}. */
+export interface ReadOptions extends RequestOptions {
+  /** Byte offset to start reading at. Defaults to `0`. */
+  offset?: number;
+  /** Maximum number of bytes to return. `0`/absent reads to end of file. */
+  length?: number;
+}
+
+/** Options for {@link RuntimeFile.write}. */
+export interface WriteOptions extends RequestOptions {
+  /** Extend an existing file instead of replacing it. */
+  append?: boolean;
+}
+
 /** Options for {@link RuntimeFile.upload}. */
 export interface UploadOptions extends RequestOptions {
   /** Owning user inside the guest. */
   user?: string;
   /** Permission bits, for example `'0644'` or `0o644`. */
   mode?: FileMode;
+  /** Append to the destination instead of replacing it. */
+  append?: boolean;
+}
+
+/** Options for {@link RuntimeFile.download} and {@link RuntimeFile.downloadText}. */
+export interface DownloadOptions extends RequestOptions {
+  /** Byte offset to start reading at. Defaults to `0`. */
+  offset?: number;
+  /** Maximum number of bytes to return. `0`/absent reads to end of file. */
+  length?: number;
 }
 
 /** Options for {@link RuntimeFile.writeMany}. */
@@ -186,22 +217,32 @@ function requestOptions(options: RequestOptions): RequestOptions {
  * through `sandbox.file`.
  */
 export class RuntimeFile extends APIResource {
-  /** Read a text file. */
+  /**
+   * Read a text file.
+   *
+   * `offset`/`length` page a byte range — `size` in the response reports the
+   * file's total size, so a caller can page until `offset >= size`. For whole
+   * large files, {@link download} avoids JSON/base64 entirely.
+   */
   async read(
     runtimeId: string,
     path: string,
-    options: RequestOptions = {},
+    options: ReadOptions = {},
   ): Promise<FileReadResponse> {
     assertRuntimeId(runtimeId);
     assertPath(path);
+
+    const body: Record<string, unknown> = { path };
+    if (options.offset !== undefined) body['offset'] = options.offset;
+    if (options.length !== undefined) body['length'] = options.length;
 
     const data = asRecord(
       await this.http.request({
         method: 'POST',
         path: `runtime/${runtimeId}/files/read`,
         service: SERVICES.agents,
-        body: { path },
-        options,
+        body,
+        options: requestOptions(options),
       }),
     );
 
@@ -217,23 +258,43 @@ export class RuntimeFile extends APIResource {
     return response;
   }
 
-  /** Write a text file, creating or replacing it. */
+  /**
+   * Write a text file, creating or replacing it.
+   *
+   * `append: true` extends the file instead. Content that would exceed the
+   * JSON request cap is routed through the binary upload endpoint
+   * automatically — callers never see a size error.
+   */
   async write(
     runtimeId: string,
     path: string,
     content: string,
-    options: RequestOptions = {},
+    options: WriteOptions = {},
   ): Promise<FileWriteResponse> {
     assertRuntimeId(runtimeId);
     assertPath(path);
+
+    // Escapes inflate the JSON body past the raw content length, so measure
+    // the encoded form before choosing the transport.
+    const jsonBytes = utf8Encode(JSON.stringify(content)).length;
+    if (jsonBytes > WRITE_JSON_MAX_BYTES) {
+      const result = await this.upload(runtimeId, path, utf8Encode(content), {
+        append: options.append,
+        ...requestOptions(options),
+      });
+      return { message: 'File written', path: result.path, bytesWritten: result.size };
+    }
+
+    const body: Record<string, unknown> = { path, content };
+    if (options.append !== undefined) body['append'] = options.append;
 
     const data = asRecord(
       await this.http.request({
         method: 'POST',
         path: `runtime/${runtimeId}/files/write`,
         service: SERVICES.agents,
-        body: { path, content },
-        options,
+        body,
+        options: requestOptions(options),
       }),
     );
 
@@ -314,6 +375,7 @@ export class RuntimeFile extends APIResource {
     const query: Record<string, string> = { path };
     if (options.user !== undefined) query['username'] = options.user;
     if (options.mode !== undefined) query['mode'] = formatMode(options.mode);
+    if (options.append !== undefined) query['append'] = String(options.append);
 
     const body = await this.http.request<unknown>({
       method: 'POST',
@@ -375,6 +437,7 @@ export class RuntimeFile extends APIResource {
         if (user !== undefined) upload.user = user;
         const mode = entry.mode ?? options.mode;
         if (mode !== undefined) upload.mode = mode;
+        if (options.append !== undefined) upload.append = options.append;
 
         try {
           files[index] = await this.upload(runtimeId, entry.path, entry.data, upload);
@@ -745,21 +808,30 @@ export class RuntimeFile extends APIResource {
     return response;
   }
 
-  /** Download a file's raw bytes. */
+  /**
+   * Download a file's raw bytes.
+   *
+   * `offset`/`length` page a byte range, the same semantics as
+   * {@link read}'s range options.
+   */
   async download(
     runtimeId: string,
     path: string,
-    options: RequestOptions = {},
+    options: DownloadOptions = {},
   ): Promise<Uint8Array> {
     assertRuntimeId(runtimeId);
     assertPath(path);
+
+    const query: Record<string, string> = { path };
+    if (options.offset !== undefined) query['offset'] = String(options.offset);
+    if (options.length !== undefined) query['length'] = String(options.length);
 
     return this.http.requestBytes({
       method: 'GET',
       path: `runtime/${runtimeId}/download`,
       service: SERVICES.agents,
-      query: { path },
-      options,
+      query,
+      options: requestOptions(options),
     });
   }
 
@@ -767,7 +839,7 @@ export class RuntimeFile extends APIResource {
   async downloadText(
     runtimeId: string,
     path: string,
-    options: RequestOptions = {},
+    options: DownloadOptions = {},
   ): Promise<string> {
     const bytes = await this.download(runtimeId, path, options);
     return new TextDecoder('utf-8').decode(bytes);

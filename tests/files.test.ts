@@ -81,6 +81,69 @@ describe('read and write', () => {
     expect(result.bytesWritten).toBe(8);
   });
 
+  it('reads a byte range', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ content: 'ell', path: '/a.txt', size: 11 }),
+    ]);
+    const result = await client.runtime.file.read(RUNTIME_ID, '/a.txt', {
+      offset: 1,
+      length: 3,
+    });
+
+    expect(http.jsonBody()).toEqual({ path: '/a.txt', offset: 1, length: 3 });
+    expect(result.content).toBe('ell');
+    // `size` is the file's total size, not the returned range length.
+    expect(result.size).toBe(11);
+  });
+
+  it('appends through the JSON body flag', async () => {
+    const { client, http } = testClient([
+      jsonResponse({ message: 'written', path: '/a.txt', bytes_written: 4 }),
+    ]);
+    await client.runtime.file.write(RUNTIME_ID, '/a.txt', 'more', { append: true });
+
+    expect(http.jsonBody()).toEqual({ path: '/a.txt', content: 'more', append: true });
+  });
+
+  it('routes oversized writes through binary upload', async () => {
+    const { client, http } = testClient([echoUpload]);
+    // The JSON quotes push the encoded body over the threshold exactly.
+    const result = await client.runtime.file.write(
+      RUNTIME_ID,
+      '/big.txt',
+      'x'.repeat(1024 * 1024 - 1),
+    );
+
+    expect(http.last().url).toContain('/files');
+    expect(http.last().url).not.toContain('/files/write');
+    expect(uploadedPath(http.last())).toBe('/big.txt');
+    expect(result.bytesWritten).toBe(1024 * 1024 - 1);
+  });
+
+  it('counts JSON escapes toward the write threshold', async () => {
+    const { client, http } = testClient([echoUpload]);
+    // 800 KiB of raw newlines encode as ~1.6 MB inside the JSON body.
+    await client.runtime.file.write(RUNTIME_ID, '/log.txt', '\n'.repeat(800 * 1024));
+
+    expect(http.last().url).not.toContain('/files/write');
+  });
+
+  it('carries append onto the oversized upload', async () => {
+    const { client, http } = testClient([echoUpload]);
+    await client.runtime.file.write(RUNTIME_ID, '/big.log', 'x'.repeat(1024 * 1024), {
+      append: true,
+    });
+
+    expect(new URL(http.last().url).searchParams.get('append')).toBe('true');
+  });
+
+  it('keeps at-threshold content on the JSON path', async () => {
+    const { client, http } = testClient([jsonResponse({ message: 'written', bytes_written: 3 })]);
+    await client.runtime.file.write(RUNTIME_ID, '/a.txt', 'x'.repeat(1024 * 1024 - 2));
+
+    expect(http.jsonBody()).toEqual({ path: '/a.txt', content: 'x'.repeat(1024 * 1024 - 2) });
+  });
+
   it('deletes a file', async () => {
     const { client, http } = testClient([jsonResponse({ message: 'deleted' })]);
     const result = await client.runtime.file.delete(RUNTIME_ID, '/a.txt');
@@ -295,6 +358,18 @@ describe('uploads', () => {
     expect(await client.runtime.file.download(RUNTIME_ID, '/a.bin')).toEqual(bytes);
     expect(http.query().get('path')).toBe('/a.bin');
     expect(await client.runtime.file.downloadText(RUNTIME_ID, '/a.bin')).toBe('hi');
+  });
+
+  it('downloads a byte range', async () => {
+    const { client, http } = testClient([bytesResponse(new Uint8Array([101]))]);
+    const result = await client.runtime.file.download(RUNTIME_ID, '/a.bin', {
+      offset: 10,
+      length: 1,
+    });
+
+    expect(http.query().get('offset')).toBe('10');
+    expect(http.query().get('length')).toBe('1');
+    expect(result).toEqual(new Uint8Array([101]));
   });
 
   it('uses the legacy single-file endpoint when asked', async () => {

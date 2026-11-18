@@ -48,13 +48,16 @@ import type {
   CopyOptions,
   CreateDirectoryOptions,
   DeleteOptions,
+  DownloadOptions,
   FindOptions,
   MoveOptions,
+  ReadOptions,
   ReplaceOptions,
   UploadOptions,
   WatchOptions,
   WriteEntry,
   WriteManyOptions,
+  WriteOptions,
 } from './files.js';
 import type {
   BranchScope,
@@ -435,13 +438,16 @@ export class BoundFile {
     private readonly id: ResolveId,
   ) {}
 
-  /** Read a text file. */
-  async read(path: string, options?: RequestOptions): Promise<FileReadResponse> {
+  /** Read a text file; `offset`/`length` page a byte range. */
+  async read(path: string, options?: ReadOptions): Promise<FileReadResponse> {
     return this.runtimes.file.read(this.id(), path, options);
   }
 
-  /** Write a text file, creating or replacing it. */
-  async write(path: string, content: string, options?: RequestOptions): Promise<FileWriteResponse> {
+  /**
+   * Write a text file, creating or replacing it; `append: true` extends it.
+   * Oversized content routes through binary upload automatically.
+   */
+  async write(path: string, content: string, options?: WriteOptions): Promise<FileWriteResponse> {
     return this.runtimes.file.write(this.id(), path, content, options);
   }
 
@@ -542,13 +548,13 @@ export class BoundFile {
     return this.runtimes.file.uploadFile(this.id(), data, path, options);
   }
 
-  /** Download a file's raw bytes. */
-  async download(path: string, options?: RequestOptions): Promise<Uint8Array> {
+  /** Download a file's raw bytes; `offset`/`length` page a byte range. */
+  async download(path: string, options?: DownloadOptions): Promise<Uint8Array> {
     return this.runtimes.file.download(this.id(), path, options);
   }
 
   /** Download a file and decode it as UTF-8 text. */
-  async downloadText(path: string, options?: RequestOptions): Promise<string> {
+  async downloadText(path: string, options?: DownloadOptions): Promise<string> {
     return this.runtimes.file.downloadText(this.id(), path, options);
   }
 }

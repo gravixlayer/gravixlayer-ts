@@ -34,8 +34,8 @@
 # Lean choices:
 #   - Ubuntu's firefox and chromium packages are snap stubs, and snaps do
 #     not run in the guest: snapd is pinned out, Firefox ESR comes from
-#     Mozilla's release tarball (amd64 + arm64), Chromium from Playwright's
-#     build (amd64 + arm64).
+#     Mozilla's release tarball (amd64 + arm64), Chrome from Google's
+#     stable channel (amd64 + arm64).
 #   - The file indexer and the calendar data server are off. The login
 #     keyring has no password, so it never prompts. Screen lock, idle
 #     blanking, animations and cursor blink are off.

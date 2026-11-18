@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `file.write` accepts `append: true` to extend an existing file, and
+  `file.upload`/`file.writeMany` forward `append` to the upload endpoint.
+- `file.read` and `file.download`/`downloadText` accept `offset`/`length`
+  to page a byte range; the read response's `size` reports the file's
+  total size.
+- `file.write` routes content that would exceed the JSON request cap
+  through the binary upload endpoint automatically — escape-heavy or
+  multi-megabyte strings no longer fail with a payload error.
+
+### Fixed
+- `base-osworld` example Dockerfile builds again — rebased onto the
+  Ubuntu 24.04 desktop base (matches `base-desktop`), drops noble's
+  stock `ubuntu` user so uid 1000 belongs to `user`, and installs the
+  in-guest server's Python deps with `pip --break-system-packages
+  --ignore-installed` so debian-managed wheels without RECORD
+  (blinker et al.) no longer abort the build. Also picks up the
+  Firefox archive-mirror fallback and drops Thunderbird, which noble
+  no longer needs a tarball workaround for.
+- `base-desktop` example Dockerfile header comment corrected to say
+  Chrome comes from Google's stable channel (the file already
+  installed the `.deb`; only the comment was stale).
+
 ## [0.1.51] - 2026-11-05
 
 ### Added
