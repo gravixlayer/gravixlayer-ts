@@ -28,10 +28,10 @@ import { VERSION } from './version.js';
 const DEFAULT_BASE_URL = 'https://api.gravixlayer.ai';
 
 /** Default cloud for runtime placement. */
-const DEFAULT_CLOUD = 'aws';
+const DEFAULT_CLOUD = 'gravix';
 
 /** Default region for runtime placement. */
-const DEFAULT_REGION = 'us-east-1';
+const DEFAULT_REGION = 'us-central-1';
 
 /** Default request timeout in milliseconds. */
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -58,14 +58,14 @@ export interface ClientOptions {
    * Cloud used when a call does not name one.
    *
    * Applied to runtime creates and template builds. Defaults to
-   * `GRAVIXLAYER_CLOUD`, then `aws`.
+   * `GRAVIXLAYER_CLOUD`, then `gravix`.
    */
   cloud?: string;
   /**
    * Region used when a call does not name one.
    *
    * Applied to runtime creates and template builds. Defaults to
-   * `GRAVIXLAYER_REGION`, then `us-east-1`.
+   * `GRAVIXLAYER_REGION`, then `us-central-1`.
    */
   region?: string;
   /** Request timeout in milliseconds. Defaults to 60000. `0` disables it. */
@@ -117,7 +117,7 @@ export interface ClientOptions {
  * ```ts
  * import { GravixLayer } from 'gravixlayer';
  *
- * const client = new GravixLayer(); // defaults to cloud="aws", region="us-east-1"
+ * const client = new GravixLayer(); // defaults to cloud="gravix", region="us-central-1"
  *
  * const sandbox = await client.runtime.create(); // defaults to template="base-small"
  * const result = await sandbox.runCode('print("hello")');

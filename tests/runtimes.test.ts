@@ -29,8 +29,8 @@ describe('create', () => {
     expect(http.last().method).toBe('POST');
     expect(http.last().url).toBe('https://api.test.invalid/v1/agents/runtime');
     expect(http.jsonBody()).toEqual({
-      cloud: 'aws',
-      region: 'us-east-1',
+      cloud: 'gravix',
+      region: 'us-central-1',
       template: 'base-small',
     });
     expect(runtime.runtimeId).toBe(RUNTIME_ID);
@@ -78,8 +78,8 @@ describe('create', () => {
     await client.runtime.create({ timeout: 30 });
 
     expect(http.jsonBody()).toEqual({
-      cloud: 'aws',
-      region: 'us-east-1',
+      cloud: 'gravix',
+      region: 'us-central-1',
       template: 'base-small',
       timeout: 30,
     });

@@ -24,7 +24,7 @@ console.log(result.text);
 await sandbox.kill();
 ```
 
-Cloud and region default to `aws` / `us-east-1`. Override with
+Cloud and region default to `gravix` / `us-central-1`. Override with
 `GRAVIXLAYER_CLOUD` / `GRAVIXLAYER_REGION`, or pass them to the client.
 
 **Docs:** [docs.gravixlayer.ai](https://docs.gravixlayer.ai) ·
@@ -46,8 +46,8 @@ every visitor. Call the API from your own server.
 ```ts
 const client = new GravixLayer({
   apiKey: process.env.GRAVIXLAYER_API_KEY,
-  cloud: 'aws',
-  region: 'us-east-1',
+  cloud: 'gravix',
+  region: 'us-central-1',
 });
 ```
 
@@ -55,8 +55,8 @@ const client = new GravixLayer({
 | --- | --- | --- |
 | `apiKey` | `GRAVIXLAYER_API_KEY` | Required. |
 | `baseUrl` | `GRAVIXLAYER_BASE_URL`, then `https://api.gravixlayer.ai` | |
-| `cloud` | `GRAVIXLAYER_CLOUD`, then `aws` | Runtimes and template builds. |
-| `region` | `GRAVIXLAYER_REGION`, then `us-east-1` | Runtimes and template builds. |
+| `cloud` | `GRAVIXLAYER_CLOUD`, then `gravix` | Runtimes and template builds. |
+| `region` | `GRAVIXLAYER_REGION`, then `us-central-1` | Runtimes and template builds. |
 | `timeout` | `60000` | Per request, in milliseconds. `0` disables it. |
 | `maxRetries` | `3` | Transient failures only. |
 | `http2` | `true` | Node only. One HTTP/2 session per origin; `false` selects HTTP/1.1 keep-alive. |
@@ -152,7 +152,7 @@ console.log(ssh.connectCmd);
 ## Templates
 
 Build an image once so runtimes start with everything already installed.
-Placement follows the client (`aws` / `us-east-1` unless you override it).
+Placement follows the client (`gravix` / `us-central-1` unless you override it).
 
 ```ts
 import { TemplateBuilder } from 'gravixlayer';

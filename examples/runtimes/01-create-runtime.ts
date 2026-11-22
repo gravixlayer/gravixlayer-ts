@@ -2,7 +2,7 @@
  * Create a sandbox, look at it, and shut it down.
  *
  * A sandbox is an isolated virtual machine that boots from a template and runs
- * whatever you send it. Cloud and region default to `aws` / `us-east-1`, and a
+ * whatever you send it. Cloud and region default to `gravix` / `us-central-1`, and a
  * sandbox with no timeout runs until you stop it.
  *
  * Run:

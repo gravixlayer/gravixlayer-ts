@@ -83,12 +83,12 @@ export interface ListTemplatesOptions extends RequestOptions {
 /** Options for {@link Templates.build}. */
 export interface BuildTemplateOptions extends RequestOptions {
   /**
-   * Cloud to build in. Defaults to the client's cloud (`aws`, or
+   * Cloud to build in. Defaults to the client's cloud (`gravix`, or
    * `GRAVIXLAYER_CLOUD`).
    */
   cloud?: string;
   /**
-   * Region to build in. Defaults to the client's region (`us-east-1`, or
+   * Region to build in. Defaults to the client's region (`us-central-1`, or
    * `GRAVIXLAYER_REGION`).
    */
   region?: string;
@@ -150,7 +150,7 @@ export class Templates extends APIResource {
   /**
    * Fill cloud and region from the client unless the payload or call already
    * named them. Same contract as runtime create: `new GravixLayer()` builds
-   * in aws/us-east-1.
+   * in gravix/us-central-1.
    */
   private withPlacement(
     payload: Record<string, unknown>,
@@ -175,7 +175,7 @@ export class Templates extends APIResource {
    *
    * Use {@link buildAndWait} unless you want to drive the polling yourself.
    *
-   * Cloud and region default to the client's (`aws` / `us-east-1`) so a
+   * Cloud and region default to the client's (`gravix` / `us-central-1`) so a
    * `new GravixLayer()` call builds where runtimes from the same client
    * would be created. Pass them here, or set them on the builder payload,
    * to override.

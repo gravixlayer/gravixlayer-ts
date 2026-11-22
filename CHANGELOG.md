@@ -6,7 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.53] - 2026-11-22
+
 ### Changed
+- The default cloud and region are now `gravix` / `us-central-1` (were
+  `aws` / `us-east-1`). Runtimes and template builds that name no placement,
+  and set no `GRAVIXLAYER_CLOUD` / `GRAVIXLAYER_REGION`, land there. Pass
+  `cloud` / `region` to the client or the call to keep another placement.
 - `examples/templates/dockerfiles/base-osworld.Dockerfile`: the Chrome for
   Testing install no longer ships a hardcoded stale version. An empty
   `CHROME_FOR_TESTING_VERSION` (the default) resolves the current Stable

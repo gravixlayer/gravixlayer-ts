@@ -217,8 +217,8 @@ describe('templates', () => {
     expect(http.jsonBody()).toMatchObject({
       name: 'base',
       vcpu_count: 2,
-      cloud: 'aws',
-      region: 'us-east-1',
+      cloud: 'gravix',
+      region: 'us-central-1',
     });
     expect(result.templateId).toBe('tpl-1');
   });
@@ -229,8 +229,8 @@ describe('templates', () => {
     expect(http.jsonBody()).toEqual({
       name: 'raw',
       vcpu_count: 1,
-      cloud: 'aws',
-      region: 'us-east-1',
+      cloud: 'gravix',
+      region: 'us-central-1',
     });
   });
 

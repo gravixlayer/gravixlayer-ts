@@ -15,8 +15,8 @@ They import the package by name, exactly as your own code would.
 | --- | --- |
 | `GRAVIXLAYER_API_KEY` | Required. |
 | `GRAVIXLAYER_TEMPLATE` | Template to boot. Defaults to `base-small`. |
-| `GRAVIXLAYER_CLOUD` | Cloud for runtimes and template builds. Defaults to `aws`. |
-| `GRAVIXLAYER_REGION` | Region for runtimes and template builds. Defaults to `us-east-1`. |
+| `GRAVIXLAYER_CLOUD` | Cloud for runtimes and template builds. Defaults to `gravix`. |
+| `GRAVIXLAYER_REGION` | Region for runtimes and template builds. Defaults to `us-central-1`. |
 
 A runtime cannot reach the internet unless a network policy allows it. Examples
 that install a package or clone a repository attach a temporary allow-all

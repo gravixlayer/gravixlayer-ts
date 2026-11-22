@@ -30,8 +30,8 @@ describe('construction', () => {
   it('defaults the base URL, cloud, and region', () => {
     const client = new GravixLayer({ apiKey: 'k' });
     expect(client.baseUrl).toBe('https://api.gravixlayer.ai');
-    expect(client.cloud).toBe('aws');
-    expect(client.region).toBe('us-east-1');
+    expect(client.cloud).toBe('gravix');
+    expect(client.region).toBe('us-central-1');
   });
 
   it('reads the base URL, cloud, and region from the environment', () => {
