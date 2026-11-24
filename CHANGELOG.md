@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.55] - 2026-11-24
+
 ### Fixed
 - `file.download` and `file.downloadText` no longer fail on files larger
   than the per-request response cap. A call with no `length` (or `0`) now
