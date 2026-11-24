@@ -236,8 +236,8 @@ describe('templates', () => {
 
   it('lets the call override the client cloud and region', async () => {
     const { client, http } = testClient([jsonResponse(STARTED)], {
-      cloud: 'aws',
-      region: 'us-east-1',
+      cloud: 'gravix',
+      region: 'us-central-1',
     });
     await client.templates.build(new TemplateBuilder('base'), {
       cloud: 'gcp',
@@ -382,8 +382,8 @@ describe('templates', () => {
         vcpu_count: 2,
         memory_mb: 2048,
         disk_size_mb: 8192,
-        provider: 'aws',
-        region: 'us-east-1',
+        provider: 'gravix',
+        region: 'us-central-1',
       }),
     ]);
     const template = await client.templates.get('tpl-1');
@@ -393,7 +393,7 @@ describe('templates', () => {
       id: 'tpl-1',
       memoryMb: 2048,
       visibility: 'private',
-      cloud: 'aws',
+      cloud: 'gravix',
     });
   });
 
@@ -442,8 +442,8 @@ describe('snapshots', () => {
     name: 'deps-installed',
     kind: 'hot',
     state: 'ready',
-    cloud: 'aws',
-    region: 'us-east-1',
+    cloud: 'gravix',
+    region: 'us-central-1',
     vcpu_count: 2,
     memory_mb: 2048,
     disk_size_mb: 8192,
@@ -570,15 +570,15 @@ describe('fork', () => {
     runtime_id: 'aaaaaaaa-2222-4333-8444-555555555555',
     status: 'running',
     template: 'base-small',
-    cloud: 'aws',
-    region: 'us-east-1',
+    cloud: 'gravix',
+    region: 'us-central-1',
   };
   const CHILD_B = {
     runtime_id: 'bbbbbbbb-2222-4333-8444-555555555555',
     status: 'running',
     template: 'base-small',
-    cloud: 'aws',
-    region: 'us-east-1',
+    cloud: 'gravix',
+    region: 'us-central-1',
   };
   const FORK_RESP = {
     snapshot_id: 'cccccccc-2222-4333-8444-555555555555',

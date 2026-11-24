@@ -8,7 +8,7 @@ const BUCKET = {
   id: 'bkt-1',
   name: 'datasets',
   provider: 's3',
-  region: 'us-east-1',
+  region: 'us-central-1',
   bucket: 'glx-a1b2-datasets',
   status: 'active',
   error: '',
@@ -49,10 +49,10 @@ const MOUNT = {
 describe('storage buckets', () => {
   it('creates a managed bucket', async () => {
     const { client, http } = testClient([jsonResponse({ bucket: BUCKET }, 201)]);
-    const bucket = await client.storage.buckets.create('datasets', { region: 'us-east-1' });
+    const bucket = await client.storage.buckets.create('datasets', { region: 'us-central-1' });
 
     expect(http.last().url).toContain('/v1/agents/buckets');
-    expect(http.jsonBody()).toEqual({ name: 'datasets', region: 'us-east-1' });
+    expect(http.jsonBody()).toEqual({ name: 'datasets', region: 'us-central-1' });
     expect(bucket.id).toBe('bkt-1');
     expect(bucket.bucket).toBe('glx-a1b2-datasets');
     expect(bucket.status).toBe('active');

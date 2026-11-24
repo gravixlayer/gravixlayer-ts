@@ -622,8 +622,8 @@ describe('Runtime handle', () => {
     expect(runtime.runtimeId).toBe(RUNTIME_ID);
     expect(runtime.status).toBe('running');
     expect(runtime.template).toBe('base-small');
-    expect(runtime.cloud).toBe('aws');
-    expect(runtime.region).toBe('us-east-1');
+    expect(runtime.cloud).toBe('gravix');
+    expect(runtime.region).toBe('us-central-1');
     expect(runtime.cpuCount).toBe(2);
     expect(runtime.memoryMb).toBe(2048);
     expect(runtime.diskSizeMb).toBe(8192);

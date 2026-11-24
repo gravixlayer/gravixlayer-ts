@@ -206,7 +206,7 @@ describe('retries', () => {
       maxRetries: 3,
     });
     await expect(
-      client.runtime.create({ cloud: 'aws', region: 'us-east-1' }),
+      client.runtime.create({ cloud: 'gravix', region: 'us-central-1' }),
     ).rejects.toBeInstanceOf(GravixLayerServerError);
     expect(http.requests).toHaveLength(1);
   });
@@ -218,7 +218,7 @@ describe('retries', () => {
         [errorResponse(429, 'slow down'), jsonResponse(runtimePayload())],
         { maxRetries: 1, ...NO_TIMEOUT },
       );
-      const runtime = await client.runtime.create({ cloud: 'aws', region: 'us-east-1' });
+      const runtime = await client.runtime.create({ cloud: 'gravix', region: 'us-central-1' });
       expect(runtime.runtimeId).toBe(RUNTIME_ID);
       expect(http.requests).toHaveLength(2);
     } finally {
