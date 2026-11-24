@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `file.download` and `file.downloadText` no longer fail on files larger
+  than the per-request response cap. A call with no `length` (or `0`) now
+  pages fixed-size range requests and joins them, so whole files of any
+  size come back in one call. Pages run sequentially because each request's
+  byte range must follow the last byte received. An explicit
+  `offset`/`length` keeps its single-request semantics — callers who page
+  their own ranges are unaffected.
+
 ## [0.1.54] - 2026-11-24
 
 ### Fixed

@@ -51,6 +51,20 @@ function echoUpload(_attempt: number, request: CapturedRequest): Response {
   return jsonResponse([{ path, name: path.split('/').pop(), type: 'file' }]);
 }
 
+/**
+ * Serve a download the way the API does: the request's `offset`/`length`
+ * select a byte range, absent `length` reads to end of file.
+ */
+function rangedFile(data: Uint8Array) {
+  return (_attempt: number, request: CapturedRequest): Response => {
+    const query = new URL(request.url).searchParams;
+    const offset = Number(query.get('offset') ?? 0);
+    const length = query.get('length');
+    const end = length === null ? data.length : Math.min(data.length, offset + Number(length));
+    return bytesResponse(data.subarray(Math.min(offset, data.length), end));
+  };
+}
+
 describe('read and write', () => {
   it('reads a file', async () => {
     const { client, http } = testClient([
@@ -370,6 +384,44 @@ describe('uploads', () => {
     expect(http.query().get('offset')).toBe('10');
     expect(http.query().get('length')).toBe('1');
     expect(result).toEqual(new Uint8Array([101]));
+  });
+
+  it('pages a whole-file download past the response cap', async () => {
+    const chunk = 64 * 1024 * 1024;
+    const data = new Uint8Array(chunk + 8).fill(1);
+    data[data.length - 1] = 7;
+    const { client, http } = testClient([rangedFile(data)]);
+
+    const result = await client.runtime.file.download(RUNTIME_ID, '/big.bin');
+
+    expect(http.requests).toHaveLength(2);
+    expect(http.query(0).get('length')).toBe(String(chunk));
+    expect(http.query(0).get('offset')).toBeNull();
+    expect(http.query(1).get('offset')).toBe(String(chunk));
+    expect(http.query(1).get('length')).toBe(String(chunk));
+    expect(Buffer.compare(Buffer.from(result), Buffer.from(data))).toBe(0);
+  });
+
+  it('pages past an exact chunk boundary until the empty tail', async () => {
+    const chunk = 64 * 1024 * 1024;
+    const data = new Uint8Array(2 * chunk).fill(3);
+    const { client, http } = testClient([rangedFile(data)]);
+
+    const result = await client.runtime.file.download(RUNTIME_ID, '/edge.bin');
+
+    expect(http.requests).toHaveLength(3);
+    expect(Buffer.compare(Buffer.from(result), Buffer.from(data))).toBe(0);
+  });
+
+  it('pages from a caller offset to end of file', async () => {
+    const data = new Uint8Array(16).map((_, i) => i);
+    const { client, http } = testClient([rangedFile(data)]);
+
+    const result = await client.runtime.file.download(RUNTIME_ID, '/a.bin', { offset: 5 });
+
+    expect(http.requests).toHaveLength(1);
+    expect(http.query(0).get('offset')).toBe('5');
+    expect(result).toEqual(data.subarray(5));
   });
 
   it('uses the legacy single-file endpoint when asked', async () => {

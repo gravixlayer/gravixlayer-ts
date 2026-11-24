@@ -63,6 +63,14 @@ const WRITE_JSON_MAX_BYTES = 1024 * 1024;
  */
 const UPLOAD_CHUNK_BYTES = 64 * 1024 * 1024;
 
+/**
+ * Largest file body a single read/download request returns; the guest
+ * rejects a wider range. A whole-file download pages fixed-size reads and
+ * joins them, so downloads of any size succeed. Explicit `offset`/`length`
+ * callers own the range and are served by one request.
+ */
+const DOWNLOAD_CHUNK_BYTES = 64 * 1024 * 1024;
+
 /** One file in a batch write. */
 export interface WriteEntry {
   /** Absolute destination path in the guest. */
@@ -849,7 +857,9 @@ export class RuntimeFile extends APIResource {
    * Download a file's raw bytes.
    *
    * `offset`/`length` page a byte range, the same semantics as
-   * {@link read}'s range options.
+   * {@link read}'s range options. With no `length` (or `0`), the download
+   * pages fixed-size reads and joins them — whole files of any size come
+   * back in one call. A short or empty read ends the sequence.
    */
   async download(
     runtimeId: string,
@@ -859,17 +869,41 @@ export class RuntimeFile extends APIResource {
     assertRuntimeId(runtimeId);
     assertPath(path);
 
-    const query: Record<string, string> = { path };
-    if (options.offset !== undefined) query['offset'] = String(options.offset);
-    if (options.length !== undefined) query['length'] = String(options.length);
+    const get = (offset: number, length: number | undefined): Promise<Uint8Array> => {
+      const query: Record<string, string> = { path };
+      if (offset !== 0) query['offset'] = String(offset);
+      if (length !== undefined) query['length'] = String(length);
+      return this.http.requestBytes({
+        method: 'GET',
+        path: `runtime/${runtimeId}/download`,
+        service: SERVICES.agents,
+        query,
+        options: requestOptions(options),
+      });
+    };
 
-    return this.http.requestBytes({
-      method: 'GET',
-      path: `runtime/${runtimeId}/download`,
-      service: SERVICES.agents,
-      query,
-      options: requestOptions(options),
-    });
+    const start = options.offset ?? 0;
+    if (options.length !== undefined && options.length > 0) {
+      return get(start, options.length);
+    }
+
+    const parts: Uint8Array[] = [];
+    let offset = start;
+    for (;;) {
+      const part = await get(offset, DOWNLOAD_CHUNK_BYTES);
+      parts.push(part);
+      offset += part.length;
+      if (part.length < DOWNLOAD_CHUNK_BYTES) break;
+    }
+    if (parts.length === 1) return parts[0]!;
+
+    const joined = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+    let at = 0;
+    for (const part of parts) {
+      joined.set(part, at);
+      at += part.length;
+    }
+    return joined;
   }
 
   /** Download a file and decode it as UTF-8 text. */
