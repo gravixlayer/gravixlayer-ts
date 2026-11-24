@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.54] - 2026-11-24
+
 ### Fixed
 - `file.upload`, `file.uploadFile`, and `file.write` (via the binary path)
   no longer fail on payloads larger than the per-request part cap. An
@@ -788,7 +790,10 @@ First release. Full coverage of the GravixLayer API.
   `trace`, `traced`, and `runtimeSpan` helpers, active only when
   `@opentelemetry/api` is installed and telemetry is enabled.
 
-[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.51...HEAD
+[Unreleased]: https://github.com/gravixlayer/gravixlayer-ts/compare/v0.1.54...HEAD
+[0.1.54]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.54
+[0.1.53]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.53
+[0.1.52]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.52
 [0.1.51]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.51
 [0.1.50]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.50
 [0.1.49]: https://github.com/gravixlayer/gravixlayer-ts/releases/tag/v0.1.49
