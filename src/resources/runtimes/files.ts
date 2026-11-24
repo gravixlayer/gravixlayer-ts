@@ -11,7 +11,7 @@ import { asRecord, bool, optNum, optStr, parseList, str } from '../../core/parse
 import { iterSSEJson } from '../../core/sse.js';
 import type { RequestOptions } from '../../core/transport.js';
 import { SERVICES } from '../../core/url.js';
-import { appendFile, basename, formatMode, toBlob, type FileMode } from '../../core/uploads.js';
+import { basename, formatMode, toBlob, type FileMode } from '../../core/uploads.js';
 import {
   assertNonEmpty,
   assertPath,
@@ -55,6 +55,13 @@ const DEFAULT_WRITE_CONCURRENCY = 8;
  * length, so writes switch to the binary upload endpoint with headroom.
  */
 const WRITE_JSON_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Largest file part the upload endpoints accept per request. A bigger
+ * payload is split into sequential appended requests — append order is
+ * the file's byte order, so chunks cannot run concurrently.
+ */
+const UPLOAD_CHUNK_BYTES = 64 * 1024 * 1024;
 
 /** One file in a batch write. */
 export interface WriteEntry {
@@ -356,7 +363,9 @@ export class RuntimeFile extends APIResource {
    * Upload binary or text content to a path.
    *
    * Unlike {@link write}, this streams the body as multipart form data, which
-   * makes it the right choice for binary files and large payloads.
+   * makes it the right choice for binary files and large payloads. A payload
+   * larger than the per-request part cap is split into sequential appended
+   * requests and still lands as one file.
    */
   async upload(
     runtimeId: string,
@@ -369,31 +378,42 @@ export class RuntimeFile extends APIResource {
 
     const name = basename(path);
     const blob = await toBlob(data);
-    const form = new FormData();
-    form.append('file', blob, name);
 
     const query: Record<string, string> = { path };
     if (options.user !== undefined) query['username'] = options.user;
     if (options.mode !== undefined) query['mode'] = formatMode(options.mode);
-    if (options.append !== undefined) query['append'] = String(options.append);
 
-    const body = await this.http.request<unknown>({
-      method: 'POST',
-      path: `runtime/${runtimeId}/files`,
-      service: SERVICES.agents,
-      query,
-      form,
-      options: requestOptions(options),
-    });
+    const chunks = Math.max(1, Math.ceil(blob.size / UPLOAD_CHUNK_BYTES));
+    let result: WriteResult | undefined;
+    for (let index = 0; index < chunks; index += 1) {
+      const part = blob.slice(index * UPLOAD_CHUNK_BYTES, (index + 1) * UPLOAD_CHUNK_BYTES);
+      const form = new FormData();
+      form.append('file', part, name);
 
-    const record = firstUploadedFile(body);
-    if (!record) {
-      return { path, name, type: 'file', size: blob.size };
+      // The first chunk honors the caller's append flag; every later chunk
+      // must extend what the previous one wrote.
+      const chunkQuery = { ...query };
+      const append = index === 0 ? options.append : true;
+      if (append !== undefined) chunkQuery['append'] = String(append);
+
+      const body = await this.http.request<unknown>({
+        method: 'POST',
+        path: `runtime/${runtimeId}/files`,
+        service: SERVICES.agents,
+        query: chunkQuery,
+        form,
+        options: requestOptions(options),
+      });
+
+      const record = firstUploadedFile(body);
+      // The number of bytes sent is known here, so it is reported even when
+      // the response omits it.
+      result = record
+        ? { ...parseWriteResult(record), size: blob.size }
+        : { path, name, type: 'file', size: blob.size };
     }
 
-    // The number of bytes sent is known here, so it is reported even when the
-    // response omits it.
-    return { ...parseWriteResult(record), size: blob.size };
+    return result ?? { path, name, type: 'file', size: blob.size };
   }
 
   /**
@@ -777,7 +797,13 @@ export class RuntimeFile extends APIResource {
     );
   }
 
-  /** Upload through the legacy single-file endpoint. */
+  /**
+   * Upload through the legacy single-file endpoint.
+   *
+   * A payload larger than the per-request part cap is split into sequential
+   * appended requests, the same way {@link upload} handles it — each chunk
+   * names the same destination, so the server resolves the same file.
+   */
   async uploadFile(
     runtimeId: string,
     data: BinaryLike,
@@ -786,26 +812,37 @@ export class RuntimeFile extends APIResource {
   ): Promise<FileUploadResponse> {
     assertRuntimeId(runtimeId);
 
-    const form = new FormData();
-    await appendFile(form, 'file', path ? basename(path) : 'upload', data);
-    if (path !== undefined) form.append('path', path);
+    const name = path ? basename(path) : 'upload';
+    const blob = await toBlob(data);
+    const chunks = Math.max(1, Math.ceil(blob.size / UPLOAD_CHUNK_BYTES));
 
-    const body = asRecord(
-      await this.http.request({
-        method: 'POST',
-        path: `runtime/${runtimeId}/upload`,
-        service: SERVICES.agents,
-        form,
-        options,
-      }),
-    );
+    let response: FileUploadResponse | undefined;
+    for (let index = 0; index < chunks; index += 1) {
+      const part = blob.slice(index * UPLOAD_CHUNK_BYTES, (index + 1) * UPLOAD_CHUNK_BYTES);
+      const form = new FormData();
+      form.append('file', part, name);
+      if (path !== undefined) form.append('path', path);
+      // Every chunk after the first extends the file the previous one wrote.
+      const query = index === 0 ? undefined : { append: 'true' };
 
-    const response: FileUploadResponse = { message: str(body, 'message') };
-    const responsePath = optStr(body, 'path') ?? path;
-    if (responsePath !== undefined) response.path = responsePath;
-    const size = optNum(body, 'size');
-    if (size !== undefined) response.size = size;
-    return response;
+      const body = asRecord(
+        await this.http.request({
+          method: 'POST',
+          path: `runtime/${runtimeId}/upload`,
+          service: SERVICES.agents,
+          form,
+          query,
+          options: requestOptions(options),
+        }),
+      );
+
+      response = { message: str(body, 'message') };
+      const responsePath = optStr(body, 'path') ?? path;
+      if (responsePath !== undefined) response.path = responsePath;
+      const size = optNum(body, 'size');
+      if (size !== undefined) response.size = size;
+    }
+    return response ?? { message: '' };
   }
 
   /**

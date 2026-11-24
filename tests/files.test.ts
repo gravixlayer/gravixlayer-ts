@@ -382,6 +382,82 @@ describe('uploads', () => {
     expect(contents).toContain('/tmp/a.txt');
     expect(result.size).toBe(2);
   });
+
+  it('splits an oversized upload into sequential appended parts', async () => {
+    const { client, http } = testClient([echoUpload]);
+    const chunk = 64 * 1024 * 1024;
+    // Bytes below 0x80 keep text() length equal to byte length.
+    const data = new Uint8Array(chunk + 8).fill(1);
+    const result = await client.runtime.file.upload(RUNTIME_ID, '/big.bin', data);
+
+    expect(http.requests).toHaveLength(2);
+    expect(new URL(http.requests[0]!.url).searchParams.get('append')).toBeNull();
+    expect(new URL(http.requests[1]!.url).searchParams.get('append')).toBe('true');
+    for (const request of http.requests) {
+      expect(request.url).toContain('/files');
+      expect(uploadedPath(request)).toBe('/big.bin');
+    }
+    const first = await formParts(http.requests[0]!.body);
+    const second = await formParts(http.requests[1]!.body);
+    expect(first.contents[0]).toHaveLength(chunk);
+    expect(second.contents[0]).toHaveLength(8);
+    expect(result.size).toBe(chunk + 8);
+  });
+
+  it('keeps a payload exactly at the part size in one request', async () => {
+    const { client, http } = testClient([echoUpload]);
+    await client.runtime.file.upload(RUNTIME_ID, '/exact.bin', new Uint8Array(64 * 1024 * 1024));
+
+    expect(http.requests).toHaveLength(1);
+    expect(new URL(http.requests[0]!.url).searchParams.get('append')).toBeNull();
+  });
+
+  it('honors caller append on the first part of a split upload', async () => {
+    const { client, http } = testClient([echoUpload]);
+    await client.runtime.file.upload(RUNTIME_ID, '/big.bin', new Uint8Array(64 * 1024 * 1024 + 1), {
+      append: true,
+    });
+
+    expect(http.requests).toHaveLength(2);
+    expect(new URL(http.requests[0]!.url).searchParams.get('append')).toBe('true');
+    expect(new URL(http.requests[1]!.url).searchParams.get('append')).toBe('true');
+  });
+
+  it('splits a big write routed through the binary path the same way', async () => {
+    const { client, http } = testClient([echoUpload]);
+    await client.runtime.file.write(RUNTIME_ID, '/big.txt', 'x'.repeat(64 * 1024 * 1024 + 4));
+
+    expect(http.requests).toHaveLength(2);
+    for (const request of http.requests) {
+      expect(request.url).toContain('/files');
+      expect(request.url).not.toContain('/files/write');
+    }
+    expect(new URL(http.requests[1]!.url).searchParams.get('append')).toBe('true');
+  });
+
+  it('splits the legacy upload endpoint into appended parts too', async () => {
+    const { client, http } = testClient([jsonResponse({ message: 'ok', path: '/tmp/big.bin' })]);
+    await client.runtime.file.uploadFile(
+      RUNTIME_ID,
+      new Uint8Array(64 * 1024 * 1024 + 1),
+      '/tmp/big.bin',
+    );
+
+    expect(http.requests).toHaveLength(2);
+    for (const request of http.requests) {
+      expect(request.url).toContain('/upload');
+    }
+    expect(new URL(http.requests[0]!.url).searchParams.get('append')).toBeNull();
+    expect(new URL(http.requests[1]!.url).searchParams.get('append')).toBe('true');
+  });
+
+  it('sends an empty upload as a single request', async () => {
+    const { client, http } = testClient([echoUpload]);
+    await client.runtime.file.upload(RUNTIME_ID, '/empty.bin', new Uint8Array(0));
+
+    expect(http.requests).toHaveLength(1);
+    expect(new URL(http.requests[0]!.url).searchParams.get('append')).toBeNull();
+  });
 });
 
 describe('metadata and structure', () => {

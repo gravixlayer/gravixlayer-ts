@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `file.upload`, `file.uploadFile`, and `file.write` (via the binary path)
+  no longer fail on payloads larger than the per-request part cap. An
+  oversized payload is now split into sequential appended requests — the
+  first chunk honors the caller's `append` flag and every later chunk
+  appends — so one `write`/`upload` call still lands as one file. `writeMany`
+  inherits the behavior through `upload`. Chunks run sequentially because
+  append order is byte order.
+
 ## [0.1.53] - 2026-11-22
 
 ### Changed
